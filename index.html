@@ -3446,15 +3446,24 @@ textarea::placeholder{
       <div class="field">
         <label>直播分類</label>
 
-        <select id="preLiveCategory">
-          <option>雜談</option>
-          <option>遊戲</option>
-          <option>音樂／歌回</option>
-          <option>ASMR</option>
-          <option>料理</option>
-          <option>戶外</option>
-          <option>創作</option>
-        </select>
+<select id="preLiveCategory">
+  <option value="雜談">雜談</option>
+  <option value="遊戲">遊戲</option>
+  <option value="音樂／歌回">音樂／歌回</option>
+  <option value="ASMR">ASMR</option>
+  <option value="料理">料理</option>
+  <option value="戶外">戶外</option>
+  <option value="創作">創作</option>
+  <option value="other">其他</option>
+</select>
+
+<input
+  id="preLiveCategoryCustom"
+  type="text"
+  placeholder="輸入自訂直播分類"
+  style="margin-top:6px"
+  hidden
+>
       </div>
 
       <div class="field full">
@@ -7567,14 +7576,25 @@ function generatePlayerLiveChat(){
     text:randomItem(fanCommentPool())
   });
 }
+  
+$("preLiveCategory").onchange = () => {
+  $("preLiveCategoryCustom").hidden =
+    $("preLiveCategory").value !== "other";
 
+  if($("preLiveCategory").value !== "other"){
+    $("preLiveCategoryCustom").value = "";
+  }
+};
+  
 $("startLive").onclick = () => {
   state.player.title =
     $("preLiveTitle").value.trim() ||
     "未命名直播";
 
-  state.player.category =
-    $("preLiveCategory").value;
+state.player.category =
+  $("preLiveCategory").value === "other"
+    ? ($("preLiveCategoryCustom").value.trim() || "其他")
+    : $("preLiveCategory").value;
 
   state.live.started = true;
   state.live.turn = 0;
