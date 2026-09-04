@@ -3457,16 +3457,6 @@ textarea::placeholder{
         </select>
       </div>
 
-      <div class="field">
-        <label>內容分級</label>
-
-        <select id="preLiveRating">
-          <option value="general">全年齡</option>
-          <option value="adult">成人向</option>
-          <option value="nsfw">NSFW 18+</option>
-        </select>
-      </div>
-
       <div class="field full">
         <label>直播場景</label>
         <div id="scenePicker" class="scene-picker"></div>
@@ -5453,20 +5443,6 @@ textarea::placeholder{
 
             <section class="disclaimer-section">
 
-              <h3>成人向與 NSFW</h3>
-
-              <p>
-                成人向及 NSFW 模式僅供成年玩家使用。
-                不得建立或要求涉及未成年人或未成年角色的性內容。
-                實際可生成範圍仍受所使用的模型及 API
-                供應商政策限制，STARWAVE 不提供繞過
-                供應商限制的功能。
-              </p>
-
-            </section>
-
-            <section class="disclaimer-section">
-
               <h3>模擬金錢</h3>
 
               <p>
@@ -6430,7 +6406,6 @@ const state = {
     privateImage:"",
     title:"今天來隨便聊聊天",
     category:"雜談",
-    rating:"general",
     viewers:0,
     peak:0,
     subscribers:0,
@@ -7600,9 +7575,6 @@ $("startLive").onclick = () => {
 
   state.player.category =
     $("preLiveCategory").value;
-
-  state.player.rating =
-    $("preLiveRating").value;
 
   state.live.started = true;
   state.live.turn = 0;
@@ -13011,9 +12983,6 @@ function fullRender(){
 
   $("preLiveCategory").value =
     state.player.category;
-
-  $("preLiveRating").value =
-    state.player.rating;
 
   $("economyMode").value =
     state.economy.mode;
