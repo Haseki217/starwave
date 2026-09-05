@@ -6089,7 +6089,8 @@ textarea::placeholder{
 </div>
 
 <div id="toast" class="toast"></div>
-
+<script src="./utils/indexeddb.js"></script>
+  
 <script>
 const $ = id => document.getElementById(id);
 const $$ = selector => [...document.querySelectorAll(selector)];
@@ -6500,6 +6501,117 @@ const state = {
   snsPosts:[]
 };
 
+  let starwaveSaveTimer = null;
+let starwavePersistenceReady = false;
+
+function mergeSavedState(target, source){
+  if(
+    !source ||
+    typeof source !== "object"
+  ){
+    return;
+  }
+
+  Object.keys(source).forEach(key => {
+    const savedValue = source[key];
+    const currentValue = target[key];
+
+    if(Array.isArray(savedValue)){
+      target[key] = savedValue;
+      return;
+    }
+
+    if(
+      savedValue &&
+      typeof savedValue === "object" &&
+      currentValue &&
+      typeof currentValue === "object" &&
+      !Array.isArray(currentValue)
+    ){
+      mergeSavedState(
+        currentValue,
+        savedValue
+      );
+
+      return;
+    }
+
+    target[key] = savedValue;
+  });
+}
+
+function scheduleStarwaveSave(){
+  if(!starwavePersistenceReady){
+    return;
+  }
+
+  clearTimeout(starwaveSaveTimer);
+
+  starwaveSaveTimer = setTimeout(
+    async () => {
+      try{
+        await saveStarwaveState(state);
+      }catch(error){
+        console.error(
+          "STARWAVE IndexedDB save failed:",
+          error
+        );
+      }
+    },
+    350
+  );
+}
+
+document.addEventListener(
+  "click",
+  () => queueMicrotask(scheduleStarwaveSave)
+);
+
+document.addEventListener(
+  "change",
+  () => queueMicrotask(scheduleStarwaveSave)
+);
+
+document.addEventListener(
+  "keydown",
+  event => {
+    if(event.key === "Enter"){
+      setTimeout(
+        scheduleStarwaveSave,
+        0
+      );
+    }
+  }
+);
+
+document.addEventListener(
+  "visibilitychange",
+  () => {
+    if(
+      document.visibilityState === "hidden" &&
+      starwavePersistenceReady
+    ){
+      saveStarwaveState(state)
+        .catch(error => {
+          console.error(
+            "STARWAVE IndexedDB save failed:",
+            error
+          );
+        });
+    }
+  }
+);
+
+window.addEventListener(
+  "pagehide",
+  () => {
+    if(starwavePersistenceReady){
+      saveStarwaveState(state)
+        .catch(() => {});
+    }
+  }
+);
+  
 const voiceCall = {
   active:false,
   roomId:null,
@@ -13073,9 +13185,32 @@ function fullRender(){
     $("bgmContainer").hidden = true;
     $("bgmFrame").src = "";
   }
+    scheduleStarwaveSave();
 }
 
-function init(){
+async function init(){
+
+  try{
+    const savedState =
+      await loadStarwaveState();
+
+    if(savedState){
+      mergeSavedState(
+        state,
+        savedState
+      );
+
+      console.log(
+        "STARWAVE IndexedDB state loaded."
+      );
+    }
+  }catch(error){
+    console.error(
+      "STARWAVE IndexedDB load failed:",
+      error
+    );
+  }
+
   try{
     const theme =
       localStorage.getItem(
@@ -13096,7 +13231,11 @@ function init(){
 
   restoreSessionPreview();
 
+  starwavePersistenceReady = true;
+
   fullRender();
+
+  scheduleStarwaveSave();
 }
 
 init();
