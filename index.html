@@ -7337,7 +7337,7 @@ function renderScenePicker(){
       state.live.sceneId = scene.id;
       renderScenePicker();
       syncLive();
-      saveSessionPreview();
+      
     };
 
     if(!scene.builtIn){
@@ -7367,7 +7367,7 @@ function renderScenePicker(){
             renderScenePicker();
             syncLive();
             renderExplore();
-            saveSessionPreview();
+            
           }
         });
       };
@@ -7399,7 +7399,7 @@ $("customSceneFile").onchange = event => {
 
     renderScenePicker();
     syncLive();
-    saveSessionPreview();
+    
   });
 };
 
@@ -7411,7 +7411,7 @@ $("sceneOpacity").oninput = () => {
     `${state.live.sceneOpacity}%`;
 
   syncLive();
-  saveSessionPreview();
+  
 };
 
 function extractYouTubeId(url){
@@ -7445,7 +7445,7 @@ $("applyBgm").onclick = () => {
     $("bgmContainer").hidden = true;
     $("bgmFrame").src = "";
 
-    saveSessionPreview();
+    
     toast("BGM 已清除");
     return;
   }
@@ -7468,7 +7468,7 @@ $("applyBgm").onclick = () => {
   $("bgmFrame").src =
     `https://www.youtube-nocookie.com/embed/${encodeURIComponent(id)}?autoplay=1&loop=1&playlist=${encodeURIComponent(id)}`;
 
-  saveSessionPreview();
+  
   toast("已套用 BGM");
 };
 
@@ -7742,7 +7742,7 @@ state.player.category =
   syncLive();
   renderExplore();
   renderLiveChat();
-  saveSessionPreview();
+  
 };
 
 function syncLive(){
@@ -7893,7 +7893,7 @@ $("sendLive").onclick = () => {
   );
 
   triggerAutoContent();
-  saveSessionPreview();
+  
 };
 
 $("endLive").onclick = () => {
@@ -7916,7 +7916,7 @@ $("endLive").onclick = () => {
       syncNumbers();
       renderExplore();
       renderBackstage();
-      saveSessionPreview();
+      
     }
   });
 };
@@ -12984,72 +12984,44 @@ $("clearCache").onclick = () => {
   showConfirm({
     title:"清除快取？",
     message:
-      "只會清除可重新建立的暫存，不會刪除角色卡、劇情、事件記憶、Lorebook、經濟紀錄、API Profile 或 API Key。",
+      "只會清除可以重新建立的 STARWAVE 暫存與 PWA 快取，不會刪除角色卡、劇情、事件記憶、Lorebook、經濟紀錄、API Profile 或 API Key。",
     okText:"清除快取",
 
-    onConfirm(){
+    async onConfirm(){
       try{
         sessionStorage.removeItem(
           "starwave_live_preview"
         );
-      }catch{}
 
-      toast("可重建快取已清除");
+        if("caches" in window){
+          const keys = await caches.keys();
+
+          await Promise.all(
+            keys
+              .filter(key =>
+                key.startsWith("starwave-pwa-")
+              )
+              .map(key =>
+                caches.delete(key)
+              )
+          );
+        }
+
+        toast("STARWAVE 快取已清除");
+      }catch(error){
+        console.error(
+          "STARWAVE cache clear failed:",
+          error
+        );
+
+        showNotice(
+          "清除快取失敗",
+          "部分暫存沒有成功清除，請稍後再試。"
+        );
+      }
     }
   });
 };
-
-function saveSessionPreview(){
-  try{
-    sessionStorage.setItem(
-      "starwave_live_preview",
-      JSON.stringify({
-        live:{
-          started:state.live.started,
-          turn:state.live.turn,
-          sceneId:state.live.sceneId,
-          sceneOpacity:state.live.sceneOpacity,
-          bgmUrl:state.live.bgmUrl,
-          bgmVideoId:state.live.bgmVideoId,
-          stageEntries:state.live.stageEntries,
-          lastText:state.live.lastText
-        },
-
-        player:{
-          title:state.player.title,
-          category:state.player.category,
-          rating:state.player.rating,
-          viewers:state.player.viewers,
-          peak:state.player.peak
-        }
-      })
-    );
-  }catch{}
-}
-
-function restoreSessionPreview(){
-  try{
-    const raw =
-      sessionStorage.getItem(
-        "starwave_live_preview"
-      );
-
-    if(!raw){
-      return;
-    }
-
-    const saved =
-      JSON.parse(raw);
-
-    if(saved.live){
-      Object.assign(state.live,saved.live);
-    }
-
-    if(saved.player){
-      Object.assign(state.player,saved.player);
-    }
-  }catch{}
-}
 
 function syncNumbers(){
   $("viewerNumber").textContent =
@@ -13228,8 +13200,6 @@ async function init(){
       state.theme = theme;
     }
   }catch{}
-
-  restoreSessionPreview();
 
   starwavePersistenceReady = true;
 
