@@ -6336,6 +6336,9 @@ const fanAccounts = [
   {id:"fan_anon_88",name:"匿名觀眾88",handle:"@viewer88"}
 ];
 
+const STARWAVE_PROXY_URL =
+  "https://starwave-api-proxy.chibahaseki.workers.dev";
+  
 const providerOptions = [
   "Gemini",
   "OpenAI",
@@ -12281,15 +12284,98 @@ async function fetchLatestModels(index){
       "error";
 
     renderApiProfiles();
+    return;
+  }
 
+  if(profile.provider !== "Gemini"){
+    profile.modelStatus =
+      `${profile.provider} 的模型清單連線尚未開放。`;
+
+    profile.modelStatusType =
+      "error";
+
+    renderApiProfiles();
     return;
   }
 
   profile.modelStatus =
-    `${profile.provider} 的模型清單連線尚未開放。`;
+    "正在向 Gemini 取得模型清單……";
 
-  profile.modelStatusType =
-    "error";
+  profile.modelStatusType = "";
+
+  renderApiProfiles();
+
+  try{
+    const response =
+      await fetch(
+        `${STARWAVE_PROXY_URL}/gemini/models`,
+        {
+          method:"POST",
+
+          headers:{
+            "Content-Type":"application/json"
+          },
+
+          body:JSON.stringify({
+            apiKey:profile.apiKey
+          })
+        }
+      );
+
+    let data;
+
+    try{
+      data = await response.json();
+    }catch{
+      throw new Error(
+        "Proxy 回傳了無法解析的資料。"
+      );
+    }
+
+    if(
+      !response.ok ||
+      !data.ok
+    ){
+      throw new Error(
+        data.details ||
+        data.error ||
+        `HTTP ${response.status}`
+      );
+    }
+
+    const models =
+      Array.isArray(data.models)
+        ? data.models
+            .map(model => model.id)
+            .filter(Boolean)
+        : [];
+
+    if(!models.length){
+      throw new Error(
+        "Gemini 沒有回傳可用的文字生成模型。"
+      );
+    }
+
+    profile.models = models;
+
+    profile.modelStatus =
+      `已取得 ${models.length} 個 Gemini 模型。`;
+
+    profile.modelStatusType =
+      "success";
+
+  }catch(error){
+    profile.models = [];
+
+    profile.modelStatus =
+      `取得模型失敗：${
+        error?.message ||
+        "未知錯誤"
+      }`;
+
+    profile.modelStatusType =
+      "error";
+  }
 
   renderApiProfiles();
 }
