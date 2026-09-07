@@ -12384,6 +12384,219 @@ async function fetchLatestModels(index){
   renderApiProfiles();
 }
 
+async function generateGeminiText(
+  profile,
+  {
+    prompt = "",
+    systemInstruction = "",
+    maxTokens = null,
+    temperature = null,
+    json = false
+  } = {}
+){
+  const apiKey =
+    String(profile.apiKey || "").trim();
+
+  const model =
+    String(profile.model || "").trim();
+
+  if(!apiKey){
+    throw new Error("尚未設定 API Key。");
+  }
+
+  if(!model){
+    throw new Error("尚未設定模型。");
+  }
+
+  if(!String(prompt).trim()){
+    throw new Error("沒有可送出的內容。");
+  }
+
+  const generationConfig = {
+    maxOutputTokens:
+      Math.max(
+        1,
+        Number(
+          maxTokens ??
+          profile.maxTokens ??
+          25000
+        )
+      )
+  };
+
+  if(
+    temperature !== null &&
+    Number.isFinite(Number(temperature))
+  ){
+    generationConfig.temperature =
+      Number(temperature);
+  }
+
+  if(json){
+    generationConfig.responseMimeType =
+      "application/json";
+  }
+
+  const requestBody = {
+    contents:[
+      {
+        role:"user",
+        parts:[
+          {
+            text:String(prompt)
+          }
+        ]
+      }
+    ],
+
+    generationConfig
+  };
+
+  if(String(systemInstruction).trim()){
+    requestBody.systemInstruction = {
+      parts:[
+        {
+          text:String(
+            systemInstruction
+          ).trim()
+        }
+      ]
+    };
+  }
+
+  const response =
+    await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+      {
+        method:"POST",
+
+        headers:{
+          "Content-Type":
+            "application/json",
+
+          "x-goog-api-key":
+            apiKey
+        },
+
+        body:
+          JSON.stringify(requestBody)
+      }
+    );
+
+  let data;
+
+  try{
+    data =
+      await response.json();
+  }catch{
+    throw new Error(
+      "Gemini 回傳了無法解析的資料。"
+    );
+  }
+
+  if(!response.ok){
+    throw new Error(
+      data?.error?.message ||
+      `HTTP ${response.status}`
+    );
+  }
+
+  const candidate =
+    data?.candidates?.[0];
+
+  const text =
+    candidate
+      ?.content
+      ?.parts
+      ?.filter(part =>
+        typeof part.text === "string" &&
+        !part.thought
+      )
+      .map(part => part.text)
+      .join("")
+      .trim() || "";
+
+  if(!text){
+    throw new Error(
+      `Gemini 沒有回傳文字內容${
+        candidate?.finishReason
+          ? `（${candidate.finishReason}）`
+          : ""
+      }。`
+    );
+  }
+
+  return {
+    text,
+    provider:"Gemini",
+    model,
+    usage:
+      data?.usageMetadata || null,
+    finishReason:
+      candidate?.finishReason || null
+  };
+}
+
+
+async function generateWithApi({
+  profileIndex = state.api.active,
+  prompt = "",
+  systemInstruction = "",
+  maxTokens = null,
+  temperature = null,
+  json = false
+} = {}){
+  const profile =
+    state.api.profiles[
+      profileIndex
+    ];
+
+  if(!profile){
+    throw new Error(
+      "找不到目前使用中的 API Profile。"
+    );
+  }
+
+  switch(profile.provider){
+
+    case "Gemini":
+      return generateGeminiText(
+        profile,
+        {
+          prompt,
+          systemInstruction,
+          maxTokens,
+          temperature,
+          json
+        }
+      );
+
+    case "Anthropic":
+      throw new Error(
+        "Anthropic Proxy 尚未接線。"
+      );
+
+    case "Ollama Cloud":
+      throw new Error(
+        "Ollama Cloud Proxy 尚未接線。"
+      );
+
+    case "OpenAI":
+    case "OpenRouter":
+    case "Groq":
+    case "Mistral":
+    case "xAI":
+      throw new Error(
+        `${profile.provider} 尚未接線。`
+      );
+
+    default:
+      throw new Error(
+        `不支援的 API 供應商：${profile.provider}`
+      );
+  }
+}
+  
 async function testApiConnection(index){
   const profile =
     collectApiDraft(index);
@@ -12410,98 +12623,35 @@ async function testApiConnection(index){
     return;
   }
 
-  if(profile.provider !== "Gemini"){
-    profile.modelStatus =
-      `${profile.provider} 的測試連線尚未開放。`;
-
-    profile.modelStatusType =
-      "error";
-
-    renderApiProfiles();
-    return;
-  }
-
   profile.modelStatus =
-    "正在測試 Gemini 連線……";
+    `正在測試 ${profile.provider} 連線……`;
 
   profile.modelStatusType = "";
 
   renderApiProfiles();
 
   try{
-    const response =
-      await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(profile.model.trim())}:generateContent`,
-        {
-          method:"POST",
+    const result =
+      await generateWithApi({
+        profileIndex:index,
 
-          headers:{
-            "Content-Type":"application/json",
-            "x-goog-api-key":
-              profile.apiKey.trim()
-          },
+        prompt:
+          "這是 STARWAVE API 連線測試。請只回覆：STARWAVE CONNECTED",
 
-          body:JSON.stringify({
-            contents:[
-              {
-                role:"user",
-                parts:[
-                  {
-                    text:
-                      "這是 STARWAVE API 連線測試。請只回覆：STARWAVE CONNECTED"
-                  }
-                ]
-              }
-            ],
+        maxTokens:64,
 
-            generationConfig:{
-              maxOutputTokens:256
-            }
-          })
-        }
-      );
-
-    let data;
-
-    try{
-      data = await response.json();
-    }catch{
-      throw new Error(
-        "Gemini 回傳了無法解析的資料。"
-      );
-    }
-
-    if(!response.ok){
-      throw new Error(
-        data?.error?.message ||
-        `HTTP ${response.status}`
-      );
-    }
-
-    const text =
-      data?.candidates?.[0]
-        ?.content?.parts
-        ?.filter(part =>
-          typeof part.text === "string" &&
-          !part.thought
-        )
-        .map(part => part.text)
-        .join("")
-        .trim() || "";
-
-    if(!text){
-      throw new Error(
-        "Gemini 有回應，但沒有取得文字內容。"
-      );
-    }
+        temperature:0
+      });
 
     profile.modelStatus =
-      `連線成功：${text}`;
+      `連線成功：${result.text}`;
 
     profile.modelStatusType =
       "success";
 
-    toast("Gemini API 連線成功");
+    toast(
+      `${profile.provider} API 連線成功`
+    );
 
   }catch(error){
     profile.modelStatus =
