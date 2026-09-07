@@ -8522,22 +8522,6 @@ for(
     input:
       state.live.stageEntries[i] || "",
 
-    story:
-      state.live.stageEntries[i + 1] || ""
-  });
-}
-
-const liveTurns = [];
-
-for(
-  let i = 0;
-  i < state.live.stageEntries.length;
-  i += 2
-){
-  liveTurns.push({
-    input:
-      state.live.stageEntries[i] || "",
-
     ai:
       state.live.stageEntries[i + 1] || ""
   });
