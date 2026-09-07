@@ -3626,14 +3626,6 @@ textarea::placeholder{
     ✦ 記住現在
   </button>
 
-  <button id="rerollLiveTurn" class="secondary">
-    ↻ 重刷上一回合
-  </button>
-
-  <button id="deleteLiveTurn" class="secondary">
-    ⌫ 刪除上一回合
-  </button>
-
   <button id="endLive" class="danger">
     結束直播
   </button>
@@ -3728,6 +3720,30 @@ textarea::placeholder{
         </div>
 
         <div class="live-input-wrap">
+
+          <div
+  class="live-turn-actions"
+  style="
+    display:flex;
+    justify-content:flex-end;
+    gap:6px;
+    margin-bottom:6px;
+  "
+>
+  <button
+    id="rerollLiveTurn"
+    class="secondary"
+  >
+    ↻ 重刷
+  </button>
+
+  <button
+    id="deleteLiveTurn"
+    class="secondary"
+  >
+    ⌫ 刪除
+  </button>
+</div>
 
           <textarea
             id="liveInput"
@@ -8476,11 +8492,51 @@ function syncLive(){
 const storyBox =
   $("stageStory");
 
+const liveTurns = [];
+
+for(
+  let i = 0;
+  i < state.live.stageEntries.length;
+  i += 2
+){
+  liveTurns.push({
+    input:
+      state.live.stageEntries[i] || "",
+
+    story:
+      state.live.stageEntries[i + 1] || ""
+  });
+}
+
 storyBox.innerHTML =
-  state.live.stageEntries
-    .map(text => `
-      <div class="stage-story-entry">
-        ${esc(text)}
+  liveTurns
+    .map(turn => `
+      <div
+        style="
+          margin-bottom:14px;
+          line-height:1.7;
+        "
+      >
+
+        <div
+          style="
+            margin-bottom:7px;
+            opacity:.82;
+          "
+        >
+          ${esc(turn.input)}
+        </div>
+
+        ${
+          turn.story
+            ? `
+              <div>
+                ${esc(turn.story)}
+              </div>
+            `
+            : ""
+        }
+
       </div>
     `)
     .join("");
@@ -9270,10 +9326,60 @@ $("rerollLiveTurn").onclick = () => {
   const record =
     getLastLiveUndo();
 
-  if(!record){
-    toast("目前沒有可重刷的直播回合");
+if(!record){
+
+  if(
+    state.live.stageEntries.length
+  ){
+
+    const legacyInput =
+      String(
+        state.live.stageEntries[
+          state.live.stageEntries.length >= 2
+            ? state.live.stageEntries.length - 2
+            : 0
+        ] || ""
+      ).trim();
+
+    if(!legacyInput){
+      toast("找不到可以重刷的玩家輸入");
+      return;
+    }
+
+    showConfirm({
+      title:"重刷？",
+
+      message:
+        "這是舊版測試回合，沒有完整快照。將清除目前舊劇情與聊天室，再用原本的玩家輸入重新生成。",
+
+      okText:"重刷",
+
+      onConfirm(){
+
+        state.live.stageEntries = [];
+        state.live.chat = [];
+        state.live.turn = 0;
+        state.live.lastText = "";
+
+        syncLive();
+        renderLiveChat();
+
+        $("liveInput").value =
+          legacyInput;
+
+        generatePlayerLiveTurn(
+          legacyInput,
+          {reroll:true}
+        );
+      }
+    });
+
     return;
   }
+
+  toast("目前沒有可重刷的直播回合");
+  return;
+}
 
   const turnNumber =
     (record.snapshot?.live?.turn || 0) + 1;
@@ -9306,11 +9412,42 @@ $("deleteLiveTurn").onclick = () => {
   const record =
     getLastLiveUndo();
 
-  if(!record){
-    toast("目前沒有可刪除的直播回合");
+ if(!record){
+
+  if(
+    state.live.stageEntries.length
+  ){
+
+    showConfirm({
+      title:"刪除？",
+
+      message:
+        "這是舊版產生的直播測試內容，當時尚未建立回合快照。可以清除目前舊劇情與聊天室，但無法精準還原當時的觀看、訂閱或經濟數值。",
+
+      okText:"刪除",
+
+      onConfirm(){
+
+        state.live.stageEntries = [];
+        state.live.chat = [];
+        state.live.turn = 0;
+        state.live.lastText = "";
+
+        syncLive();
+        renderLiveChat();
+
+        scheduleStarwaveSave();
+
+        toast("舊直播測試內容已刪除");
+      }
+    });
+
     return;
   }
 
+  toast("目前沒有可刪除的直播回合");
+  return;
+}
   const turnNumber =
     (record.snapshot?.live?.turn || 0) + 1;
 
