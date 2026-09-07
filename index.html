@@ -1101,12 +1101,75 @@ textarea::placeholder{
   line-height:1.55;
 }
 
-.chat-row.donation{
-  margin-top:4px;
-  padding:9px;
-  border:1px solid rgba(223,176,76,.20);
-  border-radius:7px;
-  background:rgba(255,239,197,.20);
+.chat-row.donation,
+.role-live-chat .role-live-chat-line.donation{
+  position:relative;
+  margin:8px 0;
+  padding:10px;
+  overflow:hidden;
+  border:1px solid rgba(226,182,94,.40);
+  border-radius:10px;
+  background:
+    linear-gradient(
+      135deg,
+      rgba(226,182,94,.20),
+      rgba(223,127,158,.11)
+    );
+  box-shadow:
+    0 6px 18px rgba(82,74,110,.08);
+}
+
+.chat-row.donation::before,
+.role-live-chat .role-live-chat-line.donation::before{
+  content:"✦ 打賞";
+  display:inline-flex;
+  align-items:center;
+  margin-bottom:5px;
+  padding:3px 7px;
+  border-radius:999px;
+  background:rgba(226,182,94,.18);
+  color:var(--gold);
+  font-size:8px;
+  font-weight:800;
+  letter-spacing:.04em;
+}
+
+.donation-body{
+  margin-top:5px;
+}
+
+.donation-amount{
+  display:block;
+  margin-bottom:3px;
+  color:var(--gold);
+  font-size:14px;
+  font-weight:900;
+}
+
+.donation-message{
+  color:var(--body);
+  font-size:11px;
+  line-height:1.6;
+}
+
+.chat-author.member{
+  color:var(--gold);
+}
+
+.member-badge{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  width:15px;
+  height:15px;
+  margin-left:4px;
+  border:1px solid rgba(226,182,94,.32);
+  border-radius:50%;
+  background:rgba(226,182,94,.14);
+  color:var(--gold);
+  font-size:7px;
+  font-weight:900;
+  vertical-align:middle;
 }
 
 .chat-line-head{
@@ -6484,6 +6547,7 @@ const state = {
     peak:0,
     subscribers:0,
     members:0,
+    memberAccounts:[],
     liveHistory:[]
   },
 
@@ -7265,6 +7329,102 @@ function randomAllowedFan(){
   return allowed.length
     ? randomItem(allowed)
     : null;
+}
+
+function isPlayerMemberFan(
+  accountId
+){
+  return Boolean(
+    accountId &&
+    Array.isArray(
+      state.player.memberAccounts
+    ) &&
+    state.player.memberAccounts
+      .includes(accountId)
+  );
+}
+
+
+function updateKnownMemberSample(
+  memberDelta = 0
+){
+  if(
+    !Array.isArray(
+      state.player.memberAccounts
+    )
+  ){
+    state.player.memberAccounts = [];
+  }
+
+
+  if(state.player.members <= 0){
+    state.player.memberAccounts = [];
+    return;
+  }
+
+
+  const members =
+    state.player.memberAccounts;
+
+
+  /* 有會員離開時，
+     從目前已知會員觀眾中移除一位 */
+
+  if(memberDelta < 0){
+
+    if(members.length){
+
+      const index =
+        Math.floor(
+          Math.random() *
+          members.length
+        );
+
+      members.splice(
+        index,
+        1
+      );
+    }
+
+    return;
+  }
+
+
+  /* 新增會員時，
+     或總會員已有數字但尚未建立代表帳號，
+     從固定觀眾中選一位 */
+
+  if(
+    memberDelta > 0 ||
+    !members.length
+  ){
+
+    const available =
+      fanAccounts.filter(
+        fan =>
+          !members.includes(fan.id) &&
+          !isBlocked(fan.id)
+      );
+
+
+    const fan =
+      randomItem(available);
+
+
+    if(fan){
+      members.push(fan.id);
+    }
+  }
+}
+
+
+function memberBadgeHTML(){
+  return `
+    <span
+      class="member-badge"
+      title="付費會員"
+    >◆</span>
+  `;
 }
 
 let toastTimer;
@@ -8080,11 +8240,43 @@ function renderLiveChat(){
     const head = document.createElement("div");
     head.className = "chat-line-head";
 
-    const author = document.createElement("span");
-    author.className = "chat-author";
+  const author =
+  document.createElement(
+    "span"
+  );
 
-    author.innerHTML =
-      `${esc(publicAuthor(line.authorId,line.author))}${creatorBadgeHTML(line.authorId)}`;
+
+const member =
+  !line.authorId &&
+  isPlayerMemberFan(
+    line.accountId
+  );
+
+
+author.className =
+  "chat-author" +
+  (
+    member
+      ? " member"
+      : ""
+  );
+
+
+author.innerHTML =
+  `${esc(
+    publicAuthor(
+      line.authorId,
+      line.author
+    )
+  )}${
+    creatorBadgeHTML(
+      line.authorId
+    )
+  }${
+    member
+      ? memberBadgeHTML()
+      : ""
+  }`;
 
     head.append(author);
 
@@ -8100,8 +8292,43 @@ function renderLiveChat(){
 
     const body = document.createElement("div");
 
-    body.textContent =
-      sanitizePublicText(line.text);
+  if(line.donation){
+
+  const safeText =
+    sanitizePublicText(
+      line.text
+    );
+
+  const parts =
+    safeText.split("｜");
+
+  const amount =
+    parts.shift() || "打賞";
+
+  const message =
+    parts.join("｜") ||
+    "支持直播！";
+
+  body.className =
+    "donation-body";
+
+  body.innerHTML = `
+    <strong class="donation-amount">
+      ${esc(amount)}
+    </strong>
+
+    <div class="donation-message">
+      ${esc(message)}
+    </div>
+  `;
+
+}else{
+
+  body.textContent =
+    sanitizePublicText(
+      line.text
+    );
+}
 
     row.append(head,body);
 
@@ -8667,7 +8894,13 @@ $("sendLive").onclick = async () => {
         state.player.peak,
         state.player.viewers
       );
+    
+updateKnownMemberSample(
+  memberDelta
+);
 
+
+/* AI 聊天室 */
 
     /* AI 聊天室 */
 
@@ -9166,8 +9399,43 @@ function renderRoleLive(){
 
     const body = document.createElement("div");
 
-    body.textContent =
-      sanitizePublicText(line.text);
+  if(line.donation){
+
+  const safeText =
+    sanitizePublicText(
+      line.text
+    );
+
+  const parts =
+    safeText.split("｜");
+
+  const amount =
+    parts.shift() || "打賞";
+
+  const message =
+    parts.join("｜") ||
+    "支持直播！";
+
+  body.className =
+    "donation-body";
+
+  body.innerHTML = `
+    <strong class="donation-amount">
+      ${esc(amount)}
+    </strong>
+
+    <div class="donation-message">
+      ${esc(message)}
+    </div>
+  `;
+
+}else{
+
+  body.textContent =
+    sanitizePublicText(
+      line.text
+    );
+}
 
     div.append(head,body);
 
