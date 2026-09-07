@@ -4168,6 +4168,13 @@ textarea::placeholder{
               PRIVATE
             </div>
 
+            <div class="note" style="margin-bottom:12px">
+  圖片預設只保存在本機，不會自動傳送給 AI。
+  只有主動按下「從圖片建立外貌描述」時，
+  該張圖片才會送至目前使用中的模型分析一次。
+  產生的文字可以自行修改後再儲存。
+</div>
+
             <input
               id="charPrivateFile"
               type="file"
@@ -4775,7 +4782,12 @@ textarea::placeholder{
           >
             刪除
           </button>
-
+<button
+  id="playerPrivateDescribe"
+  class="secondary"
+>
+  ✦ 從圖片建立外貌描述
+</button>
         </div>
 
       </div>
@@ -4813,6 +4825,13 @@ textarea::placeholder{
           >
             刪除
           </button>
+
+          <button
+  id="playerPublicDescribe"
+  class="secondary"
+>
+  ✦ 從圖片建立外貌描述
+</button>
 
         </div>
 
@@ -6708,6 +6727,405 @@ function readImage(file,callback){
 
   reader.readAsDataURL(file);
 }
+
+function parseImageDataUrl(dataUrl){
+
+  const match =
+    String(dataUrl || "")
+      .match(
+        /^data:(image\/[^;]+);base64,(.+)$/s
+      );
+
+  if(!match){
+    throw new Error(
+      "目前的圖片資料格式無法送給模型分析。"
+    );
+  }
+
+  return {
+    mimeType:match[1],
+    base64:match[2]
+  };
+}
+
+
+function appearanceDescriptionPrompt(){
+
+  return `
+請根據這張圖片建立一份繁體中文人物外貌描述。
+
+用途：
+這段文字會直接填入 STARWAVE 的人物外貌設定欄位，
+供之後的角色扮演與直播模擬使用。
+
+請只描述圖片中可以直接觀察到的外觀資訊，例如：
+- 髮色、髮型、長度、髮質與瀏海
+- 眼睛顏色與眼型（能辨識時）
+- 臉部輪廓與明顯外貌特徵
+- 身形、體態與整體外觀印象
+- 服裝、配件
+- 表情或明顯姿態特徵
+
+規則：
+- 不要猜測真名
+- 不要猜測實際年齡
+- 不要猜測族裔、國籍
+- 不要猜測性格、職業、背景
+- 不要猜測健康狀況、性向或其他私人資訊
+- 不要寫「圖片中」「這張圖」「看起來像圖片」
+- 不要解釋分析過程
+- 不要使用條列
+- 寫成一段自然、可以直接作為人物設定使用的文字
+- 約 120～250 字
+`;
+}
+
+
+async function describeImageWithCurrentApi(
+  imageDataUrl
+){
+
+  const profile =
+    state.api.profiles[
+      state.api.active
+    ];
+
+
+  if(!profile){
+
+    throw new Error(
+      "找不到目前使用中的 API Profile。"
+    );
+  }
+
+
+  const apiKey =
+    String(
+      profile.apiKey || ""
+    ).trim();
+
+  const model =
+    String(
+      profile.model || ""
+    ).trim();
+
+
+  if(!apiKey){
+
+    throw new Error(
+      "目前使用的 API Profile 尚未設定 API Key。"
+    );
+  }
+
+
+  if(!model){
+
+    throw new Error(
+      "目前使用的 API Profile 尚未設定模型。"
+    );
+  }
+
+
+  const image =
+    parseImageDataUrl(
+      imageDataUrl
+    );
+
+
+  const prompt =
+    appearanceDescriptionPrompt();
+
+
+  /* =========================
+     Gemini：瀏覽器直連圖片理解
+     ========================= */
+
+  if(
+    profile.provider ===
+      "Gemini"
+  ){
+
+    const response =
+      await fetch(
+
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+
+        {
+          method:"POST",
+
+          headers:{
+            "Content-Type":
+              "application/json",
+
+            "x-goog-api-key":
+              apiKey
+          },
+
+          body:JSON.stringify({
+
+            contents:[
+              {
+                role:"user",
+
+                parts:[
+                  {
+                    inline_data:{
+                      mime_type:
+                        image.mimeType,
+
+                      data:
+                        image.base64
+                    }
+                  },
+
+                  {
+                    text:prompt
+                  }
+                ]
+              }
+            ],
+
+            generationConfig:{
+              maxOutputTokens:1024,
+              temperature:0.25
+            }
+          })
+        }
+      );
+
+
+    const data =
+      await readApiJson(
+        response,
+        "Gemini"
+      );
+
+
+    if(!response.ok){
+
+      throw new Error(
+        getApiErrorMessage(
+          data,
+          response.status
+        )
+      );
+    }
+
+
+    const text =
+      data
+        ?.candidates?.[0]
+        ?.content?.parts
+        ?.filter(part =>
+          typeof part.text === "string" &&
+          !part.thought
+        )
+        .map(part =>
+          part.text
+        )
+        .join("")
+        .trim() || "";
+
+
+    if(!text){
+
+      throw new Error(
+        "Gemini 沒有產生外貌描述。"
+      );
+    }
+
+
+    return text;
+  }
+
+
+  /* =========================
+     Ollama Cloud：經 Worker
+     ========================= */
+
+  if(
+    profile.provider ===
+      "Ollama Cloud"
+  ){
+
+    const response =
+      await fetch(
+
+        `${STARWAVE_PROXY_URL}/ollama/generate`,
+
+        {
+          method:"POST",
+
+          headers:{
+            "Content-Type":
+              "application/json"
+          },
+
+          body:JSON.stringify({
+
+            apiKey,
+
+            model,
+
+            prompt,
+
+            maxTokens:1024,
+
+            temperature:0.25,
+
+            imageBase64:
+              image.base64
+          })
+        }
+      );
+
+
+    const data =
+      await readApiJson(
+        response,
+        "Ollama Cloud"
+      );
+
+
+    if(
+      !response.ok ||
+      !data?.ok
+    ){
+
+      throw new Error(
+        getApiErrorMessage(
+          data,
+          response.status
+        )
+      );
+    }
+
+
+    const text =
+      String(
+        data.text || ""
+      ).trim();
+
+
+    if(!text){
+
+      throw new Error(
+        "Ollama Cloud 沒有產生外貌描述。"
+      );
+    }
+
+
+    return text;
+  }
+
+
+  throw new Error(
+    `${profile.provider} 的圖片理解目前尚未開放。請先切換至 Gemini 或 Ollama Cloud。`
+  );
+}
+
+
+async function describePlayerImage(
+  type
+){
+
+  const isPublic =
+    type === "public";
+
+
+  const image =
+    isPublic
+      ? state.player.publicImage
+      : state.player.privateImage;
+
+
+  const button =
+    isPublic
+      ? $("playerPublicDescribe")
+      : $("playerPrivateDescribe");
+
+
+  const target =
+    isPublic
+      ? $("playerPublicAppearance")
+      : $("playerPrivateAppearance");
+
+
+  if(!image){
+
+    showNotice(
+      "尚未上傳圖片",
+      "請先上傳人物圖片，再建立外貌描述。"
+    );
+
+    return;
+  }
+
+
+  button.disabled = true;
+
+  const oldText =
+    button.textContent;
+
+  button.textContent =
+    "AI 分析中……";
+
+
+  try{
+
+    const description =
+      await describeImageWithCurrentApi(
+        image
+      );
+
+
+    target.value =
+      description;
+
+
+    toast(
+      "已建立外貌描述，確認後記得按儲存"
+    );
+
+
+  }catch(error){
+
+    console.error(
+      "STARWAVE image description failed:",
+      error
+    );
+
+
+    showNotice(
+      "圖片分析失敗",
+      error?.message ||
+      "目前使用的模型無法分析這張圖片。"
+    );
+
+
+  }finally{
+
+    button.disabled =
+      false;
+
+    button.textContent =
+      oldText;
+  }
+}
+
+
+$("playerPrivateDescribe").onclick =
+  () =>
+    describePlayerImage(
+      "private"
+    );
+
+
+$("playerPublicDescribe").onclick =
+  () =>
+    describePlayerImage(
+      "public"
+    );
 
 function sanitizePublicText(text){
   let output = String(text ?? "");
