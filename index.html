@@ -3620,17 +3620,25 @@ textarea::placeholder{
         <span id="turnPill" class="pill">回合 0</span>
       </div>
 
-      <div class="toolbar-right">
+    <div class="toolbar-right">
 
-        <button id="rememberLive" class="secondary">
-          ✦ 記住現在
-        </button>
+  <button id="rememberLive" class="secondary">
+    ✦ 記住現在
+  </button>
 
-        <button id="endLive" class="danger">
-          結束直播
-        </button>
+  <button id="rerollLiveTurn" class="secondary">
+    ↻ 重刷上一回合
+  </button>
 
-      </div>
+  <button id="deleteLiveTurn" class="secondary">
+    ⌫ 刪除上一回合
+  </button>
+
+  <button id="endLive" class="danger">
+    結束直播
+  </button>
+
+</div>
 
     </div>
 
@@ -6551,19 +6559,20 @@ const state = {
     liveHistory:[]
   },
 
-  live:{
-    started:false,
-    turn:0,
-    sceneId:"brightRoom",
-    sceneOpacity:80,
-    customScenes:[],
-    bgmUrl:"",
-    bgmVideoId:"",
-    stageEntries:[],
-    chat:[],
-    lastText:"",
-    collabIds:[]
-  },
+live:{
+  started:false,
+  turn:0,
+  sceneId:"brightRoom",
+  sceneOpacity:80,
+  customScenes:[],
+  bgmUrl:"",
+  bgmVideoId:"",
+  stageEntries:[],
+  chat:[],
+  lastText:"",
+  collabIds:[],
+  turnLogs:[]
+},
 
   economy:{
     mode:"light",
@@ -8398,10 +8407,12 @@ state.player.category =
     ? ($("preLiveCategoryCustom").value.trim() || "其他")
     : $("preLiveCategory").value;
 
-  state.live.started = true;
-  state.live.turn = 0;
-  state.live.stageEntries = [];
-  state.live.chat = [];
+state.live.started = true;
+state.live.turn = 0;
+state.live.stageEntries = [];
+state.live.chat = [];
+state.live.lastText = "";
+state.live.turnLogs = [];
 
   state.player.viewers =
     Math.floor(20 + Math.random() * 80);
@@ -8728,12 +8739,193 @@ eventSummary：
 `;
 }
 
+  function deepClone(value){
+  return JSON.parse(
+    JSON.stringify(value)
+  );
+}
 
-$("sendLive").onclick = async () => {
+function captureLiveUndoSnapshot(inputText){
+  return {
+    inputText,
+    snapshot:deepClone({
+      live:{
+        turn:state.live.turn,
+        stageEntries:state.live.stageEntries,
+        chat:state.live.chat,
+        lastText:state.live.lastText
+      },
+
+      player:{
+        viewers:state.player.viewers,
+        subscribers:state.player.subscribers,
+        members:state.player.members,
+        peak:state.player.peak
+      },
+
+      economy:{
+        wallet:state.economy.wallet,
+        donationIncome:state.economy.donationIncome,
+        transactions:state.economy.transactions
+      },
+
+      memorySettings:{
+        counter:state.memorySettings.counter
+      },
+
+      memories:state.memories,
+      forumPosts:state.forumPosts,
+      snsPosts:state.snsPosts,
+      wavelinkRooms:state.wavelinkRooms,
+
+      characters:
+        state.characters.map(character => ({
+          id:character.id,
+          viewers:character.viewers,
+          peak:character.peak
+        }))
+    })
+  };
+}
+
+function restoreLiveUndoSnapshot(record){
+  const snap = record?.snapshot;
+
+  if(!snap){
+    return false;
+  }
+
+  state.live.turn =
+    snap.live.turn;
+
+  state.live.stageEntries =
+    deepClone(
+      snap.live.stageEntries
+    );
+
+  state.live.chat =
+    deepClone(
+      snap.live.chat
+    );
+
+  state.live.lastText =
+    snap.live.lastText || "";
+
+  state.player.viewers =
+    snap.player.viewers;
+
+  state.player.subscribers =
+    snap.player.subscribers;
+
+  state.player.members =
+    snap.player.members;
+
+  state.player.peak =
+    snap.player.peak;
+
+  state.economy.wallet =
+    snap.economy.wallet;
+
+  state.economy.donationIncome =
+    snap.economy.donationIncome;
+
+  state.economy.transactions =
+    deepClone(
+      snap.economy.transactions
+    );
+
+  state.memorySettings.counter =
+    snap.memorySettings.counter;
+
+  state.memories =
+    deepClone(snap.memories);
+
+  state.forumPosts =
+    deepClone(snap.forumPosts);
+
+  state.snsPosts =
+    deepClone(snap.snsPosts);
+
+  state.wavelinkRooms =
+    deepClone(snap.wavelinkRooms);
+
+  const savedMap = new Map(
+    (snap.characters || []).map(
+      item => [item.id,item]
+    )
+  );
+
+  state.characters.forEach(character => {
+    const saved =
+      savedMap.get(character.id);
+
+    if(!saved){
+      return;
+    }
+
+    character.viewers =
+      saved.viewers;
+
+    character.peak =
+      saved.peak;
+  });
+
+  syncLive();
+  renderLiveChat();
+  syncNumbers();
+  renderExplore();
+  renderSubscriptions();
+  renderBackstage();
+  renderLedger();
+  renderForum();
+  renderSns();
+  renderWavelink();
+  renderMemories();
+  renderCharacterMemories();
+
+  if(
+    currentRoleLiveId &&
+    !$("roleLiveOverlay").hidden
+  ){
+    renderRoleLive();
+  }
+
+  scheduleStarwaveSave();
+
+  return true;
+}
+
+function getLastLiveUndo(){
+  if(!Array.isArray(state.live.turnLogs)){
+    state.live.turnLogs = [];
+  }
+
+  return state.live.turnLogs.at(-1) || null;
+}
+
+function setLiveTurnButtonsDisabled(disabled){
+  [
+    "sendLive",
+    "rerollLiveTurn",
+    "deleteLiveTurn"
+  ].forEach(id => {
+    const button = $(id);
+
+    if(button){
+      button.disabled = disabled;
+    }
+  });
+}
+
+async function generatePlayerLiveTurn(
+  inputText,
+  options={}
+){
+  const reroll =
+    Boolean(options.reroll);
 
   const text =
-    $("liveInput")
-      .value
+    String(inputText || "")
       .trim();
 
   if(
@@ -8743,12 +8935,10 @@ $("sendLive").onclick = async () => {
     return;
   }
 
-
   const profile =
     state.api.profiles[
       state.api.active
     ];
-
 
   if(
     !profile ||
@@ -8767,16 +8957,16 @@ $("sendLive").onclick = async () => {
     return;
   }
 
+  const undoRecord =
+    captureLiveUndoSnapshot(text);
 
-  const sendButton =
-    $("sendLive");
-
-  sendButton.disabled = true;
+  setLiveTurnButtonsDisabled(true);
 
   toast(
-    `${profile.provider} 正在生成直播回合……`
+    reroll
+      ? `${profile.provider} 正在重刷直播回合……`
+      : `${profile.provider} 正在生成直播回合……`
   );
-
 
   try{
 
@@ -8800,12 +8990,10 @@ $("sendLive").onclick = async () => {
         json:true
       });
 
-
     const data =
       parseStarwaveLlmJson(
         result.text
       );
-
 
     const stageText =
       sanitizePublicText(
@@ -8814,17 +9002,14 @@ $("sendLive").onclick = async () => {
         ).trim()
       );
 
-
     if(!stageText){
       throw new Error(
         "AI 回傳的直播敘事是空的。"
       );
     }
 
-
     const integerValue =
       value => {
-
         const number =
           Number(value);
 
@@ -8832,7 +9017,6 @@ $("sendLive").onclick = async () => {
           ? Math.trunc(number)
           : 0;
       };
-
 
     const viewerDelta =
       integerValue(
@@ -8849,7 +9033,6 @@ $("sendLive").onclick = async () => {
         data.memberDelta
       );
 
-
     /* 玩家本回合 */
 
     state.live.turn++;
@@ -8864,7 +9047,6 @@ $("sendLive").onclick = async () => {
     state.live.stageEntries.push(
       stageText
     );
-
 
     /* 數字變化 */
 
@@ -8894,13 +9076,6 @@ $("sendLive").onclick = async () => {
         state.player.peak,
         state.player.viewers
       );
-    
-updateKnownMemberSample(
-  memberDelta
-);
-
-
-/* AI 聊天室 */
 
     /* AI 聊天室 */
 
@@ -8908,7 +9083,6 @@ updateKnownMemberSample(
       Array.isArray(data.comments)
         ? data.comments
         : [];
-
 
     comments.forEach(comment => {
 
@@ -8919,17 +9093,14 @@ updateKnownMemberSample(
           ).trim()
         );
 
-
       if(!commentText){
         return;
       }
-
 
       if(
         comment?.kind ===
           "creator"
       ){
-
         const character =
           getCharacter(
             String(
@@ -8937,62 +9108,36 @@ updateKnownMemberSample(
             )
           );
 
-
         if(!character){
           return;
         }
 
-
         state.live.chat.push({
-
-          id:
-            uid("chat"),
-
-          authorId:
-            character.id,
-
-          accountId:
-            null,
-
-          author:
-            publicName(character),
-
-          text:
-            commentText
+          id:uid("chat"),
+          authorId:character.id,
+          accountId:null,
+          author:publicName(character),
+          text:commentText
         });
 
         return;
       }
 
-
       const fan =
         randomAllowedFan();
-
 
       if(!fan){
         return;
       }
 
-
       state.live.chat.push({
-
-        id:
-          uid("chat"),
-
-        authorId:
-          null,
-
-        accountId:
-          fan.id,
-
-        author:
-          fan.name,
-
-        text:
-          commentText
+        id:uid("chat"),
+        authorId:null,
+        accountId:fan.id,
+        author:fan.name,
+        text:commentText
       });
     });
-
 
     /* AI 打賞 */
 
@@ -9009,12 +9154,10 @@ updateKnownMemberSample(
             )
           );
 
-
     if(donationAmount > 0){
 
       const fan =
         randomAllowedFan();
-
 
       if(fan){
 
@@ -9029,7 +9172,6 @@ updateKnownMemberSample(
           ) ||
           "支持直播！";
 
-
         state.economy.wallet +=
           donationAmount;
 
@@ -9037,63 +9179,33 @@ updateKnownMemberSample(
           .donationIncome +=
             donationAmount;
 
-
         addTransaction({
-
-          category:
-            "直播收入",
-
-          item:
-            "觀眾打賞",
-
-          amount:
-            donationAmount,
-
-          source:
-            state.player.title
+          category:"直播收入",
+          item:"觀眾打賞",
+          amount:donationAmount,
+          source:state.player.title
         });
 
-
         state.live.chat.push({
-
-          id:
-            uid("chat"),
-
-          authorId:
-            null,
-
-          accountId:
-            fan.id,
-
-          author:
-            fan.name,
-
-          donation:
-            true,
-
+          id:uid("chat"),
+          authorId:null,
+          accountId:fan.id,
+          author:fan.name,
+          donation:true,
           text:
             `${money(donationAmount)}｜${donationMessage}`
         });
       }
     }
 
-
-    $("liveInput").value =
-      "";
-
+    $("liveInput").value = "";
 
     syncLive();
-
     renderLiveChat();
-
     syncNumbers();
-
     renderExplore();
-
     renderBackstage();
-
     renderLedger();
-
 
     const eventSummary =
       sanitizePublicText(
@@ -9102,22 +9214,25 @@ updateKnownMemberSample(
         ).trim()
       );
 
-
     countRpTurn(
       eventSummary ||
       `玩家直播「${state.player.title}」有新的進展。`
     );
 
-
     triggerAutoContent();
+
+    state.live.turnLogs ||= [];
+    state.live.turnLogs.push(
+      undoRecord
+    );
 
     scheduleStarwaveSave();
 
-
     toast(
-      `直播回合 ${state.live.turn} 已生成`
+      reroll
+        ? `直播回合 ${state.live.turn} 已重刷`
+        : `直播回合 ${state.live.turn} 已生成`
     );
-
 
   }catch(error){
 
@@ -9126,20 +9241,97 @@ updateKnownMemberSample(
       error
     );
 
+    $("liveInput").value =
+      text;
 
     showNotice(
-      "直播生成失敗",
+      reroll
+        ? "直播重刷失敗"
+        : "直播生成失敗",
       error?.message ||
       "LLM 沒有成功產生這一回合，玩家輸入已保留，可以再次送出。"
     );
 
   }finally{
-
-    sendButton.disabled =
-      false;
+    setLiveTurnButtonsDisabled(false);
   }
+}
+
+$("sendLive").onclick = async () => {
+  const text =
+    $("liveInput")
+      .value
+      .trim();
+
+  await generatePlayerLiveTurn(text);
 };
 
+$("rerollLiveTurn").onclick = () => {
+  const record =
+    getLastLiveUndo();
+
+  if(!record){
+    toast("目前沒有可重刷的直播回合");
+    return;
+  }
+
+  const turnNumber =
+    (record.snapshot?.live?.turn || 0) + 1;
+
+  showConfirm({
+    title:"重刷上一回合？",
+    message:
+      `這會先刪除直播回合 ${turnNumber}，再用相同輸入重新生成一次。`,
+    okText:"重刷",
+
+    onConfirm(){
+      (async () => {
+        state.live.turnLogs.pop();
+
+        restoreLiveUndoSnapshot(record);
+
+        $("liveInput").value =
+          record.inputText || "";
+
+        await generatePlayerLiveTurn(
+          record.inputText || "",
+          {reroll:true}
+        );
+      })();
+    }
+  });
+};
+
+$("deleteLiveTurn").onclick = () => {
+  const record =
+    getLastLiveUndo();
+
+  if(!record){
+    toast("目前沒有可刪除的直播回合");
+    return;
+  }
+
+  const turnNumber =
+    (record.snapshot?.live?.turn || 0) + 1;
+
+  showConfirm({
+    title:"刪除上一回合？",
+    message:
+      `這會刪除直播回合 ${turnNumber} 的劇情、聊天室、數值變化與相關記錄。`,
+    okText:"刪除",
+
+    onConfirm(){
+      state.live.turnLogs.pop();
+
+      restoreLiveUndoSnapshot(record);
+
+      toast(
+        `已刪除直播回合 ${turnNumber}`
+      );
+    }
+  });
+};
+  
 $("endLive").onclick = () => {
   showConfirm({
     title:"結束直播？",
@@ -9153,8 +9345,10 @@ $("endLive").onclick = () => {
         peak:state.player.peak
       });
 
-      state.live.started = false;
-      state.player.viewers = 0;
+    state.live.started = false;
+state.player.viewers = 0;
+state.live.turnLogs = [];
+state.live.lastText = "";
 
       syncLive();
       syncNumbers();
