@@ -12308,17 +12308,14 @@ async function fetchLatestModels(index){
   try{
     const response =
       await fetch(
-        `${STARWAVE_PROXY_URL}/gemini/models`,
+        "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000",
         {
-          method:"POST",
+          method:"GET",
 
           headers:{
-            "Content-Type":"application/json"
-          },
-
-          body:JSON.stringify({
-            apiKey:profile.apiKey
-          })
+            "x-goog-api-key":
+              profile.apiKey.trim()
+          }
         }
       );
 
@@ -12328,17 +12325,13 @@ async function fetchLatestModels(index){
       data = await response.json();
     }catch{
       throw new Error(
-        "Proxy 回傳了無法解析的資料。"
+        "Gemini 回傳了無法解析的資料。"
       );
     }
 
-    if(
-      !response.ok ||
-      !data.ok
-    ){
+    if(!response.ok){
       throw new Error(
-        data.details ||
-        data.error ||
+        data?.error?.message ||
         `HTTP ${response.status}`
       );
     }
@@ -12346,13 +12339,24 @@ async function fetchLatestModels(index){
     const models =
       Array.isArray(data.models)
         ? data.models
-            .map(model => model.id)
+            .filter(model =>
+              Array.isArray(
+                model.supportedGenerationMethods
+              ) &&
+              model.supportedGenerationMethods.includes(
+                "generateContent"
+              )
+            )
+            .map(model =>
+              model.name
+                ?.replace(/^models\//, "")
+            )
             .filter(Boolean)
         : [];
 
     if(!models.length){
       throw new Error(
-        "Gemini 沒有回傳可用的文字生成模型。"
+        "Gemini 沒有回傳可用的生成模型。"
       );
     }
 
