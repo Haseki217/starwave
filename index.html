@@ -435,6 +435,13 @@ button:focus-visible{
   font-size:10px;
 }
 
+  #activeApiTop{
+  max-width:220px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+  
 .avatar{
   width:36px;
   height:36px;
@@ -8228,14 +8235,27 @@ function syncLive(){
     $("liveSceneBackground").style.backgroundImage = "";
   }
 
-  $("stageStory").innerHTML =
-    state.live.stageEntries
-      .map(text => `
-        <div class="stage-story-entry">
-          ${esc(text)}
-        </div>
-      `)
-      .join("");
+const storyBox =
+  $("stageStory");
+
+storyBox.innerHTML =
+  state.live.stageEntries
+    .map(text => `
+      <div class="stage-story-entry">
+        ${esc(text)}
+      </div>
+    `)
+    .join("");
+
+requestAnimationFrame(() => {
+  const latest =
+    storyBox.lastElementChild;
+
+  if(latest){
+    storyBox.scrollTop =
+      latest.offsetTop;
+  }
+});
 
   if(state.live.collabIds.length){
     const names =
@@ -8410,8 +8430,20 @@ ${playerText}
 請模擬這一回合發生的結果。
 
 stageText：
-延續玩家輸入，寫出直播畫面中的後續敘事、反應或現場變化。
-不要替主播重新重複玩家剛剛已經說過的內容。
+這是本回合主要的直播劇情內容，必須產生真正的現場敘事，而不是只回覆一句簡短反應。
+
+請根據玩家這一回合的輸入，描寫合理發生的後續，例如：
+- 直播現場、設備、場景或氣氛的變化
+- 玩家已明確做出的行動所造成的結果
+- 觀眾整體反應
+- 若有連動角色，角色合理的公開反應
+- 合理的小事件、意外、互動或直播進展
+
+使用自然的小說式敘事。
+一般約 1～3 段，依當前事件複雜度調整。
+
+不得替玩家自行新增沒有輸入的台詞、重大決定或重大行動。
+不得重新複述玩家剛剛已經說過的內容。
 不要加「主播：」之類標籤。
 
 viewerDelta：
@@ -13426,8 +13458,34 @@ $("saveCharacterLorebooks").onclick = () => {
 };
 
 function updateActiveApiTop(){
+  const profile =
+    state.api.profiles[
+      state.api.active
+    ];
+
+  const model =
+    String(
+      profile?.model || ""
+    ).trim();
+
+  const profileName =
+    String(
+      profile?.name || ""
+    ).trim();
+
   $("activeApiTop").textContent =
+    model ||
+    profileName ||
     `API ${state.api.active + 1}`;
+
+  $("activeApiTop").title =
+    profile
+      ? `${profile.provider}${
+          model
+            ? ` · ${model}`
+            : ""
+        }`
+      : "";
 }
 
 function collectApiDraft(index){
@@ -14991,9 +15049,13 @@ function renderApiProfiles(){
       const index =
         Number(button.dataset.saveApi);
 
-      collectApiDraft(index);
+     collectApiDraft(index);
 
-      toast(`API Profile ${index+1} 已儲存`);
+if(state.api.active === index){
+  updateActiveApiTop();
+}
+
+toast(`API Profile ${index+1} 已儲存`);
 
       renderApiProfiles();
     };
