@@ -7820,9 +7820,230 @@ function syncLive(){
   }
 }
 
-$("sendLive").onclick = () => {
+function parseStarwaveLlmJson(text){
+  let raw =
+    String(text || "").trim();
+
+  raw = raw
+    .replace(/^```json\s*/i,"")
+    .replace(/^```\s*/,"")
+    .replace(/\s*```$/,"")
+    .trim();
+
+  const first =
+    raw.indexOf("{");
+
+  const last =
+    raw.lastIndexOf("}");
+
+  if(
+    first !== -1 &&
+    last > first
+  ){
+    raw =
+      raw.slice(
+        first,
+        last + 1
+      );
+  }
+
+  return JSON.parse(raw);
+}
+
+
+function liveAiPublicCreators(){
+  return state.characters.map(
+    character => ({
+      id:character.id,
+
+      name:
+        publicName(character),
+
+      channel:
+        character.channel || "",
+
+      liveId:
+        character.liveId || "",
+
+      content:
+        character.content || ""
+    })
+  );
+}
+
+
+function buildPlayerLiveAiPrompt(
+  playerText
+){
+  const previousStory =
+    state.live.stageEntries
+      .slice(-8)
+      .map(sanitizePublicText);
+
+  const previousChat =
+    state.live.chat
+      .slice(-8)
+      .map(line => ({
+        author:
+          publicAuthor(
+            line.authorId,
+            line.author
+          ),
+
+        text:
+          sanitizePublicText(
+            line.text
+          )
+      }));
+
+  const creators =
+    liveAiPublicCreators();
+
+  const collabs =
+    state.live.collabIds
+      .map(getCharacter)
+      .filter(Boolean)
+      .map(character => ({
+        id:character.id,
+        name:publicName(character),
+        channel:character.channel || "",
+        content:character.content || ""
+      }));
+
+  return `
+你正在模擬 STARWAVE 中一場公開直播的下一個回合。
+
+【主播公開資料】
+主播名稱：${state.player.name}
+頻道：${state.player.channel}
+直播 ID：${state.player.liveId}
+直播標題：${state.player.title}
+直播分類：${state.player.category}
+主要內容：${state.player.content || "未設定"}
+公開／直播外貌：${state.player.publicAppearance || "未設定"}
+主播形式：${state.player.streamerType || "未設定"}
+VTuber 模型／公開形象設定：${state.player.vtuberModel || "無"}
+
+【目前數字】
+即時觀看：${state.player.viewers}
+訂閱人數：${state.player.subscribers}
+付費會員：${state.player.members}
+
+【社群設定】
+黑粉強度：${state.community.blackfan}%
+柔和社群模式：${state.community.soft ? "ON" : "OFF"}
+
+黑粉規則：
+0% = 完全不得生成針對主播的惡意黑粉、羞辱或攻擊性留言。
+25% = 只有少量質疑或輕微負評。
+50% = 一般網路社群程度，可有正負評價。
+75% = 高壓，負評、挑釁與炎上風險較高。
+100% = 挑戰模式，可大量出現高壓負面評論。
+
+柔和社群 ON 時，即使黑粉強度較高，也降低過度尖銳、羞辱、挑釁與攻擊性表達。
+
+【公開資訊限制】
+這是公開直播。
+不得自行知道、猜測或洩漏：
+- 主播真實姓名
+- 主播私人／現實外貌
+- 私人背景資料
+- 私人 WAVELINK 對話
+- 線下私人事件
+- 角色真名或其他非公開身分
+- 任何未在本提示中提供的私人資訊
+
+只能根據公開資料與公開直播內容生成。
+
+【可在聊天室出現的 STARWAVE 創作者】
+${JSON.stringify(creators)}
+
+如果留言 kind 為 "creator"：
+authorId 必須完全使用上面清單中存在的 id。
+不得自己創造角色 id。
+如果沒有適合的創作者留言，就全部使用 fan。
+
+【本場連動角色】
+${JSON.stringify(collabs)}
+
+【前幾段直播內容】
+${JSON.stringify(previousStory)}
+
+【近期聊天室】
+${JSON.stringify(previousChat)}
+
+【玩家這一回合輸入】
+${playerText}
+
+請模擬這一回合發生的結果。
+
+stageText：
+延續玩家輸入，寫出直播畫面中的後續敘事、反應或現場變化。
+不要替主播重新重複玩家剛剛已經說過的內容。
+不要加「主播：」之類標籤。
+
+viewerDelta：
+即時觀看人數變化，可正、負或 0。
+請依直播內容合理決定，不要每回合都上升。
+
+subscriberDelta：
+訂閱人數變化，可正、負或 0。
+
+memberDelta：
+付費會員變化，可正、負或 0。
+
+comments：
+產生自然的直播聊天室留言。
+不同觀眾語氣應有差異，不要每句都像同一個人。
+可以是 1～6 則。
+kind 只能是 "fan" 或 "creator"。
+fan 的 authorId 請填空字串。
+creator 必須使用上方公開創作者清單裡的 id。
+
+donation：
+依當前直播情況判斷是否有人打賞。
+沒有打賞時 amount 必須為 0。
+有打賞時 amount 為正整數，message 為自然留言。
+目前經濟模式：
+${state.economy.mode}
+
+如果經濟模式為 off，amount 必須為 0。
+
+eventSummary：
+用一句簡短文字描述這回合最重要的公開直播事件。
+如果沒有值得特別記錄的事件，可填空字串。
+
+只輸出一個有效 JSON 物件。
+格式必須是：
+
+{
+  "stageText": "文字",
+  "viewerDelta": 0,
+  "subscriberDelta": 0,
+  "memberDelta": 0,
+  "comments": [
+    {
+      "kind": "fan",
+      "authorId": "",
+      "text": "留言"
+    }
+  ],
+  "donation": {
+    "amount": 0,
+    "message": ""
+  },
+  "eventSummary": ""
+}
+`;
+}
+
+
+$("sendLive").onclick = async () => {
+
   const text =
-    $("liveInput").value.trim();
+    $("liveInput")
+      .value
+      .trim();
 
   if(
     !text ||
@@ -7831,73 +8052,395 @@ $("sendLive").onclick = () => {
     return;
   }
 
-  state.live.turn++;
-  state.live.lastText = text;
 
-  state.live.stageEntries.push(text);
+  const profile =
+    state.api.profiles[
+      state.api.active
+    ];
 
-  state.player.viewers =
-    Math.max(
-      0,
-      state.player.viewers +
-      randomItem([-4,-2,0,0,3,6,12])
-    );
-
-  state.player.peak =
-    Math.max(
-      state.player.peak,
-      state.player.viewers
-    );
-
-  generatePlayerLiveChat();
-
-  if(Math.random() < .35){
-    generatePlayerLiveChat();
-  }
 
   if(
-    state.economy.mode !== "off" &&
-    Math.random() < .25
+    !profile ||
+    !String(
+      profile.apiKey || ""
+    ).trim() ||
+    !String(
+      profile.model || ""
+    ).trim()
   ){
-    const fan = randomAllowedFan();
+    showNotice(
+      "尚未設定可用的 LLM",
+      "請先到「設定 → LLM/API」設定 API Key、模型，並切換到要使用的 API Profile。"
+    );
 
-    const amount =
-      randomItem([50,100,150,300,500]);
-
-    state.economy.wallet += amount;
-    state.economy.donationIncome += amount;
-
-    addTransaction({
-      category:"直播收入",
-      item:"觀眾打賞",
-      amount,
-      source:state.player.title
-    });
-
-    if(fan){
-      state.live.chat.push({
-        id:uid("chat"),
-        authorId:null,
-        accountId:fan.id,
-        author:fan.name,
-        donation:true,
-        text:`${money(amount)}｜支持直播！`
-      });
-    }
+    return;
   }
 
-  $("liveInput").value = "";
 
-  syncLive();
-  renderLiveChat();
-  syncNumbers();
+  const sendButton =
+    $("sendLive");
 
-  countRpTurn(
-    `玩家直播「${state.player.title}」有新的進展。`
+  sendButton.disabled = true;
+
+  toast(
+    `${profile.provider} 正在生成直播回合……`
   );
 
-  triggerAutoContent();
-  
+
+  try{
+
+    const result =
+      await generateWithApi({
+
+        profileIndex:
+          state.api.active,
+
+        prompt:
+          buildPlayerLiveAiPrompt(
+            text
+          ),
+
+        systemInstruction:
+          `你是 STARWAVE 的直播模擬引擎。
+請維持角色與世界資訊差，只使用提示中允許的公開資料。
+公開社群不得洩漏私人資訊。
+請依指定格式輸出有效 JSON。`,
+
+        json:true
+      });
+
+
+    const data =
+      parseStarwaveLlmJson(
+        result.text
+      );
+
+
+    const stageText =
+      sanitizePublicText(
+        String(
+          data.stageText || ""
+        ).trim()
+      );
+
+
+    if(!stageText){
+      throw new Error(
+        "AI 回傳的直播敘事是空的。"
+      );
+    }
+
+
+    const integerValue =
+      value => {
+
+        const number =
+          Number(value);
+
+        return Number.isFinite(number)
+          ? Math.trunc(number)
+          : 0;
+      };
+
+
+    const viewerDelta =
+      integerValue(
+        data.viewerDelta
+      );
+
+    const subscriberDelta =
+      integerValue(
+        data.subscriberDelta
+      );
+
+    const memberDelta =
+      integerValue(
+        data.memberDelta
+      );
+
+
+    /* 玩家本回合 */
+
+    state.live.turn++;
+
+    state.live.lastText =
+      text;
+
+    state.live.stageEntries.push(
+      sanitizePublicText(text)
+    );
+
+    state.live.stageEntries.push(
+      stageText
+    );
+
+
+    /* 數字變化 */
+
+    state.player.viewers =
+      Math.max(
+        0,
+        state.player.viewers +
+        viewerDelta
+      );
+
+    state.player.subscribers =
+      Math.max(
+        0,
+        state.player.subscribers +
+        subscriberDelta
+      );
+
+    state.player.members =
+      Math.max(
+        0,
+        state.player.members +
+        memberDelta
+      );
+
+    state.player.peak =
+      Math.max(
+        state.player.peak,
+        state.player.viewers
+      );
+
+
+    /* AI 聊天室 */
+
+    const comments =
+      Array.isArray(data.comments)
+        ? data.comments
+        : [];
+
+
+    comments.forEach(comment => {
+
+      const commentText =
+        sanitizePublicText(
+          String(
+            comment?.text || ""
+          ).trim()
+        );
+
+
+      if(!commentText){
+        return;
+      }
+
+
+      if(
+        comment?.kind ===
+          "creator"
+      ){
+
+        const character =
+          getCharacter(
+            String(
+              comment.authorId || ""
+            )
+          );
+
+
+        if(!character){
+          return;
+        }
+
+
+        state.live.chat.push({
+
+          id:
+            uid("chat"),
+
+          authorId:
+            character.id,
+
+          accountId:
+            null,
+
+          author:
+            publicName(character),
+
+          text:
+            commentText
+        });
+
+        return;
+      }
+
+
+      const fan =
+        randomAllowedFan();
+
+
+      if(!fan){
+        return;
+      }
+
+
+      state.live.chat.push({
+
+        id:
+          uid("chat"),
+
+        authorId:
+          null,
+
+        accountId:
+          fan.id,
+
+        author:
+          fan.name,
+
+        text:
+          commentText
+      });
+    });
+
+
+    /* AI 打賞 */
+
+    const donationAmount =
+      state.economy.mode ===
+        "off"
+        ? 0
+        : Math.max(
+            0,
+            integerValue(
+              data
+                ?.donation
+                ?.amount
+            )
+          );
+
+
+    if(donationAmount > 0){
+
+      const fan =
+        randomAllowedFan();
+
+
+      if(fan){
+
+        const donationMessage =
+          sanitizePublicText(
+            String(
+              data
+                ?.donation
+                ?.message ||
+              "支持直播！"
+            ).trim()
+          ) ||
+          "支持直播！";
+
+
+        state.economy.wallet +=
+          donationAmount;
+
+        state.economy
+          .donationIncome +=
+            donationAmount;
+
+
+        addTransaction({
+
+          category:
+            "直播收入",
+
+          item:
+            "觀眾打賞",
+
+          amount:
+            donationAmount,
+
+          source:
+            state.player.title
+        });
+
+
+        state.live.chat.push({
+
+          id:
+            uid("chat"),
+
+          authorId:
+            null,
+
+          accountId:
+            fan.id,
+
+          author:
+            fan.name,
+
+          donation:
+            true,
+
+          text:
+            `${money(donationAmount)}｜${donationMessage}`
+        });
+      }
+    }
+
+
+    $("liveInput").value =
+      "";
+
+
+    syncLive();
+
+    renderLiveChat();
+
+    syncNumbers();
+
+    renderExplore();
+
+    renderBackstage();
+
+    renderLedger();
+
+
+    const eventSummary =
+      sanitizePublicText(
+        String(
+          data.eventSummary || ""
+        ).trim()
+      );
+
+
+    countRpTurn(
+      eventSummary ||
+      `玩家直播「${state.player.title}」有新的進展。`
+    );
+
+
+    triggerAutoContent();
+
+    scheduleStarwaveSave();
+
+
+    toast(
+      `直播回合 ${state.live.turn} 已生成`
+    );
+
+
+  }catch(error){
+
+    console.error(
+      "STARWAVE live generation failed:",
+      error
+    );
+
+
+    showNotice(
+      "直播生成失敗",
+      error?.message ||
+      "LLM 沒有成功產生這一回合，玩家輸入已保留，可以再次送出。"
+    );
+
+  }finally{
+
+    sendButton.disabled =
+      false;
+  }
 };
 
 $("endLive").onclick = () => {
