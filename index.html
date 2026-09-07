@@ -12272,11 +12272,182 @@ function collectApiDraft(index){
   return profile;
 }
 
+const DIRECT_CHAT_PROVIDERS = {
+  OpenAI:{
+    modelsUrl:
+      "https://api.openai.com/v1/models",
+
+    chatUrl:
+      "https://api.openai.com/v1/chat/completions"
+  },
+
+  OpenRouter:{
+    modelsUrl:
+      "https://openrouter.ai/api/v1/models",
+
+    chatUrl:
+      "https://openrouter.ai/api/v1/chat/completions"
+  },
+
+  Groq:{
+    modelsUrl:
+      "https://api.groq.com/openai/v1/models",
+
+    chatUrl:
+      "https://api.groq.com/openai/v1/chat/completions"
+  },
+
+  Mistral:{
+    modelsUrl:
+      "https://api.mistral.ai/v1/models",
+
+    chatUrl:
+      "https://api.mistral.ai/v1/chat/completions"
+  },
+
+  xAI:{
+    modelsUrl:
+      "https://api.x.ai/v1/language-models",
+
+    chatUrl:
+      "https://api.x.ai/v1/chat/completions"
+  }
+};
+
+
+async function readApiJson(
+  response,
+  label
+){
+  try{
+    return await response.json();
+
+  }catch{
+    throw new Error(
+      `${label} 回傳了無法解析的資料。`
+    );
+  }
+}
+
+
+function getApiErrorMessage(
+  data,
+  status
+){
+  return (
+    data?.details ||
+    data?.error?.message ||
+    data?.error ||
+    data?.message ||
+    data?.detail ||
+    `HTTP ${status}`
+  );
+}
+
+
+function modelIdsFromResponse(
+  provider,
+  data
+){
+  let list = [];
+
+  if(provider === "Gemini"){
+
+    list =
+      Array.isArray(data?.models)
+        ? data.models
+            .filter(model =>
+              Array.isArray(
+                model
+                  .supportedGenerationMethods
+              ) &&
+              model
+                .supportedGenerationMethods
+                .includes(
+                  "generateContent"
+                )
+            )
+            .map(model =>
+              model.name
+                ?.replace(
+                  /^models\//,
+                  ""
+                )
+            )
+        : [];
+
+  }else if(provider === "xAI"){
+
+    list =
+      Array.isArray(data?.models)
+        ? data.models
+            .map(model =>
+              model?.id
+            )
+        : [];
+
+  }else{
+
+    const raw =
+      Array.isArray(data)
+        ? data
+        : Array.isArray(data?.data)
+          ? data.data
+          : Array.isArray(data?.models)
+            ? data.models
+            : [];
+
+    list =
+      raw
+        .filter(model => {
+
+          if(
+            provider === "Mistral" &&
+            model
+              ?.capabilities
+              ?.completion_chat === false
+          ){
+            return false;
+          }
+
+          return true;
+        })
+        .map(model =>
+          model?.id ||
+          model?.model ||
+          model?.name
+        );
+  }
+
+  return [
+    ...new Set(
+      list
+        .filter(Boolean)
+        .map(String)
+    )
+  ].sort(
+    (a,b) =>
+      a.localeCompare(b)
+  );
+}
+
+
+/* =========================
+   取得最新模型
+   ========================= */
+
 async function fetchLatestModels(index){
+
   const profile =
     collectApiDraft(index);
 
-  if(!profile.apiKey.trim()){
+  const apiKey =
+    String(
+      profile.apiKey || ""
+    ).trim();
+
+  if(!apiKey){
+
     profile.modelStatus =
       "尚未設定 API Key，請先輸入後再取得模型。";
 
@@ -12287,88 +12458,181 @@ async function fetchLatestModels(index){
     return;
   }
 
-  if(profile.provider !== "Gemini"){
-    profile.modelStatus =
-      `${profile.provider} 的模型清單連線尚未開放。`;
-
-    profile.modelStatusType =
-      "error";
-
-    renderApiProfiles();
-    return;
-  }
-
   profile.modelStatus =
-    "正在向 Gemini 取得模型清單……";
+    `正在向 ${profile.provider} 取得模型清單……`;
 
   profile.modelStatusType = "";
 
   renderApiProfiles();
 
   try{
-    const response =
-      await fetch(
+
+    let response;
+    let data;
+
+
+    /* Gemini：直連 */
+
+    if(profile.provider === "Gemini"){
+
+      response = await fetch(
         "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000",
         {
           method:"GET",
 
           headers:{
             "x-goog-api-key":
-              profile.apiKey.trim()
+              apiKey
           }
         }
       );
 
-    let data;
+      data = await readApiJson(
+        response,
+        "Gemini"
+      );
 
-    try{
-      data = await response.json();
-    }catch{
-      throw new Error(
-        "Gemini 回傳了無法解析的資料。"
+
+    /* Anthropic / Ollama：Proxy */
+
+    }else if(
+      profile.provider ===
+        "Anthropic" ||
+
+      profile.provider ===
+        "Ollama Cloud"
+    ){
+
+      const route =
+        profile.provider ===
+          "Anthropic"
+          ? "/anthropic/models"
+          : "/ollama/models";
+
+      response = await fetch(
+        `${STARWAVE_PROXY_URL}${route}`,
+        {
+          method:"POST",
+
+          headers:{
+            "Content-Type":
+              "application/json"
+          },
+
+          body:JSON.stringify({
+            apiKey
+          })
+        }
+      );
+
+      data = await readApiJson(
+        response,
+        profile.provider
+      );
+
+
+    /* 其他供應商：直連 */
+
+    }else{
+
+      const config =
+        DIRECT_CHAT_PROVIDERS[
+          profile.provider
+        ];
+
+      if(!config){
+
+        throw new Error(
+          `不支援的 API 供應商：${profile.provider}`
+        );
+      }
+
+      response = await fetch(
+        config.modelsUrl,
+        {
+          method:"GET",
+
+          headers:{
+            "Authorization":
+              `Bearer ${apiKey}`,
+
+            "Content-Type":
+              "application/json"
+          }
+        }
+      );
+
+      data = await readApiJson(
+        response,
+        profile.provider
       );
     }
 
-    if(!response.ok){
+
+    if(
+      !response.ok ||
+      data?.ok === false
+    ){
+
       throw new Error(
-        data?.error?.message ||
-        `HTTP ${response.status}`
+        getApiErrorMessage(
+          data,
+          response.status
+        )
       );
     }
+
 
     const models =
-      Array.isArray(data.models)
-        ? data.models
-            .filter(model =>
-              Array.isArray(
-                model.supportedGenerationMethods
-              ) &&
-              model.supportedGenerationMethods.includes(
-                "generateContent"
-              )
+      profile.provider ===
+        "Anthropic" ||
+
+      profile.provider ===
+        "Ollama Cloud"
+
+        ? (
+            Array.isArray(
+              data?.models
             )
-            .map(model =>
-              model.name
-                ?.replace(/^models\//, "")
-            )
-            .filter(Boolean)
-        : [];
+              ? data.models
+              : []
+          )
+
+        : modelIdsFromResponse(
+            profile.provider,
+            data
+          );
+
 
     if(!models.length){
+
       throw new Error(
-        "Gemini 沒有回傳可用的生成模型。"
+        `${profile.provider} 沒有回傳可用模型。`
       );
     }
 
-    profile.models = models;
+
+    profile.models = [
+      ...new Set(
+        models
+          .filter(Boolean)
+          .map(String)
+      )
+    ].sort(
+      (a,b) =>
+        a.localeCompare(b)
+    );
+
 
     profile.modelStatus =
-      `已取得 ${models.length} 個 Gemini 模型。`;
+      `已取得 ${profile.models.length} 個 ${profile.provider} 模型。`;
 
     profile.modelStatusType =
       "success";
 
+
   }catch(error){
+
     profile.models = [];
 
     profile.modelStatus =
@@ -12384,6 +12648,11 @@ async function fetchLatestModels(index){
   renderApiProfiles();
 }
 
+
+/* =========================
+   GEMINI Adapter
+   ========================= */
+
 async function generateGeminiText(
   profile,
   {
@@ -12394,25 +12663,39 @@ async function generateGeminiText(
     json = false
   } = {}
 ){
+
   const apiKey =
-    String(profile.apiKey || "").trim();
+    String(
+      profile.apiKey || ""
+    ).trim();
 
   const model =
-    String(profile.model || "").trim();
+    String(
+      profile.model || ""
+    ).trim();
+
 
   if(!apiKey){
-    throw new Error("尚未設定 API Key。");
+    throw new Error(
+      "尚未設定 API Key。"
+    );
   }
 
   if(!model){
-    throw new Error("尚未設定模型。");
+    throw new Error(
+      "尚未設定模型。"
+    );
   }
 
   if(!String(prompt).trim()){
-    throw new Error("沒有可送出的內容。");
+    throw new Error(
+      "沒有可送出的內容。"
+    );
   }
 
+
   const generationConfig = {
+
     maxOutputTokens:
       Math.max(
         1,
@@ -12424,26 +12707,37 @@ async function generateGeminiText(
       )
   };
 
+
   if(
     temperature !== null &&
-    Number.isFinite(Number(temperature))
+    Number.isFinite(
+      Number(temperature)
+    )
   ){
+
     generationConfig.temperature =
       Number(temperature);
   }
 
+
   if(json){
-    generationConfig.responseMimeType =
-      "application/json";
+
+    generationConfig
+      .responseMimeType =
+        "application/json";
   }
 
+
   const requestBody = {
+
     contents:[
       {
         role:"user",
+
         parts:[
           {
-            text:String(prompt)
+            text:
+              String(prompt)
           }
         ]
       }
@@ -12452,21 +12746,33 @@ async function generateGeminiText(
     generationConfig
   };
 
-  if(String(systemInstruction).trim()){
-    requestBody.systemInstruction = {
-      parts:[
-        {
-          text:String(
-            systemInstruction
-          ).trim()
-        }
-      ]
-    };
+
+  if(
+    String(
+      systemInstruction
+    ).trim()
+  ){
+
+    requestBody
+      .systemInstruction = {
+
+        parts:[
+          {
+            text:
+              String(
+                systemInstruction
+              ).trim()
+          }
+        ]
+      };
   }
+
 
   const response =
     await fetch(
+
       `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+
       {
         method:"POST",
 
@@ -12479,44 +12785,53 @@ async function generateGeminiText(
         },
 
         body:
-          JSON.stringify(requestBody)
+          JSON.stringify(
+            requestBody
+          )
       }
     );
 
-  let data;
 
-  try{
-    data =
-      await response.json();
-  }catch{
-    throw new Error(
-      "Gemini 回傳了無法解析的資料。"
+  const data =
+    await readApiJson(
+      response,
+      "Gemini"
     );
-  }
+
 
   if(!response.ok){
+
     throw new Error(
-      data?.error?.message ||
-      `HTTP ${response.status}`
+      getApiErrorMessage(
+        data,
+        response.status
+      )
     );
   }
+
 
   const candidate =
     data?.candidates?.[0];
+
 
   const text =
     candidate
       ?.content
       ?.parts
       ?.filter(part =>
-        typeof part.text === "string" &&
+        typeof part.text ===
+          "string" &&
         !part.thought
       )
-      .map(part => part.text)
+      .map(part =>
+        part.text
+      )
       .join("")
       .trim() || "";
 
+
   if(!text){
+
     throw new Error(
       `Gemini 沒有回傳文字內容${
         candidate?.finishReason
@@ -12526,82 +12841,614 @@ async function generateGeminiText(
     );
   }
 
+
   return {
     text,
-    provider:"Gemini",
+
+    provider:
+      "Gemini",
+
     model,
+
     usage:
-      data?.usageMetadata || null,
+      data?.usageMetadata ||
+      null,
+
     finishReason:
-      candidate?.finishReason || null
+      candidate
+        ?.finishReason ||
+      null
   };
 }
 
 
+/* =========================
+   OpenAI-compatible
+   回覆文字解析
+   ========================= */
+
+function extractChatCompletionText(
+  data
+){
+
+  const content =
+    data
+      ?.choices?.[0]
+      ?.message?.content;
+
+
+  if(typeof content === "string"){
+
+    return content.trim();
+  }
+
+
+  if(Array.isArray(content)){
+
+    return content
+      .map(part => {
+
+        if(
+          typeof part ===
+            "string"
+        ){
+          return part;
+        }
+
+        if(
+          typeof part?.text ===
+            "string"
+        ){
+          return part.text;
+        }
+
+        if(
+          typeof part?.content ===
+            "string"
+        ){
+          return part.content;
+        }
+
+        return "";
+      })
+      .join("")
+      .trim();
+  }
+
+
+  return "";
+}
+
+
+/* =========================
+   OpenAI / OpenRouter
+   Groq / Mistral / xAI
+   共用直連 Adapter
+   ========================= */
+
+async function generateDirectChatText(
+  profile,
+  {
+    prompt = "",
+    systemInstruction = "",
+    maxTokens = null,
+    temperature = null,
+    json = false
+  } = {}
+){
+
+  const provider =
+    profile.provider;
+
+  const config =
+    DIRECT_CHAT_PROVIDERS[
+      provider
+    ];
+
+
+  if(!config){
+
+    throw new Error(
+      `${provider} 尚未設定直連端點。`
+    );
+  }
+
+
+  const apiKey =
+    String(
+      profile.apiKey || ""
+    ).trim();
+
+  const model =
+    String(
+      profile.model || ""
+    ).trim();
+
+
+  if(!apiKey){
+
+    throw new Error(
+      "尚未設定 API Key。"
+    );
+  }
+
+  if(!model){
+
+    throw new Error(
+      "尚未設定模型。"
+    );
+  }
+
+  if(!String(prompt).trim()){
+
+    throw new Error(
+      "沒有可送出的內容。"
+    );
+  }
+
+
+  const messages = [];
+
+
+  if(
+    String(
+      systemInstruction
+    ).trim()
+  ){
+
+    messages.push({
+      role:"system",
+
+      content:
+        String(
+          systemInstruction
+        ).trim()
+    });
+  }
+
+
+  messages.push({
+
+    role:"user",
+
+    content:
+      json
+        ? `${String(prompt)}
+
+請只輸出有效 JSON，不要加入 Markdown code fence 或其他文字。`
+
+        : String(prompt)
+  });
+
+
+  const requestBody = {
+    model,
+    messages
+  };
+
+
+  const tokenCount =
+    Math.max(
+      1,
+      Number(
+        maxTokens ??
+        profile.maxTokens ??
+        25000
+      )
+    );
+
+
+  /*
+    OpenAI 新模型使用
+    max_completion_tokens。
+
+    其他 OpenAI-compatible
+    供應商使用 max_tokens。
+  */
+
+  if(provider === "OpenAI"){
+
+    requestBody
+      .max_completion_tokens =
+        tokenCount;
+
+  }else{
+
+    requestBody.max_tokens =
+      tokenCount;
+  }
+
+
+  if(
+    temperature !== null &&
+    Number.isFinite(
+      Number(temperature)
+    )
+  ){
+
+    requestBody.temperature =
+      Number(temperature);
+  }
+
+
+  const response =
+    await fetch(
+      config.chatUrl,
+      {
+        method:"POST",
+
+        headers:{
+          "Content-Type":
+            "application/json",
+
+          "Authorization":
+            `Bearer ${apiKey}`
+        },
+
+        body:
+          JSON.stringify(
+            requestBody
+          )
+      }
+    );
+
+
+  const data =
+    await readApiJson(
+      response,
+      provider
+    );
+
+
+  if(!response.ok){
+
+    throw new Error(
+      getApiErrorMessage(
+        data,
+        response.status
+      )
+    );
+  }
+
+
+  const text =
+    extractChatCompletionText(
+      data
+    );
+
+
+  if(!text){
+
+    throw new Error(
+      `${provider} 有回應，但沒有取得文字內容。`
+    );
+  }
+
+
+  return {
+
+    text,
+
+    provider,
+
+    model:
+      data?.model ||
+      model,
+
+    usage:
+      data?.usage ||
+      null,
+
+    finishReason:
+      data
+        ?.choices?.[0]
+        ?.finish_reason ||
+      null
+  };
+}
+
+
+/* =========================
+   Anthropic / Ollama Cloud
+   Proxy Adapter
+   ========================= */
+
+async function generateProxyText(
+  profile,
+  {
+    prompt = "",
+    systemInstruction = "",
+    maxTokens = null,
+    temperature = null,
+    json = false
+  } = {}
+){
+
+  const provider =
+    profile.provider;
+
+
+  const route =
+
+    provider === "Anthropic"
+
+      ? "/anthropic/generate"
+
+      : provider ===
+          "Ollama Cloud"
+
+        ? "/ollama/generate"
+
+        : "";
+
+
+  if(!route){
+
+    throw new Error(
+      `${provider} 沒有設定 Proxy 路由。`
+    );
+  }
+
+
+  const apiKey =
+    String(
+      profile.apiKey || ""
+    ).trim();
+
+  const model =
+    String(
+      profile.model || ""
+    ).trim();
+
+
+  if(!apiKey){
+
+    throw new Error(
+      "尚未設定 API Key。"
+    );
+  }
+
+  if(!model){
+
+    throw new Error(
+      "尚未設定模型。"
+    );
+  }
+
+  if(!String(prompt).trim()){
+
+    throw new Error(
+      "沒有可送出的內容。"
+    );
+  }
+
+
+  const response =
+    await fetch(
+
+      `${STARWAVE_PROXY_URL}${route}`,
+
+      {
+        method:"POST",
+
+        headers:{
+          "Content-Type":
+            "application/json"
+        },
+
+        body:
+          JSON.stringify({
+
+            apiKey,
+
+            model,
+
+            prompt:
+              String(prompt),
+
+            systemInstruction:
+              String(
+                systemInstruction ||
+                ""
+              ),
+
+            maxTokens:
+              Math.max(
+                1,
+                Number(
+                  maxTokens ??
+                  profile.maxTokens ??
+                  25000
+                )
+              ),
+
+            temperature,
+
+            json:
+              Boolean(json)
+          })
+      }
+    );
+
+
+  const data =
+    await readApiJson(
+      response,
+      provider
+    );
+
+
+  if(
+    !response.ok ||
+    !data?.ok
+  ){
+
+    throw new Error(
+      getApiErrorMessage(
+        data,
+        response.status
+      )
+    );
+  }
+
+
+  const text =
+    String(
+      data.text || ""
+    ).trim();
+
+
+  if(!text){
+
+    throw new Error(
+      `${provider} 有回應，但沒有取得文字內容。`
+    );
+  }
+
+
+  return {
+
+    text,
+
+    provider,
+
+    model:
+      data.model ||
+      model,
+
+    usage:
+      data.usage ||
+      null,
+
+    finishReason:
+      data.finishReason ||
+      null
+  };
+}
+
+
+/* =========================
+   STARWAVE 共用 LLM 入口
+   ========================= */
+
 async function generateWithApi({
-  profileIndex = state.api.active,
+
+  profileIndex =
+    state.api.active,
+
   prompt = "",
+
   systemInstruction = "",
+
   maxTokens = null,
+
   temperature = null,
+
   json = false
+
 } = {}){
+
+
   const profile =
     state.api.profiles[
       profileIndex
     ];
 
+
   if(!profile){
+
     throw new Error(
       "找不到目前使用中的 API Profile。"
     );
   }
 
-  switch(profile.provider){
 
-    case "Gemini":
-      return generateGeminiText(
-        profile,
-        {
-          prompt,
-          systemInstruction,
-          maxTokens,
-          temperature,
-          json
-        }
-      );
+  /* Gemini */
 
-    case "Anthropic":
-      throw new Error(
-        "Anthropic Proxy 尚未接線。"
-      );
+  if(
+    profile.provider ===
+      "Gemini"
+  ){
 
-    case "Ollama Cloud":
-      throw new Error(
-        "Ollama Cloud Proxy 尚未接線。"
-      );
-
-    case "OpenAI":
-    case "OpenRouter":
-    case "Groq":
-    case "Mistral":
-    case "xAI":
-      throw new Error(
-        `${profile.provider} 尚未接線。`
-      );
-
-    default:
-      throw new Error(
-        `不支援的 API 供應商：${profile.provider}`
-      );
+    return generateGeminiText(
+      profile,
+      {
+        prompt,
+        systemInstruction,
+        maxTokens,
+        temperature,
+        json
+      }
+    );
   }
+
+
+  /* Proxy */
+
+  if(
+    profile.provider ===
+      "Anthropic" ||
+
+    profile.provider ===
+      "Ollama Cloud"
+  ){
+
+    return generateProxyText(
+      profile,
+      {
+        prompt,
+        systemInstruction,
+        maxTokens,
+        temperature,
+        json
+      }
+    );
+  }
+
+
+  /* OpenAI-compatible */
+
+  if(
+    DIRECT_CHAT_PROVIDERS[
+      profile.provider
+    ]
+  ){
+
+    return generateDirectChatText(
+      profile,
+      {
+        prompt,
+        systemInstruction,
+        maxTokens,
+        temperature,
+        json
+      }
+    );
+  }
+
+
+  throw new Error(
+    `不支援的 API 供應商：${profile.provider}`
+  );
 }
-  
+
+
+/* =========================
+   API 測試連線
+   ========================= */
+
 async function testApiConnection(index){
+
   const profile =
     collectApiDraft(index);
 
-  if(!profile.apiKey.trim()){
+
+  if(
+    !String(
+      profile.apiKey || ""
+    ).trim()
+  ){
+
     profile.modelStatus =
       "測試失敗：尚未設定 API Key。";
 
@@ -12612,7 +13459,13 @@ async function testApiConnection(index){
     return;
   }
 
-  if(!profile.model.trim()){
+
+  if(
+    !String(
+      profile.model || ""
+    ).trim()
+  ){
+
     profile.modelStatus =
       "測試失敗：請先選擇或輸入模型。";
 
@@ -12623,6 +13476,7 @@ async function testApiConnection(index){
     return;
   }
 
+
   profile.modelStatus =
     `正在測試 ${profile.provider} 連線……`;
 
@@ -12630,18 +13484,20 @@ async function testApiConnection(index){
 
   renderApiProfiles();
 
+
   try{
+
     const result =
       await generateWithApi({
+
         profileIndex:index,
 
         prompt:
           "這是 STARWAVE API 連線測試。請只回覆：STARWAVE CONNECTED",
 
-        maxTokens:64,
-
-        temperature:0
+        maxTokens:64
       });
+
 
     profile.modelStatus =
       `連線成功：${result.text}`;
@@ -12649,11 +13505,14 @@ async function testApiConnection(index){
     profile.modelStatusType =
       "success";
 
+
     toast(
       `${profile.provider} API 連線成功`
     );
 
+
   }catch(error){
+
     profile.modelStatus =
       `測試失敗：${
         error?.message ||
@@ -12663,6 +13522,7 @@ async function testApiConnection(index){
     profile.modelStatusType =
       "error";
   }
+
 
   renderApiProfiles();
 }
