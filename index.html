@@ -999,10 +999,29 @@ textarea::placeholder{
   color:white;
   font-size:13px;
   line-height:1.56;
-  white-space:pre-wrap;
+  white-space:normal;
   text-shadow:
     0 1px 4px rgba(7,20,30,.82),
     0 0 12px rgba(7,20,30,.28);
+}
+
+  .live-story-turn{
+  margin:0 0 .65rem;
+}
+
+.live-story-turn:last-child{
+  margin-bottom:0;
+}
+
+.live-story-input,
+.live-story-ai{
+  margin:0;
+  white-space:pre-wrap;
+}
+
+.live-story-input{
+  margin-bottom:.22rem;
+  opacity:.88;
 }
 
 .stage-story-entry + .stage-story-entry{
@@ -8508,35 +8527,31 @@ for(
   });
 }
 
+const liveTurns = [];
+
+for(
+  let i = 0;
+  i < state.live.stageEntries.length;
+  i += 2
+){
+  liveTurns.push({
+    input:
+      state.live.stageEntries[i] || "",
+
+    ai:
+      state.live.stageEntries[i + 1] || ""
+  });
+}
+
 storyBox.innerHTML =
   liveTurns
     .map(turn => `
-      <div
-        style="
-          margin-bottom:14px;
-          line-height:1.7;
-        "
-      >
-
-        <div
-          style="
-            margin-bottom:7px;
-            opacity:.82;
-          "
-        >
-          ${esc(turn.input)}
-        </div>
-
-        ${
-          turn.story
-            ? `
-              <div>
-                ${esc(turn.story)}
-              </div>
-            `
+      <div class="live-story-turn">
+        <div class="live-story-input">${esc(turn.input)}</div>${
+          turn.ai
+            ? `<div class="live-story-ai">${esc(turn.ai)}</div>`
             : ""
         }
-
       </div>
     `)
     .join("");
@@ -8547,10 +8562,13 @@ requestAnimationFrame(() => {
 
   if(latest){
     storyBox.scrollTop =
-      latest.offsetTop;
+      Math.max(
+        0,
+        latest.offsetTop - 6
+      );
   }
 });
-
+  
   if(state.live.collabIds.length){
     const names =
       state.live.collabIds
