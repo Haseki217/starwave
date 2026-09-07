@@ -4198,6 +4198,13 @@ textarea::placeholder{
                 刪除
               </button>
 
+              <button
+  id="charPrivateDescribe"
+  class="secondary"
+>
+  ✦ 從圖片建立外貌描述
+</button>
+              
             </div>
 
           </div>
@@ -4236,6 +4243,13 @@ textarea::placeholder{
                 刪除
               </button>
 
+              <button
+  id="charPublicDescribe"
+  class="secondary"
+>
+  ✦ 從圖片建立外貌描述
+</button>
+              
             </div>
 
           </div>
@@ -11306,6 +11320,12 @@ function fillCharacter(){
   $("charPublicDelete").disabled =
     !character.publicImage;
 
+  $("charPrivateDescribe").disabled =
+  !character.privateImage;
+
+$("charPublicDescribe").disabled =
+  !character.publicImage;
+
   $("charName").value = character.name;
   $("charStreamerName").value = character.streamerName;
   $("charAge").value = character.age;
@@ -11386,6 +11406,208 @@ $("charPublicFile").onchange = event => {
   });
 };
 
+const CHARACTER_APPEARANCE_MARKERS = {
+  public:{
+    start:"【STARWAVE｜公開／直播外貌】",
+    end:"【STARWAVE｜公開／直播外貌 END】"
+  },
+
+  private:{
+    start:"【STARWAVE｜私人／現實外貌】",
+    end:"【STARWAVE｜私人／現實外貌 END】"
+  }
+};
+
+
+function upsertCharacterCardAppearance(
+  cardText,
+  type,
+  description
+){
+  const markers =
+    CHARACTER_APPEARANCE_MARKERS[type];
+
+  if(!markers){
+    return String(cardText || "");
+  }
+
+  const text =
+    String(cardText || "");
+
+  const cleanDescription =
+    String(description || "").trim();
+
+  const block =
+`${markers.start}
+${cleanDescription}
+${markers.end}`;
+
+
+  const startIndex =
+    text.indexOf(
+      markers.start
+    );
+
+
+  if(startIndex !== -1){
+
+    const endIndex =
+      text.indexOf(
+        markers.end,
+        startIndex +
+          markers.start.length
+      );
+
+
+    if(endIndex !== -1){
+
+      const before =
+        text.slice(
+          0,
+          startIndex
+        );
+
+      const after =
+        text.slice(
+          endIndex +
+            markers.end.length
+        );
+
+
+      return (
+        before +
+        block +
+        after
+      );
+    }
+  }
+
+
+  if(!text.trim()){
+    return block;
+  }
+
+
+  return (
+    text.trimEnd() +
+    "\n\n" +
+    block
+  );
+}
+
+
+async function describeCharacterImage(
+  type
+){
+  const character =
+    getCharacter(
+      state.selectedCharacter
+    );
+
+
+  if(!character){
+    return;
+  }
+
+
+  const isPublic =
+    type === "public";
+
+
+  const image =
+    isPublic
+      ? character.publicImage
+      : character.privateImage;
+
+
+  const button =
+    isPublic
+      ? $("charPublicDescribe")
+      : $("charPrivateDescribe");
+
+
+  if(!image){
+
+    showNotice(
+      "尚未上傳圖片",
+      "請先上傳角色圖片，再建立外貌描述。"
+    );
+
+    return;
+  }
+
+
+  button.disabled = true;
+
+  const oldText =
+    button.textContent;
+
+  button.textContent =
+    "AI 分析中……";
+
+
+  try{
+
+    const description =
+      await describeImageWithCurrentApi(
+        image
+      );
+
+
+    $("charCard").value =
+      upsertCharacterCardAppearance(
+        $("charCard").value,
+        type,
+        description
+      );
+
+
+    toast(
+      isPublic
+        ? "已加入公開／直播外貌，確認後記得按儲存"
+        : "已加入私人／現實外貌，確認後記得按儲存"
+    );
+
+
+  }catch(error){
+
+    console.error(
+      "STARWAVE character image description failed:",
+      error
+    );
+
+
+    showNotice(
+      "圖片分析失敗",
+      error?.message ||
+      "目前使用的模型無法分析這張角色圖片。"
+    );
+
+
+  }finally{
+
+    button.disabled =
+      false;
+
+    button.textContent =
+      oldText;
+  }
+}
+
+
+$("charPrivateDescribe").onclick =
+  () =>
+    describeCharacterImage(
+      "private"
+    );
+
+
+$("charPublicDescribe").onclick =
+  () =>
+    describeCharacterImage(
+      "public"
+    );
+  
 $("charPrivateDelete").onclick = () => {
   const character =
     getCharacter(state.selectedCharacter);
