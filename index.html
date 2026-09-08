@@ -3743,6 +3743,11 @@ textarea::placeholder{
                 id="liveChannelText"
                 class="channel-meta"
               ></div>
+              <div
+               id="liveDateText"
+                class="channel-meta"
+                hidden
+               ></div>
             </div>
 
           </div>
@@ -5239,6 +5244,33 @@ textarea::placeholder{
 
       </div>
 
+<div class="setting-row">
+
+  <div>
+    <strong>使用現實時間</strong>
+    <small>
+      開啟後使用玩家裝置的日期與時間。
+    </small>
+  </div>
+
+  <div class="switch-row">
+
+    <button
+      id="realTimeSwitch"
+      class="switch"
+    ></button>
+
+    <span
+      id="realTimeLabel"
+      class="switch-label"
+    >
+      OFF
+    </span>
+
+  </div>
+
+</div>
+      
       <div class="setting-row">
 
         <div>
@@ -6307,6 +6339,53 @@ function currentTimeShort(){
   );
 }
 
+  function realTimeEnabled(){
+  return Boolean(
+    state.timeSettings?.useRealTime
+  );
+}
+
+function currentRpDate(){
+  if(!realTimeEnabled()){
+    return "";
+  }
+
+  return new Date().toLocaleDateString(
+    "zh-TW",
+    {
+      year:"numeric",
+      month:"2-digit",
+      day:"2-digit"
+    }
+  );
+}
+
+function currentRpDateTime(){
+  if(!realTimeEnabled()){
+    return "";
+  }
+
+  return new Date().toLocaleString(
+    "zh-TW",
+    {
+      year:"numeric",
+      month:"2-digit",
+      day:"2-digit",
+      hour:"2-digit",
+      minute:"2-digit",
+      hour12:false
+    }
+  );
+}
+
+function currentRpTimeShort(){
+  if(!realTimeEnabled()){
+    return "";
+  }
+
+  return currentTimeShort();
+}
+
 const builtInScenes = [
   {
     id:"brightRoom",
@@ -6538,6 +6617,11 @@ const state = {
     soft:true
   },
 
+  timeSettings:{
+  useRealTime:false
+},
+
+  
   moderation:{
     blockedAccounts:[]
   },
@@ -6627,6 +6711,7 @@ live:{
   chat:[],
   lastText:"",
   collabIds:[],
+  date:"",
   turnLogs:[]
 },
 
@@ -7734,6 +7819,48 @@ $("softSocialSwitch").onclick = () => {
   updateCommunityUI();
 };
 
+function updateRealTimeUI(){
+  const enabled =
+    realTimeEnabled();
+
+  $("realTimeSwitch")
+    .classList.toggle(
+      "on",
+      enabled
+    );
+
+  $("realTimeLabel").textContent =
+    enabled
+      ? "ON"
+      : "OFF";
+}
+
+
+$("realTimeSwitch").onclick = () => {
+
+  state.timeSettings.useRealTime =
+    !realTimeEnabled();
+
+  if(
+    realTimeEnabled() &&
+    state.live.started &&
+    !state.live.date
+  ){
+    state.live.date =
+      currentRpDate();
+  }
+
+  updateRealTimeUI();
+
+  syncLive();
+  renderForum();
+  renderSns();
+  renderWavelink();
+  renderOffline();
+
+  scheduleStarwaveSave();
+};
+  
 function fanCommentPool(){
   const positive = [
     "剛剛那句笑死",
@@ -7751,7 +7878,7 @@ function fanCommentPool(){
 
   const mild = [
     "今天節奏好像有點慢",
-    "我比較喜歡上次那場",
+    "我比較喜歡別種風格",
     "這個話題我有點跟不上",
     "剛才那段是不是有點尷尬"
   ];
@@ -8465,6 +8592,8 @@ state.player.category =
 
 state.live.started = true;
 state.live.turn = 0;
+state.live.date =
+  currentRpDate();
 state.live.stageEntries = [];
 state.live.chat = [];
 state.live.lastText = "";
@@ -8540,6 +8669,15 @@ function syncLive(){
 
   $("liveChannelText").textContent =
     `${state.player.channel} · ${state.player.category}`;
+
+  $("liveDateText").hidden =
+  !realTimeEnabled() ||
+  !state.live.date;
+
+$("liveDateText").textContent =
+  realTimeEnabled()
+    ? state.live.date
+    : "";
 
   $("viewerNumber").textContent =
     fmt(state.player.viewers);
@@ -10076,7 +10214,7 @@ function handleOfflineInviteFromPlayer(room,text){
     if(looksLikeAccept(text)){
       unlockOffline(character);
 
-      room.messages.push({
+      pushWlMessage(room,{
         id:uid("wm"),
         authorId:character.id,
         text:"那就說好了。時間跟地點我們再確認。"
@@ -10089,7 +10227,7 @@ function handleOfflineInviteFromPlayer(room,text){
       character.offlineStatus = "locked";
       character.offlinePendingBy = null;
 
-      room.messages.push({
+      pushWlMessage(room,{
         id:uid("wm"),
         authorId:character.id,
         text:"好，那就先不約。"
@@ -10110,7 +10248,7 @@ function handleOfflineInviteFromPlayer(room,text){
       Math.random() < .78;
 
     if(accepts){
-      room.messages.push({
+      pushWlMessage(room,{
         id:uid("wm"),
         authorId:character.id,
         text:"可以啊。那我們找個時間私下見面？"
@@ -10118,7 +10256,7 @@ function handleOfflineInviteFromPlayer(room,text){
 
       unlockOffline(character);
     }else{
-      room.messages.push({
+      pushWlMessage(room,{
         id:uid("wm"),
         authorId:character.id,
         text:"這次可能不太方便，之後再說吧。"
@@ -10150,6 +10288,20 @@ function activeRoomMembers(room){
     .filter(Boolean);
 }
 
+function pushWlMessage(
+  room,
+  message
+){
+  message.time =
+    currentRpTimeShort();
+
+  room.messages.push(
+    message
+  );
+
+  return message;
+}
+  
 function renderWavelink(){
   renderWavelinkRooms();
   renderWavelinkConversation();
@@ -10371,6 +10523,33 @@ function renderWavelinkConversation(){
 
     bubble.append(text);
 
+    if(
+  realTimeEnabled() &&
+  message.time
+){
+  const time =
+    document.createElement(
+      "small"
+    );
+
+  time.textContent =
+    message.time;
+
+  time.style.cssText = `
+    display:block;
+    margin-top:4px;
+    font-size:8px;
+    opacity:.6;
+    text-align:${
+      message.authorId === "player"
+        ? "right"
+        : "left"
+    };
+  `;
+
+  bubble.append(time);
+}
+
     $("wlMessages").append(bubble);
   });
 
@@ -10415,7 +10594,7 @@ $("sendWl").onclick = () => {
     return;
   }
 
-  room.messages.push({
+  pushWlMessage(room,{
     id:uid("wm"),
     authorId:"player",
     text
@@ -10447,7 +10626,7 @@ $("sendWl").onclick = () => {
         .slice(0,replyCount);
 
     speakers.forEach(character => {
-      room.messages.push({
+      pushWlMessage(room,{
         id:uid("wm"),
         authorId:character.id,
         text:randomItem([
@@ -10465,7 +10644,7 @@ $("sendWl").onclick = () => {
       speakers.length >= 2 &&
       Math.random() < .35
     ){
-      room.messages.push({
+      pushWlMessage(room,{
         id:uid("wm"),
         authorId:speakers[1].id,
         text:
@@ -10520,7 +10699,7 @@ $("refreshWl").onclick = () => {
     character.offlineStatus = "pending";
     character.offlinePendingBy = "character";
 
-    room.messages.push({
+    pushWlMessage(room,{
       id:uid("wm"),
       authorId:character.id,
       text:
@@ -10542,7 +10721,7 @@ $("refreshWl").onclick = () => {
       .sort(() => Math.random() - .5)
       .slice(0,amount)
       .forEach(character => {
-        room.messages.push({
+        pushWlMessage(room,{
           id:uid("wm"),
           authorId:character.id,
           text:randomItem([
@@ -10769,7 +10948,7 @@ $("startVoiceCall").onclick = () => {
     }
   ];
 
-  room.messages.push({
+  pushWlMessage(room,{
     id:uid("wm"),
     system:true,
     text:"〔模擬語音通話開始〕"
@@ -10812,7 +10991,7 @@ $("sendVoice").onclick = () => {
     text
   });
 
-  room.messages.push({
+  pushWlMessage(room,{
     id:uid("wm"),
     authorId:"player",
     text:`〔語音〕${text}`
@@ -10852,7 +11031,7 @@ $("sendVoice").onclick = () => {
       text:response
     });
 
-    room.messages.push({
+    pushWlMessage(room,{
       id:uid("wm"),
       authorId:character.id,
       text:`〔語音〕${response}`
@@ -10872,7 +11051,7 @@ $("sendVoice").onclick = () => {
       text:response
     });
 
-    room.messages.push({
+    pushWlMessage(room,{
       id:uid("wm"),
       authorId:speakers[1].id,
       text:`〔語音〕${response}`
@@ -10895,7 +11074,7 @@ $("endVoiceCall").onclick = () => {
     getRoom(voiceCall.roomId);
 
   if(room){
-    room.messages.push({
+    pushWlMessage(room,{
       id:uid("wm"),
       system:true,
       text:"〔模擬語音通話結束〕"
@@ -11014,8 +11193,13 @@ function renderOfflineStage(){
   $("offlineLocation").textContent =
     `與 ${character.name} 的私人時間`;
 
-  $("offlineTime").textContent =
-    new Date().toLocaleString("zh-TW");
+  $("offlineTime").hidden =
+  !realTimeEnabled();
+
+$("offlineTime").textContent =
+  realTimeEnabled()
+    ? currentRpDateTime()
+    : "";
 
   $("offlineParticipants").innerHTML = "";
 
@@ -12588,9 +12772,13 @@ function renderForum(){
         </div>
 
         <div class="forum-topic-meta">
-          ${esc(publicAuthor(post.authorId,post.author))}
-          ·
-          ${esc(post.createdAt)}
+         ${esc(publicAuthor(post.authorId,post.author))}
+${
+  realTimeEnabled() &&
+  post.createdAt
+    ? ` · ${esc(post.createdAt)}`
+    : ""
+}
         </div>
 
       </div>
@@ -12732,7 +12920,10 @@ function renderForumThread(){
       const meta = document.createElement("div");
       meta.className = "forum-reply-meta";
 
-      if(reply.time){
+     if(
+  realTimeEnabled() &&
+  reply.time
+){
         const time = document.createElement("span");
         time.textContent = reply.time;
 
@@ -12799,7 +12990,7 @@ $("sendForumReply").onclick = () => {
     parentId:forumReplyParentId,
     author:state.player.name,
     authorId:"player",
-    time:currentTimeShort(),
+    time:currentRpTimeShort(),
     text:sanitizePublicText(text)
   });
 
@@ -12854,7 +13045,7 @@ function generateForumNow(count=2){
         role?.id ||
         null,
       createdAt:
-        new Date().toLocaleString("zh-TW"),
+  currentRpDateTime(),
       body:
         sanitizePublicText(
           state.live.lastText ||
@@ -13024,7 +13215,12 @@ function renderSns(){
         <span class="sns-meta">
           ${esc(publicHandle(post.authorId,post.handle))}
           ·
-          ${esc(post.createdAt || "現在")}
+          ${
+  realTimeEnabled() &&
+  post.createdAt
+    ? esc(post.createdAt)
+    : ""
+}
         </span>
 
       </div>
@@ -13117,7 +13313,7 @@ function renderSns(){
         authorId:"player",
         author:state.player.name,
         handle:state.player.snsId,
-        time:"現在",
+        time:currentRpTimeShort(),
         text:sanitizePublicText(value),
         likes:0,
         likedByPlayer:false
@@ -13239,8 +13435,14 @@ function renderSnsCommentTree(
     time.className =
       "sns-comment-time";
 
-    time.textContent =
-      `· ${comment.time || "現在"}`;
+   time.hidden =
+  !realTimeEnabled() ||
+  !comment.time;
+
+time.textContent =
+  comment.time
+    ? `· ${comment.time}`
+    : "";
 
     head.append(name,handle,time);
 
@@ -13363,7 +13565,7 @@ function renderSnsCommentTree(
           authorId:"player",
           author:state.player.name,
           handle:state.player.snsId,
-          time:"現在",
+          time:currentRpTimeShort(),
           text:sanitizePublicText(value),
           likes:0,
           likedByPlayer:false
@@ -13406,7 +13608,7 @@ $("sendSns").onclick = () => {
     authorId:"player",
     name:state.player.name,
     handle:state.player.snsId,
-    createdAt:"現在",
+    createdAt:currentRpDateTime(),
     text:sanitizePublicText(text),
     likes:0,
     likedByPlayer:false,
@@ -13449,7 +13651,7 @@ function generateSnsNow(count=2){
       handle:
         character?.snsId ||
         fan.handle,
-      createdAt:"現在",
+      createdAt:currentRpDateTime(),
       text:
         sanitizePublicText(
           randomItem([
@@ -15882,7 +16084,7 @@ function triggerAutoContent(){
         .sort(() => Math.random() - .5)
         .slice(0,amount)
         .forEach(character => {
-          room.messages.push({
+          pushWlMessage(room,{
             id:uid("wm"),
             authorId:character.id,
             text:randomItem([
@@ -16288,6 +16490,7 @@ function fullRender(){
   fillProfile();
 
   updateCommunityUI();
+  updateRealTimeUI();
   updateActiveApiTop();
 
   syncRefreshSelects();
