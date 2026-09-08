@@ -3645,6 +3645,10 @@ textarea::placeholder{
     ✦ 記住現在
   </button>
 
+      <button id="toggleLiveSettings" class="secondary">
+  ⚙ 本場設定
+</button>
+
   <button id="endLive" class="danger">
     結束直播
   </button>
@@ -3652,6 +3656,23 @@ textarea::placeholder{
 </div>
 
     </div>
+
+    <div
+  id="liveSettingsDrawer"
+  class="live-config"
+  hidden
+  style="margin-bottom:10px"
+>
+  <div class="section-head">
+    <h3>本場設定</h3>
+    <small>LIVE SETTINGS</small>
+  </div>
+
+  <div
+    id="liveSettingsFields"
+    class="form-grid"
+  ></div>
+</div>
 
     <div id="bgmContainer" hidden style="margin-bottom:9px">
 
@@ -8461,7 +8482,53 @@ state.live.turnLogs = [];
   
 };
 
+function syncLiveSettingsLocation(){
+
+  const preGrid =
+    $("preLiveConfig")
+      .querySelector(".form-grid");
+
+  const liveGrid =
+    $("liveSettingsFields");
+
+  const fields = [
+    $("scenePicker")?.closest(".field"),
+    $("customSceneFile")?.closest(".field"),
+    $("sceneOpacity")?.closest(".field"),
+    $("bgmUrl")?.closest(".field")
+  ].filter(Boolean);
+
+
+  const target =
+    state.live.started
+      ? liveGrid
+      : preGrid;
+
+
+  fields.forEach(field => {
+
+    if(
+      field.parentElement !== target
+    ){
+      target.append(field);
+    }
+  });
+
+
+  $("toggleLiveSettings").hidden =
+    !state.live.started;
+
+
+  if(!state.live.started){
+    $("liveSettingsDrawer").hidden =
+      true;
+  }
+}
+  
 function syncLive(){
+
+  syncLiveSettingsLocation();
+
   $("preLiveConfig").hidden =
     state.live.started;
 
@@ -9469,6 +9536,12 @@ $("deleteLiveTurn").onclick = () => {
       );
     }
   });
+};
+
+$("toggleLiveSettings").onclick = () => {
+
+  $("liveSettingsDrawer").hidden =
+    !$("liveSettingsDrawer").hidden;
 };
   
 $("endLive").onclick = () => {
