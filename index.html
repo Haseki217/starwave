@@ -13803,6 +13803,56 @@ $("charPublicDescribe").disabled =
   renderCharacterLorebookLinks();
 }
 
+  function refreshCharacterImageUI(
+  character
+){
+  if(!character){
+    return;
+  }
+
+  setImageBox(
+    $("channelPortrait"),
+    character.publicImage,
+    initials(
+      publicName(character)
+    )
+  );
+
+  setImageBox(
+    $("charPrivatePreview"),
+    character.privateImage,
+    "PRIVATE"
+  );
+
+  setImageBox(
+    $("charPublicPreview"),
+    character.publicImage,
+    "PUBLIC"
+  );
+
+  $("charPrivateUpload").textContent =
+    character.privateImage
+      ? "更換圖片"
+      : "上傳圖片";
+
+  $("charPublicUpload").textContent =
+    character.publicImage
+      ? "更換圖片"
+      : "上傳圖片";
+
+  $("charPrivateDelete").disabled =
+    !character.privateImage;
+
+  $("charPublicDelete").disabled =
+    !character.publicImage;
+
+  $("charPrivateDescribe").disabled =
+    !character.privateImage;
+
+  $("charPublicDescribe").disabled =
+    !character.publicImage;
+}
+
 $("charPrivateUpload").onclick = () =>
   $("charPrivateFile").click();
 
@@ -13820,14 +13870,19 @@ $("charPrivateFile").onchange = event => {
     return;
   }
 
-  readImage(file,data => {
-    character.privateImage = data;
+readImage(file,data => {
+  character.privateImage = data;
 
-    event.target.value = "";
+  event.target.value = "";
 
-    fillCharacter();
-    renderOffline();
-  });
+  refreshCharacterImageUI(
+    character
+  );
+
+  renderOffline();
+
+  scheduleStarwaveSave();
+});
 };
 
 $("charPublicFile").onchange = event => {
@@ -13841,18 +13896,23 @@ $("charPublicFile").onchange = event => {
     return;
   }
 
-  readImage(file,data => {
-    character.publicImage = data;
+ readImage(file,data => {
+  character.publicImage = data;
 
-    event.target.value = "";
+  event.target.value = "";
 
-    fillCharacter();
-    renderSubscriptions();
-    renderExplore();
-    renderWavelink();
-    renderForum();
-    renderSns();
-  });
+  refreshCharacterImageUI(
+    character
+  );
+
+  renderSubscriptions();
+  renderExplore();
+  renderWavelink();
+  renderForum();
+  renderSns();
+
+  scheduleStarwaveSave();
+});
 };
 
 const CHARACTER_APPEARANCE_MARKERS = {
@@ -14162,10 +14222,15 @@ $("charPrivateDelete").onclick = () => {
     okText:"刪除圖片",
 
     onConfirm(){
-      character.privateImage = "";
+    character.privateImage = "";
 
-      fillCharacter();
-      renderOffline();
+refreshCharacterImageUI(
+  character
+);
+
+renderOffline();
+
+scheduleStarwaveSave();
     }
   });
 };
@@ -14190,7 +14255,11 @@ $("charPublicDelete").onclick = () => {
     onConfirm(){
       character.publicImage = "";
 
-      fillCharacter();
+      refreshCharacterImageUI(
+  character
+);
+
+scheduleStarwaveSave();
       renderSubscriptions();
       renderExplore();
       renderWavelink();
