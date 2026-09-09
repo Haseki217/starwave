@@ -2366,11 +2366,13 @@ textarea::placeholder{
 }
 
 .subscription-cover{
+  position:relative;
   aspect-ratio:16/8;
   display:grid;
   place-items:center;
   overflow:hidden;
   background:linear-gradient(145deg,var(--softA),var(--softB));
+  user-select:none;
 }
 
 .subscription-cover img{
@@ -2379,30 +2381,95 @@ textarea::placeholder{
   object-fit:cover;
 }
 
-  .subscription-crop-preview{
-  aspect-ratio:16/8;
-  margin-top:8px;
+.subscription-cover img{
+  pointer-events:none;
+}
+
+.subscription-position-hint{
+  position:absolute;
+  right:8px;
+  bottom:8px;
+  z-index:3;
+  padding:4px 8px;
+  border:1px solid rgba(255,255,255,.35);
+  border-radius:999px;
+  background:rgba(20,35,48,.58);
+  color:white;
+  font-size:9px;
+  line-height:1;
+  backdrop-filter:blur(8px);
+  pointer-events:none;
+}
+
+.subscription-cover.positioning{
+  cursor:move;
+  touch-action:none;
+}
+
+.subscription-cover.positioning
+.subscription-position-hint{
+  display:none;
+}
+
+.subscription-position-guide{
+  position:absolute;
+  inset:0;
+  z-index:2;
+  pointer-events:none;
+}
+
+.subscription-position-guide::before{
+  content:"";
+  position:absolute;
+  left:50%;
+  top:14%;
+  bottom:14%;
+  width:1px;
+  background:rgba(255,255,255,.78);
+  box-shadow:0 0 4px rgba(0,0,0,.35);
+}
+
+.subscription-position-guide::after{
+  content:"";
+  position:absolute;
+  top:50%;
+  left:14%;
+  right:14%;
+  height:1px;
+  background:rgba(255,255,255,.78);
+  box-shadow:0 0 4px rgba(0,0,0,.35);
+}
+
+.subscription-position-center{
+  position:absolute;
+  left:50%;
+  top:50%;
+  z-index:3;
+  width:18px;
+  height:18px;
   display:grid;
   place-items:center;
-  overflow:hidden;
-  border:1px solid var(--line);
-  border-radius:8px;
-  background:
-    linear-gradient(
-      145deg,
-      var(--softA),
-      var(--softB)
-    );
-  color:var(--muted);
+  border:1px solid white;
+  border-radius:50%;
+  background:rgba(20,35,48,.46);
+  color:white;
   font-size:10px;
+  transform:translate(-50%,-50%);
+  pointer-events:none;
 }
 
-.subscription-crop-preview img{
-  width:100%;
-  height:100%;
-  object-fit:cover;
+.subscription-position-done{
+  position:absolute;
+  right:8px;
+  top:8px;
+  z-index:5;
+  padding:5px 9px;
+  border:1px solid rgba(255,255,255,.40);
+  border-radius:999px;
+  background:rgba(20,35,48,.68);
+  color:white;
+  font-size:9px;
 }
-
 .subscription-body{padding:11px;}
 
 .subscription-name{
@@ -4488,93 +4555,10 @@ textarea::placeholder{
   ✦ 從圖片建立外貌描述
 </button>
               
-            </div>
-
-            <div
-  style="
-    margin-top:14px;
-    padding-top:12px;
-    border-top:1px solid var(--line);
-  "
->
-
-  <strong style="font-size:11px">
-    訂閱首頁圖片範圍
-  </strong>
-
-  <div
-    id="charSubscriptionCropPreview"
-    class="subscription-crop-preview"
-  >
-    PUBLIC
   </div>
 
-  <div style="margin-top:10px">
-
-    <label style="font-size:10px">
-      左右位置
-    </label>
-
-    <div class="range-row">
-
-      <input
-        id="charSubscriptionPosX"
-        type="range"
-        min="0"
-        max="100"
-        step="1"
-        value="50"
-      >
-
-      <span
-        id="charSubscriptionPosXValue"
-        class="range-value"
-      >
-        50%
-      </span>
-
-    </div>
-
-  </div>
-
-  <div style="margin-top:8px">
-
-    <label style="font-size:10px">
-      上下位置
-    </label>
-
-    <div class="range-row">
-
-      <input
-        id="charSubscriptionPosY"
-        type="range"
-        min="0"
-        max="100"
-        step="1"
-        value="50"
-      >
-
-      <span
-        id="charSubscriptionPosYValue"
-        class="range-value"
-      >
-        50%
-      </span>
-
-    </div>
-
-  </div>
-
-  <div class="field-help">
-    只調整「訂閱頻道首頁」橫幅的裁切位置，
-    不影響頻道內圓形頭像或其他人物圖片。
-  </div>
-
-</div>
-            
-          </div>
+       </div>
         
-
         </div>
 
         <div class="form-grid">
@@ -14543,69 +14527,317 @@ $("confirmRoleImport").onclick =
   };
 }
 
-
-function renderCharacterSubscriptionCropPreview(
+function enableSubscriptionImagePositioning(
+  cover,
+  img,
   character
 ){
-  const preview =
-    $("charSubscriptionCropPreview");
 
-  if(
-    !preview ||
-    !character
-  ){
-    return;
-  }
-
-  const position =
-    getSubscriptionImagePosition(
-      character
-    );
-
-  $("charSubscriptionPosX").value =
-    position.x;
-
-  $("charSubscriptionPosY").value =
-    position.y;
-
-  $("charSubscriptionPosXValue").textContent =
-    `${position.x}%`;
-
-  $("charSubscriptionPosYValue").textContent =
-    `${position.y}%`;
-
-
-  $("charSubscriptionPosX").disabled =
-    !character.publicImage;
-
-  $("charSubscriptionPosY").disabled =
-    !character.publicImage;
-
-
-  preview.innerHTML = "";
-
-  if(!character.publicImage){
-
-    preview.textContent =
-      "尚未設定公開圖片";
-
-    return;
-  }
-
-
-  const img =
+  const hint =
     document.createElement(
-      "img"
+      "span"
     );
 
-  img.src =
-    character.publicImage;
+  hint.className =
+    "subscription-position-hint";
 
-  img.style.objectPosition =
-    `${position.x}% ${position.y}%`;
+  hint.textContent =
+    "✥ 調整";
 
-  preview.append(img);
+
+  const guide =
+    document.createElement(
+      "div"
+    );
+
+  guide.className =
+    "subscription-position-guide";
+
+  guide.hidden =
+    true;
+
+
+  const center =
+    document.createElement(
+      "div"
+    );
+
+  center.className =
+    "subscription-position-center";
+
+  center.textContent =
+    "✥";
+
+  center.hidden =
+    true;
+
+
+  const done =
+    document.createElement(
+      "button"
+    );
+
+  done.className =
+    "subscription-position-done";
+
+  done.textContent =
+    "完成";
+
+  done.hidden =
+    true;
+
+
+  cover.append(
+    hint,
+    guide,
+    center,
+    done
+  );
+
+
+  let positioning =
+    false;
+
+  let dragging =
+    false;
+
+  let startClientX =
+    0;
+
+  let startClientY =
+    0;
+
+  let startImageX =
+    50;
+
+  let startImageY =
+    50;
+
+
+  function enterPositioning(){
+
+    positioning =
+      true;
+
+    cover.classList.add(
+      "positioning"
+    );
+
+    guide.hidden =
+      false;
+
+    center.hidden =
+      false;
+
+    done.hidden =
+      false;
+  }
+
+
+  function finishPositioning(){
+
+    positioning =
+      false;
+
+    dragging =
+      false;
+
+    cover.classList.remove(
+      "positioning"
+    );
+
+    guide.hidden =
+      true;
+
+    center.hidden =
+      true;
+
+    done.hidden =
+      true;
+
+    scheduleStarwaveSave();
+  }
+
+
+  cover.addEventListener(
+    "click",
+    event => {
+
+      event.stopPropagation();
+
+      if(!positioning){
+        enterPositioning();
+      }
+    }
+  );
+
+
+  done.addEventListener(
+    "click",
+    event => {
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      finishPositioning();
+    }
+  );
+
+
+  cover.addEventListener(
+    "pointerdown",
+    event => {
+
+      if(
+        !positioning ||
+        event.target === done
+      ){
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      dragging =
+        true;
+
+      startClientX =
+        event.clientX;
+
+      startClientY =
+        event.clientY;
+
+
+      const position =
+        getSubscriptionImagePosition(
+          character
+        );
+
+      startImageX =
+        position.x;
+
+      startImageY =
+        position.y;
+
+
+      cover.setPointerCapture(
+        event.pointerId
+      );
+    }
+  );
+
+
+  cover.addEventListener(
+    "pointermove",
+    event => {
+
+      if(!dragging){
+        return;
+      }
+
+
+      const rect =
+        cover.getBoundingClientRect();
+
+
+      if(
+        !rect.width ||
+        !rect.height
+      ){
+        return;
+      }
+
+
+      const deltaX =
+        (
+          event.clientX -
+          startClientX
+        ) /
+        rect.width *
+        100;
+
+
+      const deltaY =
+        (
+          event.clientY -
+          startClientY
+        ) /
+        rect.height *
+        100;
+
+
+      character.subscriptionImageX =
+        Math.max(
+          0,
+          Math.min(
+            100,
+            startImageX -
+            deltaX
+          )
+        );
+
+
+      character.subscriptionImageY =
+        Math.max(
+          0,
+          Math.min(
+            100,
+            startImageY -
+            deltaY
+          )
+        );
+
+
+      img.style.objectPosition =
+        `${
+          character.subscriptionImageX
+        }% ${
+          character.subscriptionImageY
+        }%`;
+    }
+  );
+
+
+  function stopDragging(
+    event
+  ){
+
+    if(!dragging){
+      return;
+    }
+
+    dragging =
+      false;
+
+
+    if(
+      cover.hasPointerCapture(
+        event.pointerId
+      )
+    ){
+
+      cover.releasePointerCapture(
+        event.pointerId
+      );
+    }
+
+
+    scheduleStarwaveSave();
+  }
+
+
+  cover.addEventListener(
+    "pointerup",
+    stopDragging
+  );
+
+
+  cover.addEventListener(
+    "pointercancel",
+    stopDragging
+  );
 }
+
 function renderSubscriptions(){
   $("subscriptionGrid").innerHTML = "";
 
@@ -14639,10 +14871,16 @@ if(character.publicImage){
   img.src =
     character.publicImage;
 
-  img.style.objectPosition =
-    `${position.x}% ${position.y}%`;
+ img.style.objectPosition =
+  `${position.x}% ${position.y}%`;
 
-  cover.append(img);
+cover.append(img);
+
+enableSubscriptionImagePositioning(
+  cover,
+  img,
+  character
+);
     }else{
       cover.innerHTML = `
         <div
@@ -14738,10 +14976,6 @@ function fillCharacter(){
     "PUBLIC"
   );
 
-  renderCharacterSubscriptionCropPreview(
-  character
-);
-
   $("charPrivateUpload").textContent =
     character.privateImage
       ? "更換圖片"
@@ -14818,9 +15052,7 @@ $("charPublicDescribe").disabled =
     character.publicImage,
     "PUBLIC"
   );
-renderCharacterSubscriptionCropPreview(
-  character
-);
+
   $("charPrivateUpload").textContent =
     character.privateImage
       ? "更換圖片"
@@ -14844,46 +15076,7 @@ renderCharacterSubscriptionCropPreview(
     !character.publicImage;
 }
 
-  function updateSubscriptionImagePosition(){
-
-  const character =
-    getCharacter(
-      state.selectedCharacter
-    );
-
-  if(!character){
-    return;
-  }
-
-  character.subscriptionImageX =
-    Number(
-      $("charSubscriptionPosX")
-        .value
-    );
-
-  character.subscriptionImageY =
-    Number(
-      $("charSubscriptionPosY")
-        .value
-    );
-
-  renderCharacterSubscriptionCropPreview(
-    character
-  );
-
-  renderSubscriptions();
-
-  scheduleStarwaveSave();
-}
-
-
-$("charSubscriptionPosX").oninput =
-  updateSubscriptionImagePosition;
-
-
-$("charSubscriptionPosY").oninput =
-  updateSubscriptionImagePosition;
-  
+ 
 $("charPrivateUpload").onclick = () =>
   $("charPrivateFile").click();
 
