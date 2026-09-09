@@ -12238,24 +12238,6 @@ function renderWavelinkRooms(){
           )
         : null;
 
-    $("archiveWlRoom").hidden =
-  false;
-
-$("archiveWlRoom").textContent =
-  isWavelinkRoomArchived(room)
-    ? "移回對話"
-    : "封存";
-
-
-const canDeleteRoom =
-  room.type === "group" ||
-  activeRoomMembers(room)
-    .length === 0;
-
-
-$("deleteWlRoom").hidden =
-  !canDeleteRoom;
-
 
     const button =
       document.createElement(
@@ -12446,62 +12428,103 @@ function renderWavelinkConversation(){
     return;
   }
 
-  const character =
-    room.type === "direct"
-      ? getAnyCharacter(room.memberIds[0])
-      : null;
+const character =
+  room.type === "direct"
+    ? getAnyCharacter(
+        room.memberIds[0]
+      )
+    : null;
 
-  $("wlRoomName").textContent =
-    character
-      ? publicName(character)
-      : room.name;
 
-  if(room.type === "group"){
-    $("wlRoomMembers").textContent =
-      [
-        state.player.name,
-        ...room.memberIds
-          .map(getAnyCharacter)
-          .filter(Boolean)
-          .map(publicName)
-      ].join("・");
-  }else{
-    $("wlRoomMembers").textContent =
-      character
-        ? character.liveId
-        : "";
-  }
+const activeMembers =
+  activeRoomMembers(room);
 
-  if(
-    character &&
-    getCharacter(character.id)
-  ){
-   const labels = {
-  locked:"未解鎖",
-  pending:"確認中",
-  unlocked:"已解鎖"
-};
 
-    $("wlOfflineState").hidden = false;
+/* WAVELINK 房間操作 */
 
-    $("wlOfflineState").textContent =
-      labels[character.offlineStatus] ||
-      "未解鎖";
-  }else{
-    $("wlOfflineState").hidden = true;
-    $("archiveWlRoom").hidden =
-  true;
+$("archiveWlRoom").hidden =
+  false;
+
+$("archiveWlRoom").textContent =
+  isWavelinkRoomArchived(room)
+    ? "移回對話"
+    : "封存";
+
+
+const canDeleteRoom =
+  room.type === "group" ||
+  (
+    room.type === "direct" &&
+    activeMembers.length === 0
+  );
+
 
 $("deleteWlRoom").hidden =
-  true;
-  }
+  !canDeleteRoom;
 
-  const activeMembers =
-    activeRoomMembers(room);
 
-  const readOnly =
-    room.memberIds.length > 0 &&
-    activeMembers.length === 0;
+/* 房間名稱 */
+
+$("wlRoomName").textContent =
+  character
+    ? publicName(character)
+    : room.name;
+
+
+if(room.type === "group"){
+
+  $("wlRoomMembers").textContent =
+    [
+      state.player.name,
+      ...room.memberIds
+        .map(getAnyCharacter)
+        .filter(Boolean)
+        .map(publicName)
+    ].join("・");
+
+}else{
+
+  $("wlRoomMembers").textContent =
+    character
+      ? character.liveId
+      : "";
+}
+
+
+/* 線下狀態 */
+
+if(
+  character &&
+  getCharacter(character.id)
+){
+
+  const labels = {
+    locked:"未解鎖",
+    pending:"確認中",
+    unlocked:"已解鎖"
+  };
+
+  $("wlOfflineState").hidden =
+    false;
+
+  $("wlOfflineState").textContent =
+    labels[
+      character.offlineStatus
+    ] ||
+    "未解鎖";
+
+}else{
+
+  $("wlOfflineState").hidden =
+    true;
+}
+
+
+/* 已取消訂閱角色只能查看舊紀錄 */
+
+const readOnly =
+  room.memberIds.length > 0 &&
+  activeMembers.length === 0;
 
   $("wlInput").disabled = readOnly;
   $("sendWl").disabled = readOnly;
