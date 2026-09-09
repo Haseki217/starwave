@@ -3657,7 +3657,7 @@ textarea::placeholder{
 
     </div>
 
-    <div
+  <div
   id="liveSettingsDrawer"
   class="live-config"
   hidden
@@ -3672,21 +3672,38 @@ textarea::placeholder{
     id="liveSettingsFields"
     class="form-grid"
   ></div>
-</div>
 
-    <div id="bgmContainer" hidden style="margin-bottom:9px">
-
-      <iframe
-        id="bgmFrame"
-        width="100%"
-        height="72"
-        style="border:1px solid var(--line);border-radius:8px"
-        allow="autoplay"
-      ></iframe>
-
+  <div
+    id="bgmContainer"
+    hidden
+    style="
+      margin-top:10px;
+      max-width:520px;
+    "
+  >
+    <div
+      class="field-help"
+      style="margin-bottom:5px"
+    >
+      ♪ 正在播放的 YouTube BGM
     </div>
 
-    <div class="live-layout">
+    <iframe
+      id="bgmFrame"
+      width="100%"
+      height="56"
+      style="
+        display:block;
+        border:1px solid var(--line);
+        border-radius:8px;
+      "
+      allow="autoplay"
+    ></iframe>
+  </div>
+
+</div>
+
+<div class="live-layout">
 
       <div>
 
@@ -5537,6 +5554,38 @@ textarea::placeholder{
         </button>
 
       </div>
+      <div
+  class="data-action"
+  style="margin-top:10px"
+>
+
+  <div class="data-copy">
+
+    <strong>
+      🧪 測試功能：清除 RP 紀錄
+    </strong>
+
+    <br>
+
+    清除直播、論壇、SNS、WAVELINK、
+    線下故事、事件記憶、觀看／訂閱／會員數、
+    經濟與 SHOP 測試進度等遊玩紀錄。
+
+    <br>
+
+    API 設定、API Key、主播資料、角色卡、
+    角色圖片、Lorebook、自訂場景與各項設定會保留。
+
+  </div>
+
+  <button
+    id="clearRpTestData"
+    class="danger"
+  >
+    清除測試紀錄
+  </button>
+
+</div>
 
     </div>
 
@@ -16347,6 +16396,276 @@ async event => {
       "無法讀取這個 STARWAVE 備份檔。"
     );
   }
+};
+
+  function clearRpTestRecords(){
+
+  /* 玩家直播進度 */
+
+  state.player.viewers = 0;
+  state.player.peak = 0;
+  state.player.subscribers = 0;
+  state.player.members = 0;
+  state.player.memberAccounts = [];
+  state.player.liveHistory = [];
+
+
+  /* 目前直播內容
+     場景、自訂場景、BGM 設定保留 */
+
+  state.live.started = false;
+  state.live.turn = 0;
+  state.live.stageEntries = [];
+  state.live.chat = [];
+  state.live.lastText = "";
+  state.live.collabIds = [];
+  state.live.date = "";
+  state.live.turnLogs = [];
+
+
+  /* 公開社群 */
+
+  state.forumPosts = [];
+  state.snsPosts = [];
+
+
+  /* 事件記憶
+     Lorebook 不刪 */
+
+  state.memories = [];
+  state.memorySettings.counter = 0;
+
+
+  /* WAVELINK
+     保留房間與群組，
+     只清除聊天紀錄 */
+
+  state.wavelinkRooms.forEach(
+    room => {
+
+      room.messages = [];
+      room.unread = 0;
+
+    }
+  );
+
+
+  /* 確保每張現存角色卡
+     都還有自己的私人聊天室 */
+
+  state.characters.forEach(
+    character => {
+
+      const roomExists =
+        state.wavelinkRooms.some(
+          room =>
+            room.type === "direct" &&
+            room.memberIds?.[0] ===
+              character.id
+        );
+
+      if(!roomExists){
+
+        state.wavelinkRooms.push({
+          id:
+            `direct_${character.id}`,
+
+          type:
+            "direct",
+
+          name:
+            publicName(character),
+
+          memberIds:[
+            character.id
+          ],
+
+          unread:0,
+          messages:[]
+        });
+
+      }
+
+    }
+  );
+
+
+  state.currentWavelink =
+    state.wavelinkRooms[0]?.id ||
+    null;
+
+
+  /* 線下故事 */
+
+  state.offline.currentCharacterId =
+    null;
+
+  state.offline.stories = {};
+
+
+  /* 角色的 RP 進度
+     角色卡本體完全保留 */
+
+  [
+    ...state.characters,
+    ...state.archivedCharacters
+  ].forEach(character => {
+
+    character.offlineStatus =
+      "locked";
+
+    character.offlinePendingBy =
+      null;
+
+    character.live =
+      false;
+
+    character.viewers =
+      0;
+
+    character.peak =
+      0;
+
+    character.liveTurn =
+      0;
+
+    character.liveStory =
+      [];
+
+    character.liveChat =
+      [];
+
+    character.lastViewerAction =
+      "";
+
+  });
+
+
+  /* 經濟與 SHOP 測試進度
+     經濟模式本身保留 */
+
+  state.economy.wallet =
+    0;
+
+  state.economy.donationIncome =
+    0;
+
+  state.economy.inventory =
+    {};
+
+  state.economy.billCycle =
+    "";
+
+  state.economy.bills =
+    [];
+
+  state.economy.transactions =
+    [];
+
+
+  /* 測試中封鎖的模擬帳號 */
+
+  state.moderation.blockedAccounts =
+    [];
+
+
+  /* 關閉目前開著的額外 RP UI */
+
+  currentForumId =
+    null;
+
+  forumReplyParentId =
+    null;
+
+  currentRoleLiveId =
+    "";
+
+  voiceCall.active =
+    false;
+
+  voiceCall.roomId =
+    null;
+
+  voiceCall.startedAt =
+    null;
+
+  voiceCall.entries =
+    [];
+
+
+  $("roleLiveOverlay").hidden =
+    true;
+
+  $("voiceCallOverlay").hidden =
+    true;
+
+
+  /* 清空目前輸入框 */
+
+  $("liveInput").value =
+    "";
+
+  $("wlInput").value =
+    "";
+
+  $("voiceInput").value =
+    "";
+
+
+  /* 重新繪製整個畫面 */
+
+  fullRender();
+
+  scheduleStarwaveSave();
+}
+
+  $("clearRpTestData").onclick = () => {
+
+  showConfirm({
+
+    title:
+      "清除所有測試 RP 紀錄？",
+
+    message:
+`這會把目前的遊玩世界清回乾淨狀態。
+
+會清除：
+・直播劇情與聊天室
+・直播歷史
+・觀看／訂閱／會員進度
+・論壇與 SNS
+・WAVELINK 訊息
+・線下故事與解鎖進度
+・事件記憶
+・經濟帳本、錢包與 SHOP 購買紀錄
+・測試中的封鎖紀錄
+
+會保留：
+・API Profile 與 API Key
+・主播資料與圖片
+・角色卡與角色圖片
+・Lorebook
+・自訂直播場景
+・BGM 網址
+・主題與各項設定
+
+這是目前開發測試期間使用的一鍵清除功能。`,
+
+    okText:
+      "清除測試紀錄",
+
+    onConfirm(){
+
+      clearRpTestRecords();
+
+      toast(
+        "測試 RP 紀錄已全部清除"
+      );
+
+    }
+
+  });
+
 };
 
 $("clearCache").onclick = () => {
