@@ -2357,6 +2357,30 @@ textarea::placeholder{
   object-fit:cover;
 }
 
+  .subscription-crop-preview{
+  aspect-ratio:16/8;
+  margin-top:8px;
+  display:grid;
+  place-items:center;
+  overflow:hidden;
+  border:1px solid var(--line);
+  border-radius:8px;
+  background:
+    linear-gradient(
+      145deg,
+      var(--softA),
+      var(--softB)
+    );
+  color:var(--muted);
+  font-size:10px;
+}
+
+.subscription-crop-preview img{
+  width:100%;
+  height:100%;
+  object-fit:cover;
+}
+
 .subscription-body{padding:11px;}
 
 .subscription-name{
@@ -4407,7 +4431,90 @@ textarea::placeholder{
               
             </div>
 
+            <div
+  style="
+    margin-top:14px;
+    padding-top:12px;
+    border-top:1px solid var(--line);
+  "
+>
+
+  <strong style="font-size:11px">
+    訂閱首頁圖片範圍
+  </strong>
+
+  <div
+    id="charSubscriptionCropPreview"
+    class="subscription-crop-preview"
+  >
+    PUBLIC
+  </div>
+
+  <div style="margin-top:10px">
+
+    <label style="font-size:10px">
+      左右位置
+    </label>
+
+    <div class="range-row">
+
+      <input
+        id="charSubscriptionPosX"
+        type="range"
+        min="0"
+        max="100"
+        step="1"
+        value="50"
+      >
+
+      <span
+        id="charSubscriptionPosXValue"
+        class="range-value"
+      >
+        50%
+      </span>
+
+    </div>
+
+  </div>
+
+  <div style="margin-top:8px">
+
+    <label style="font-size:10px">
+      上下位置
+    </label>
+
+    <div class="range-row">
+
+      <input
+        id="charSubscriptionPosY"
+        type="range"
+        min="0"
+        max="100"
+        step="1"
+        value="50"
+      >
+
+      <span
+        id="charSubscriptionPosYValue"
+        class="range-value"
+      >
+        50%
+      </span>
+
+    </div>
+
+  </div>
+
+  <div class="field-help">
+    只調整「訂閱頻道首頁」橫幅的裁切位置，
+    不影響頻道內圓形頭像或其他人物圖片。
+  </div>
+
+</div>
+            
           </div>
+        
 
         </div>
 
@@ -11477,6 +11584,36 @@ offlineAction 只能是：
 群組聊天 offlineAction
 必須永遠是 "none"。
 
+【目前關係更新】
+
+relationshipUpdates 用來更新
+「每個角色與玩家之間的目前關係」。
+
+規則：
+
+- 關係沒有實質變化時，輸出空陣列。
+- 不要因為普通閒聊、一次稱讚、一次玩笑就改關係。
+- 只有信任、親密度、敵意、曖昧、合作關係、
+  明確約定或相處模式真的有明顯變化時才更新。
+- relationship 必須是一份「新的完整關係摘要」，
+  不是只寫「關係變好了」。
+- 必須保留既有關係中的重要事實，
+  不得因為這次對話沒有提到就擅自刪除。
+- 玩家手動修改的目前關係也是既定資料，
+  AI 必須以目前 relationship 為基準。
+- 每個角色只能更新自己的 relationship。
+- 群聊中不同角色可以各自有不同變化。
+- 不得替沒有實際關係變化的角色硬產生更新。
+
+格式：
+
+"relationshipUpdates":[
+  {
+    "characterId":"角色 id",
+    "relationship":"新的完整關係摘要"
+  }
+]
+
 【eventSummary】
 
 用一句簡短文字整理
@@ -11503,12 +11640,64 @@ offlineAction 只能是：
     }
   ],
   "offlineAction":"none",
+  "relationshipUpdates":[
+    {
+      "characterId":"角色 id",
+      "relationship":"新的完整關係摘要"
+    }
+  ],
   "eventSummary":""
 }
 `;
 }
 
+function applyWavelinkRelationshipUpdates(
+  room,
+  updates
+){
+  if(
+    !room ||
+    !Array.isArray(updates)
+  ){
+    return;
+  }
 
+  const allowedIds =
+    new Set(
+      room.memberIds || []
+    );
+
+  updates.forEach(update => {
+
+    const characterId =
+      String(
+        update?.characterId || ""
+      );
+
+    const relationship =
+      String(
+        update?.relationship || ""
+      ).trim();
+
+    if(
+      !allowedIds.has(characterId) ||
+      !relationship
+    ){
+      return;
+    }
+
+    const character =
+      getCharacter(characterId);
+
+    if(!character){
+      return;
+    }
+
+    character.relationship =
+      relationship;
+  });
+}
+  
 function applyWavelinkOfflineAction(
   room,
   action
@@ -11808,6 +11997,11 @@ async function generateWavelinkAi(
       room,
       data.offlineAction
     );
+
+    applyWavelinkRelationshipUpdates(
+  room,
+  data.relationshipUpdates
+);
 
 
     const eventSummary =
@@ -13749,7 +13943,9 @@ content:
     "待設定"
   ).trim(),
     publicImage:"",
-    privateImage:"",
+subscriptionImageX:50,
+subscriptionImageY:50,
+privateImage:"",
     realNamePublic:false,
   relationship:
   String(
@@ -13885,6 +14081,102 @@ $("confirmRoleImport").onclick =
         oldText;
     }
   };
+
+  function getSubscriptionImagePosition(
+  character
+){
+  const rawX =
+    Number(
+      character?.subscriptionImageX
+    );
+
+  const rawY =
+    Number(
+      character?.subscriptionImageY
+    );
+
+  return {
+    x:
+      Number.isFinite(rawX)
+        ? Math.max(
+            0,
+            Math.min(100,rawX)
+          )
+        : 50,
+
+    y:
+      Number.isFinite(rawY)
+        ? Math.max(
+            0,
+            Math.min(100,rawY)
+          )
+        : 50
+  };
+}
+
+
+function renderCharacterSubscriptionCropPreview(
+  character
+){
+  const preview =
+    $("charSubscriptionCropPreview");
+
+  if(
+    !preview ||
+    !character
+  ){
+    return;
+  }
+
+  const position =
+    getSubscriptionImagePosition(
+      character
+    );
+
+  $("charSubscriptionPosX").value =
+    position.x;
+
+  $("charSubscriptionPosY").value =
+    position.y;
+
+  $("charSubscriptionPosXValue").textContent =
+    `${position.x}%`;
+
+  $("charSubscriptionPosYValue").textContent =
+    `${position.y}%`;
+
+
+  $("charSubscriptionPosX").disabled =
+    !character.publicImage;
+
+  $("charSubscriptionPosY").disabled =
+    !character.publicImage;
+
+
+  preview.innerHTML = "";
+
+  if(!character.publicImage){
+
+    preview.textContent =
+      "尚未設定公開圖片";
+
+    return;
+  }
+
+
+  const img =
+    document.createElement(
+      "img"
+    );
+
+  img.src =
+    character.publicImage;
+
+  img.style.objectPosition =
+    `${position.x}% ${position.y}%`;
+
+  preview.append(img);
+}
 function renderSubscriptions(){
   $("subscriptionGrid").innerHTML = "";
 
@@ -13903,12 +14195,25 @@ function renderSubscriptions(){
 
     const cover = document.createElement("div");
     cover.className = "subscription-cover";
+if(character.publicImage){
 
-    if(character.publicImage){
-      const img = document.createElement("img");
-      img.src = character.publicImage;
+  const img =
+    document.createElement(
+      "img"
+    );
 
-      cover.append(img);
+  const position =
+    getSubscriptionImagePosition(
+      character
+    );
+
+  img.src =
+    character.publicImage;
+
+  img.style.objectPosition =
+    `${position.x}% ${position.y}%`;
+
+  cover.append(img);
     }else{
       cover.innerHTML = `
         <div
@@ -14004,6 +14309,10 @@ function fillCharacter(){
     "PUBLIC"
   );
 
+  renderCharacterSubscriptionCropPreview(
+  character
+);
+
   $("charPrivateUpload").textContent =
     character.privateImage
       ? "更換圖片"
@@ -14080,7 +14389,9 @@ $("charPublicDescribe").disabled =
     character.publicImage,
     "PUBLIC"
   );
-
+renderCharacterSubscriptionCropPreview(
+  character
+);
   $("charPrivateUpload").textContent =
     character.privateImage
       ? "更換圖片"
@@ -14104,6 +14415,46 @@ $("charPublicDescribe").disabled =
     !character.publicImage;
 }
 
+  function updateSubscriptionImagePosition(){
+
+  const character =
+    getCharacter(
+      state.selectedCharacter
+    );
+
+  if(!character){
+    return;
+  }
+
+  character.subscriptionImageX =
+    Number(
+      $("charSubscriptionPosX")
+        .value
+    );
+
+  character.subscriptionImageY =
+    Number(
+      $("charSubscriptionPosY")
+        .value
+    );
+
+  renderCharacterSubscriptionCropPreview(
+    character
+  );
+
+  renderSubscriptions();
+
+  scheduleStarwaveSave();
+}
+
+
+$("charSubscriptionPosX").oninput =
+  updateSubscriptionImagePosition;
+
+
+$("charSubscriptionPosY").oninput =
+  updateSubscriptionImagePosition;
+  
 $("charPrivateUpload").onclick = () =>
   $("charPrivateFile").click();
 
@@ -14600,9 +14951,11 @@ $("addBlankChannel").onclick = () => {
     streamerType:"real",
     content:"雜談",
     publicImage:"",
-    privateImage:"",
-    realNamePublic:false,
-    relationship:"",
+subscriptionImageX:50,
+subscriptionImageY:50,
+privateImage:"",
+realNamePublic:false,
+relationship:"",
     lorebookIds:[],
     offlineStatus:"locked",
     offlinePendingBy:null,
