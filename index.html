@@ -7417,7 +7417,20 @@ function sanitizePublicText(text){
         .split(state.player.realName)
         .join(state.player.name);
   }
-
+  
+if(
+  state.player.privateAppearance
+){
+  output =
+    output
+      .split(
+        state.player.privateAppearance
+      )
+      .join(
+        state.player.publicAppearance ||
+        "（私人外貌資訊已隱藏）"
+      );
+}
   state.characters.forEach(character => {
     if(
       character.name &&
@@ -7428,6 +7441,28 @@ function sanitizePublicText(text){
           .split(character.name)
           .join(publicName(character));
     }
+    const privateAppearance =
+  extractCharacterCardAppearance(
+    character,
+    "private"
+  );
+
+if(privateAppearance){
+
+  const publicAppearance =
+    extractCharacterCardAppearance(
+      character,
+      "public"
+    );
+
+  output =
+    output
+      .split(privateAppearance)
+      .join(
+        publicAppearance ||
+        "（私人外貌資訊已隱藏）"
+      );
+}
   });
 
   return output;
@@ -8849,21 +8884,7 @@ function parseStarwaveLlmJson(text){
 
 function liveAiPublicCreators(){
   return state.characters.map(
-    character => ({
-      id:character.id,
-
-      name:
-        publicName(character),
-
-      channel:
-        character.channel || "",
-
-      liveId:
-        character.liveId || "",
-
-      content:
-        character.content || ""
-    })
+    publicCharacterContext
   );
 }
 
@@ -8895,16 +8916,13 @@ function buildPlayerLiveAiPrompt(
   const creators =
     liveAiPublicCreators();
 
-  const collabs =
-    state.live.collabIds
-      .map(getCharacter)
-      .filter(Boolean)
-      .map(character => ({
-        id:character.id,
-        name:publicName(character),
-        channel:character.channel || "",
-        content:character.content || ""
-      }));
+const collabs =
+  state.live.collabIds
+    .map(getCharacter)
+    .filter(Boolean)
+    .map(
+      publicCharacterContext
+    );
 
   return `
 你正在模擬 STARWAVE 中一場公開直播的下一個回合。
@@ -12342,12 +12360,12 @@ $("charPublicFile").onchange = event => {
 const CHARACTER_APPEARANCE_MARKERS = {
   public:{
     start:"【STARWAVE｜公開／直播外貌】",
-    end:"【STARWAVE｜公開／直播外貌 END】"
+    end:"【END】"
   },
 
   private:{
-    start:"【私人／現實外貌】",
-    end:"【私人／現實外貌 END】"
+    start:"【STARWAVE｜私人／現實外貌】",
+    end:"【END】"
   }
 };
 
@@ -12428,7 +12446,95 @@ ${markers.end}`;
   );
 }
 
+function extractCharacterCardAppearance(
+  character,
+  type
+){
+  const markers =
+    CHARACTER_APPEARANCE_MARKERS[type];
 
+  const text =
+    String(
+      character?.card || ""
+    );
+
+  if(
+    !markers ||
+    !text
+  ){
+    return "";
+  }
+
+  const startIndex =
+    text.indexOf(
+      markers.start
+    );
+
+  if(startIndex === -1){
+    return "";
+  }
+
+  const contentStart =
+    startIndex +
+    markers.start.length;
+
+  const endIndex =
+    text.indexOf(
+      markers.end,
+      contentStart
+    );
+
+  if(endIndex === -1){
+    return "";
+  }
+
+  return text
+    .slice(
+      contentStart,
+      endIndex
+    )
+    .trim();
+}
+
+
+function publicCharacterContext(
+  character
+){
+  return {
+    id:
+      character.id,
+
+    name:
+      publicName(character),
+
+    publicRealName:
+      character.realNamePublic
+        ? character.name
+        : "",
+
+    channel:
+      character.channel || "",
+
+    liveId:
+      character.liveId || "",
+
+    snsId:
+      character.snsId || "",
+
+    streamerType:
+      character.streamerType || "real",
+
+    content:
+      character.content || "",
+
+    publicAppearance:
+      extractCharacterCardAppearance(
+        character,
+        "public"
+      )
+  };
+}
+  
 async function describeCharacterImage(
   type
 ){
