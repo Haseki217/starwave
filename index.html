@@ -9807,132 +9807,679 @@ $("rememberLive").onclick = () => {
 let currentRoleLiveId = "";
 let selectedDonationAmount = 100;
 
-function openRoleLive(id){
-  currentRoleLiveId = id;
+async function openRoleLive(id){
 
-  const character = getCharacter(id);
+  currentRoleLiveId =
+    id;
+
+
+  const character =
+    getCharacter(id);
+
 
   if(!character){
     return;
   }
 
+
   if(!character.live){
+
     showNotice(
       "目前沒有直播",
       `${publicName(character)} 現在並未直播。`
     );
+
     return;
   }
 
-  if(!character.liveStory.length){
-    generateRoleLiveNext(character,true);
-  }
+
+  character.liveStory ||= [];
+  character.liveChat ||= [];
+
 
   renderRoleLive();
-  $("roleLiveOverlay").hidden = false;
-}
 
-function roleLiveMockText(character){
-  const prior =
-    character.lastViewerAction ||
-    "";
+  $("roleLiveOverlay").hidden =
+    false;
 
-  let text =
-    randomItem([
-      "主播稍微調整了一下麥克風的位置，重新把注意力放回畫面。",
-      "直播進行到下一段，主播一邊看著聊天室，一邊繼續原本的話題。",
-      "畫面沒有切換，主播停了一會兒才接著說下去。",
-      "聊天室的速度突然變快，主播抬眼看了一下留言。",
-      "主播把剛才的話題繞回來，又補充了幾句。"
-    ]);
-
-  if(prior){
-    text += `\n\n剛才觀眾的「${prior}」也被主播注意到了。`;
-  }
-
-  return text;
-}
-
-function generateRoleLiveComment(character){
-  const creators =
-    state.characters.filter(
-      other => other.id !== character.id
-    );
 
   if(
-    creators.length &&
-    Math.random() < .14
+    !character.liveStory.length
   ){
-    const creator =
-      randomItem(creators);
 
-    return {
-      id:uid("rlc"),
-      authorId:creator.id,
-      accountId:null,
-      author:publicName(creator),
-      text:randomItem([
-        "我剛好看到。",
-        "你還在播喔？",
-        "聊天室今天很熱鬧。",
-        "這段我有看到。"
-      ])
-    };
+    await generateRoleLiveNext(
+      character,
+      true
+    );
   }
-
-  const fan = randomAllowedFan();
-
-  if(!fan){
-    return null;
-  }
-
-  return {
-    id:uid("rlc"),
-    authorId:null,
-    accountId:fan.id,
-    author:fan.name,
-    text:randomItem(fanCommentPool())
-  };
 }
 
-function generateRoleLiveNext(character,first=false){
-  character.liveTurn++;
+function buildRoleLiveAiPrompt(
+  character,
+  first=false
+){
 
-  character.liveStory.push({
-    id:uid("segment"),
-    text:roleLiveMockText(character)
-  });
+  const role = {
+    ...publicCharacterContext(
+      character
+    ),
 
-  character.liveStory =
-    character.liveStory.slice(-6);
+    liveTitle:
+      sanitizePublicText(
+        character.liveTitle ||
+        "正在直播"
+      )
+  };
 
-  character.viewers =
-    Math.max(
-      0,
-      character.viewers +
-      randomItem([-5,-2,0,3,7,12])
+
+  const player = {
+    name:
+      state.player.name,
+
+    channel:
+      state.player.channel,
+
+    liveId:
+      state.player.liveId,
+
+    snsId:
+      state.player.snsId,
+
+    streamerType:
+      state.player.streamerType,
+
+    content:
+      state.player.content || "",
+
+    publicAppearance:
+      state.player.publicAppearance || ""
+  };
+
+
+  const creators =
+    state.characters
+      .filter(
+        item =>
+          item.id !== character.id
+      )
+      .map(
+        publicCharacterContext
+      );
+
+
+  const previousStory =
+    (
+      character.liveStory || []
+    )
+      .slice(-6)
+      .map(
+        segment =>
+          sanitizePublicText(
+            segment.text || ""
+          )
+      );
+
+
+  const previousChat =
+    (
+      character.liveChat || []
+    )
+      .slice(-10)
+      .map(line => ({
+        author:
+          publicAuthor(
+            line.authorId,
+            line.author
+          ),
+
+        donation:
+          Boolean(line.donation),
+
+        text:
+          sanitizePublicText(
+            line.text || ""
+          )
+      }));
+
+
+  const lastViewerAction =
+    sanitizePublicText(
+      character.lastViewerAction ||
+      ""
     );
 
-  character.peak =
-    Math.max(
-      character.peak || 0,
-      character.viewers
+
+  return `
+你正在模擬 STARWAVE 中一名角色創作者正在進行的公開直播。
+
+【本場主播公開資料】
+${JSON.stringify(role)}
+
+【目前直播】
+標題：${role.liveTitle}
+目前觀看：${character.viewers || 0}
+目前回合：${character.liveTurn || 0}
+是否為首次產生直播內容：${first ? "是" : "否"}
+
+【玩家的公開創作者資料】
+${JSON.stringify(player)}
+
+玩家若出現在聊天室，只能知道以上公開資訊。
+
+【其他可公開出現在聊天室的創作者】
+${JSON.stringify(creators)}
+
+如果留言 kind 為 "creator"：
+authorId 必須完全使用上面清單存在的 id。
+不得自行創造角色 id。
+
+【近期直播內容】
+${JSON.stringify(previousStory)}
+
+【近期聊天室】
+${JSON.stringify(previousChat)}
+
+【玩家最近在這場直播的行動】
+${lastViewerAction || "無"}
+
+玩家最近的行動可能是：
+- 一般聊天室留言
+- 對主播打賞
+- 無任何新動作
+
+若有玩家行動，主播可以注意到並合理回應，
+但不保證每次都必須立刻回應。
+
+【社群設定】
+黑粉強度：${state.community.blackfan}%
+柔和社群模式：${state.community.soft ? "ON" : "OFF"}
+
+黑粉規則：
+0% = 不得生成針對主播的惡意黑粉、羞辱或攻擊留言。
+25% = 少量質疑或輕微負評。
+50% = 一般網路社群程度。
+75% = 高壓，負評與挑釁增加。
+100% = 可大量出現高壓負面評論。
+
+柔和社群 ON 時降低過度尖銳、羞辱與攻擊性表達。
+
+【公開資訊限制】
+這是一場公開直播。
+
+不得自行知道、猜測或洩漏：
+- 角色私人真名
+- 私人／現實外貌
+- 完整私人角色卡
+- 私人背景
+- WAVELINK 私人對話
+- 線下私人事件
+- 私人事件記憶
+- 其他沒有提供在本提示中的資訊
+
+只能根據本提示中的公開資料與已公開直播內容生成。
+
+【stageText】
+生成這一段直播真正發生的內容。
+
+可以包含：
+- 主播正在做什麼
+- 主播說出的公開直播台詞
+- 現場氣氛與設備狀況
+- 主播對聊天室的合理反應
+- 合理的小事件或直播進展
+
+這裡的主播不是玩家，所以可以主動替角色主播說話、行動與做一般直播決定。
+
+使用自然小說式敘事。
+一般約 1～3 段。
+不要只寫一句「主播繼續直播」。
+
+【viewerDelta】
+本段觀看人數變化，可正、負或 0。
+
+不要每次都增加。
+
+如果這是首次內容，而且目前觀看為 0，
+可將 viewerDelta 視為合理的初始觀看人數並給予正數。
+
+【comments】
+產生 1～6 則自然直播聊天室留言。
+
+kind 只能是：
+"fan"
+或
+"creator"
+
+fan 的 authorId 填空字串。
+
+creator 的 authorId
+只能使用上面的其他創作者 id。
+
+留言語氣要有差異。
+
+【donation】
+可以判斷是否有其他觀眾打賞這名角色主播。
+
+沒有打賞：
+amount = 0
+
+有打賞：
+amount = 正整數
+message = 自然留言
+
+目前經濟模式：
+${state.economy.mode}
+
+如果經濟模式為 off，
+amount 必須為 0。
+
+這筆打賞是給角色主播，
+不會增加玩家自己的錢包。
+
+只輸出有效 JSON：
+
+{
+  "stageText": "直播敘事",
+  "viewerDelta": 0,
+  "comments": [
+    {
+      "kind": "fan",
+      "authorId": "",
+      "text": "留言"
+    }
+  ],
+  "donation": {
+    "amount": 0,
+    "message": ""
+  }
+}
+`;
+}
+
+
+async function generateRoleLiveNext(
+  character,
+  first=false
+){
+
+  if(!character){
+    return false;
+  }
+
+
+  const profile =
+    state.api.profiles[
+      state.api.active
+    ];
+
+
+  if(
+    !profile ||
+    !String(
+      profile.apiKey || ""
+    ).trim() ||
+    !String(
+      profile.model || ""
+    ).trim()
+  ){
+
+    showNotice(
+      "尚未設定可用的 LLM",
+      "請先到「設定 → LLM/API」設定 API Key、模型，並切換到要使用的 API Profile。"
     );
 
-  const comment =
-    generateRoleLiveComment(character);
-
-  if(comment){
-    character.liveChat.push(comment);
+    return false;
   }
 
-  character.lastViewerAction = "";
 
-  if(!first){
-    toast("角色直播已更新到下一段");
+  const button =
+    $("refreshRoleLive");
+
+  const oldButtonText =
+    button.textContent;
+
+
+  button.disabled =
+    true;
+
+  button.textContent =
+    "AI 生成中……";
+
+
+  toast(
+    `${profile.provider} 正在生成角色直播……`
+  );
+
+
+  try{
+
+    const result =
+      await generateWithApi({
+
+        profileIndex:
+          state.api.active,
+
+        prompt:
+          buildRoleLiveAiPrompt(
+            character,
+            first
+          ),
+
+        systemInstruction:
+          `你是 STARWAVE 的公開直播模擬引擎。
+請扮演指定的角色主播與公開聊天室。
+只能使用提示中提供的公開資訊。
+不得洩漏私人角色資料。
+請依指定格式輸出有效 JSON。`,
+
+        json:true
+      });
+
+
+    const data =
+      parseStarwaveLlmJson(
+        result.text
+      );
+
+
+    const stageText =
+      sanitizePublicText(
+        String(
+          data.stageText || ""
+        ).trim()
+      );
+
+
+    if(!stageText){
+
+      throw new Error(
+        "AI 回傳的角色直播內容是空的。"
+      );
+    }
+
+
+    const integerValue =
+      value => {
+
+        const number =
+          Number(value);
+
+        return Number.isFinite(number)
+          ? Math.trunc(number)
+          : 0;
+      };
+
+
+    const viewerDelta =
+      integerValue(
+        data.viewerDelta
+      );
+
+
+    character.liveStory ||= [];
+    character.liveChat ||= [];
+
+
+    character.liveTurn =
+      Number(
+        character.liveTurn || 0
+      ) + 1;
+
+
+    character.liveStory.push({
+      id:
+        uid("segment"),
+
+      text:
+        stageText
+    });
+
+
+    character.liveStory =
+      character.liveStory
+        .slice(-6);
+
+
+    character.viewers =
+      Math.max(
+        0,
+        Number(
+          character.viewers || 0
+        ) +
+        viewerDelta
+      );
+
+
+    character.peak =
+      Math.max(
+        Number(
+          character.peak || 0
+        ),
+        character.viewers
+      );
+
+
+    /* AI 聊天室 */
+
+    const comments =
+      Array.isArray(
+        data.comments
+      )
+        ? data.comments
+        : [];
+
+
+    comments.forEach(comment => {
+
+      const commentText =
+        sanitizePublicText(
+          String(
+            comment?.text || ""
+          ).trim()
+        );
+
+
+      if(!commentText){
+        return;
+      }
+
+
+      if(
+        comment?.kind ===
+        "creator"
+      ){
+
+        const creator =
+          getCharacter(
+            String(
+              comment.authorId || ""
+            )
+          );
+
+
+        if(
+          !creator ||
+          creator.id ===
+            character.id
+        ){
+          return;
+        }
+
+
+        character.liveChat.push({
+
+          id:
+            uid("rlc"),
+
+          authorId:
+            creator.id,
+
+          accountId:
+            null,
+
+          author:
+            publicName(
+              creator
+            ),
+
+          text:
+            commentText
+        });
+
+
+        return;
+      }
+
+
+      const fan =
+        randomAllowedFan();
+
+
+      if(!fan){
+        return;
+      }
+
+
+      character.liveChat.push({
+
+        id:
+          uid("rlc"),
+
+        authorId:
+          null,
+
+        accountId:
+          fan.id,
+
+        author:
+          fan.name,
+
+        text:
+          commentText
+      });
+
+    });
+
+
+    /* AI 模擬其他觀眾打賞 */
+
+    const donationAmount =
+      state.economy.mode ===
+        "off"
+        ? 0
+        : Math.max(
+            0,
+            integerValue(
+              data
+                ?.donation
+                ?.amount
+            )
+          );
+
+
+    if(donationAmount > 0){
+
+      const fan =
+        randomAllowedFan();
+
+
+      if(fan){
+
+        const message =
+          sanitizePublicText(
+            String(
+              data
+                ?.donation
+                ?.message ||
+              "支持直播！"
+            ).trim()
+          ) ||
+          "支持直播！";
+
+
+        character.liveChat.push({
+
+          id:
+            uid("rlc"),
+
+          authorId:
+            null,
+
+          accountId:
+            fan.id,
+
+          author:
+            fan.name,
+
+          donation:
+            true,
+
+          text:
+            `${money(
+              donationAmount
+            )}｜${message}`
+        });
+
+      }
+    }
+
+
+    character.lastViewerAction =
+      "";
+
+
+    renderExplore();
+    renderSubscriptions();
+
+
+    if(
+      currentRoleLiveId ===
+        character.id &&
+      !$("roleLiveOverlay").hidden
+    ){
+      renderRoleLive();
+    }
+
+
+    scheduleStarwaveSave();
+
+
+    toast(
+      first
+        ? `${publicName(character)} 的直播已載入`
+        : "角色直播已更新"
+    );
+
+
+    return true;
+
+
+  }catch(error){
+
+    console.error(
+      "STARWAVE role live generation failed:",
+      error
+    );
+
+
+    showNotice(
+      "角色直播生成失敗",
+      error?.message ||
+      "LLM 沒有成功產生角色直播內容，可以再次刷新。"
+    );
+
+
+    return false;
+
+
+  }finally{
+
+    button.disabled =
+      false;
+
+    button.textContent =
+      oldButtonText;
   }
-
-  renderExplore();
 }
 
 function renderRoleLive(){
@@ -10051,17 +10598,24 @@ function renderRoleLive(){
     $("roleLiveChat").scrollHeight;
 }
 
-$("refreshRoleLive").onclick = () => {
-  const character =
-    getCharacter(currentRoleLiveId);
+$("refreshRoleLive").onclick =
+  async () => {
 
-  if(!character){
-    return;
-  }
+    const character =
+      getCharacter(
+        currentRoleLiveId
+      );
 
-  generateRoleLiveNext(character);
-  renderRoleLive();
-};
+
+    if(!character){
+      return;
+    }
+
+
+    await generateRoleLiveNext(
+      character
+    );
+  };
 
 $("sendRoleLiveComment").onclick = () => {
   const character =
