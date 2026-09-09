@@ -1409,6 +1409,28 @@ textarea::placeholder{
   font-size:9px;
 }
 
+  .wl-folder-tabs{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:5px;
+  padding:0 12px 9px;
+}
+
+.wl-folder-tabs button{
+  min-height:30px;
+  border:1px solid var(--line);
+  border-radius:7px;
+  background:transparent;
+  color:var(--muted);
+  font-size:10px;
+}
+
+.wl-folder-tabs button.active{
+  background:var(--panel2);
+  color:var(--blue);
+  font-weight:700;
+}
+
 .wl-list{
   display:grid;
   max-height:545px;
@@ -3970,7 +3992,28 @@ textarea::placeholder{
 
       </div>
 
-      <div id="wlRoomList" class="wl-list"></div>
+    <div class="wl-folder-tabs">
+
+  <button
+    id="wlActiveFolder"
+    class="active"
+  >
+    對話
+  </button>
+
+  <button
+    id="wlArchiveFolder"
+  >
+    封存
+    <span id="wlArchiveCount">0</span>
+  </button>
+
+</div>
+
+<div
+  id="wlRoomList"
+  class="wl-list"
+></div>
 
     </aside>
 
@@ -3998,6 +4041,22 @@ textarea::placeholder{
             class="offline-unlock-state"
             hidden
           ></span>
+
+          <button
+  id="archiveWlRoom"
+  class="secondary"
+  hidden
+>
+  封存
+</button>
+
+<button
+  id="deleteWlRoom"
+  class="danger"
+  hidden
+>
+  刪除
+</button>
 
           <button id="startVoiceCall" class="secondary">
             模擬語音
@@ -11309,6 +11368,67 @@ function pushWlMessage(
   const wavelinkGeneratingRooms =
   new Set();
 
+  let wavelinkRoomView =
+  "active";
+
+
+function isWavelinkRoomArchived(
+  room
+){
+  return Boolean(
+    room?.archived
+  );
+}
+
+
+function firstWavelinkRoomForView(){
+
+  const archived =
+    wavelinkRoomView ===
+    "archived";
+
+  return (
+    state.wavelinkRooms.find(
+      room =>
+        isWavelinkRoomArchived(
+          room
+        ) === archived
+    )?.id ||
+    null
+  );
+}
+
+
+function syncWavelinkFolderTabs(){
+
+  const archivedCount =
+    state.wavelinkRooms.filter(
+      room =>
+        isWavelinkRoomArchived(
+          room
+        )
+    ).length;
+
+
+  $("wlArchiveCount").textContent =
+    archivedCount;
+
+
+  $("wlActiveFolder")
+    .classList.toggle(
+      "active",
+      wavelinkRoomView ===
+        "active"
+    );
+
+
+  $("wlArchiveFolder")
+    .classList.toggle(
+      "active",
+      wavelinkRoomView ===
+        "archived"
+    );
+}
 
 function wavelinkKnownMemories(
   character
@@ -12088,52 +12208,124 @@ function renderWavelink(){
 }
 
 function renderWavelinkRooms(){
-  $("wlRoomList").innerHTML = "";
 
-  if(!state.wavelinkRooms.length){
+  $("wlRoomList").innerHTML =
+    "";
+
+  syncWavelinkFolderTabs();
+
+
+  const archived =
+    wavelinkRoomView ===
+    "archived";
+
+
+  const rooms =
+    state.wavelinkRooms.filter(
+      room =>
+        isWavelinkRoomArchived(
+          room
+        ) === archived
+    );
+
+
+  if(!rooms.length){
+
     $("wlRoomList").innerHTML = `
       <div class="empty-state">
-        匯入角色後，私人對話會出現在這裡。
+        ${
+          archived
+            ? "目前沒有封存的對話。"
+            : "目前沒有 WAVELINK 對話。"
+        }
       </div>
     `;
+
     return;
   }
 
-  state.wavelinkRooms.forEach(room => {
+
+  rooms.forEach(room => {
+
     const character =
       room.type === "direct"
-        ? getAnyCharacter(room.memberIds[0])
+        ? getAnyCharacter(
+            room.memberIds[0]
+          )
         : null;
 
-    const button = document.createElement("button");
+    $("archiveWlRoom").hidden =
+  false;
+
+$("archiveWlRoom").textContent =
+  isWavelinkRoomArchived(room)
+    ? "移回對話"
+    : "封存";
+
+
+const canDeleteRoom =
+  room.type === "group" ||
+  activeRoomMembers(room)
+    .length === 0;
+
+
+$("deleteWlRoom").hidden =
+  !canDeleteRoom;
+
+
+    const button =
+      document.createElement(
+        "button"
+      );
+
 
     button.className =
       "wl-room" +
       (
-        room.id === state.currentWavelink
+        room.id ===
+        state.currentWavelink
           ? " active"
           : ""
       );
 
-    const avatar = document.createElement("div");
-    avatar.className = "wl-avatar";
+
+    const avatar =
+      document.createElement(
+        "div"
+      );
+
+    avatar.className =
+      "wl-avatar";
+
 
     if(character){
+
       setImageBox(
         avatar,
         character.publicImage,
-        initials(publicName(character))
+        initials(
+          publicName(character)
+        )
       );
+
     }else{
+
       avatar.textContent =
         room.type === "group"
           ? "群"
           : "#";
     }
 
-    const copy = document.createElement("div");
 
-    const last = room.messages.at(-1);
+    const copy =
+      document.createElement(
+        "div"
+      );
+
+
+    const last =
+      room.messages.at(-1);
+
 
     copy.innerHTML = `
       <strong>
@@ -12145,35 +12337,102 @@ function renderWavelinkRooms(){
       </strong>
 
       <small>
-        ${esc(last?.text || "尚無訊息")}
+        ${esc(
+          last?.text ||
+          "尚無訊息"
+        )}
       </small>
     `;
 
-    button.append(avatar,copy);
+
+    button.append(
+      avatar,
+      copy
+    );
+
 
     if(room.unread){
-      const badge = document.createElement("span");
 
-      badge.className = "unread";
-      badge.textContent = room.unread;
+      const badge =
+        document.createElement(
+          "span"
+        );
 
-      button.append(badge);
+      badge.className =
+        "unread";
+
+      badge.textContent =
+        room.unread;
+
+      button.append(
+        badge
+      );
     }
 
+
     button.onclick = () => {
-      state.currentWavelink = room.id;
-      room.unread = 0;
+
+      state.currentWavelink =
+        room.id;
+
+      room.unread =
+        0;
 
       renderWavelink();
 
-      if(window.innerWidth <= 720){
-        $("wlLayout").classList.add("mobile-chat-open");
+
+      if(
+        window.innerWidth <= 720
+      ){
+
+        $("wlLayout")
+          .classList.add(
+            "mobile-chat-open"
+          );
       }
     };
 
-    $("wlRoomList").append(button);
+
+    $("wlRoomList").append(
+      button
+    );
   });
 }
+
+  $("wlActiveFolder").onclick =
+  () => {
+
+    wavelinkRoomView =
+      "active";
+
+    state.currentWavelink =
+      firstWavelinkRoomForView();
+
+    $("wlLayout")
+      .classList.remove(
+        "mobile-chat-open"
+      );
+
+    renderWavelink();
+  };
+
+
+$("wlArchiveFolder").onclick =
+  () => {
+
+    wavelinkRoomView =
+      "archived";
+
+    state.currentWavelink =
+      firstWavelinkRoomForView();
+
+    $("wlLayout")
+      .classList.remove(
+        "mobile-chat-open"
+      );
+
+    renderWavelink();
+  };
 
 function renderWavelinkConversation(){
   const room =
@@ -12246,6 +12505,11 @@ function renderWavelinkConversation(){
       "未解鎖";
   }else{
     $("wlOfflineState").hidden = true;
+    $("archiveWlRoom").hidden =
+  true;
+
+$("deleteWlRoom").hidden =
+  true;
   }
 
   const activeMembers =
@@ -12348,6 +12612,171 @@ function renderWavelinkConversation(){
   $("wlMessages").scrollTop =
     $("wlMessages").scrollHeight;
 }
+
+  $("archiveWlRoom").onclick =
+  () => {
+
+    const room =
+      getRoom(
+        state.currentWavelink
+      );
+
+
+    if(!room){
+      return;
+    }
+
+
+    room.archived =
+      !isWavelinkRoomArchived(
+        room
+      );
+
+    room.unread =
+      0;
+
+
+    const archived =
+      room.archived;
+
+
+    state.currentWavelink =
+      firstWavelinkRoomForView();
+
+
+    renderWavelink();
+
+    scheduleStarwaveSave();
+
+
+    toast(
+      archived
+        ? "WAVELINK 對話已封存"
+        : "WAVELINK 對話已移回"
+    );
+  };
+
+  $("deleteWlRoom").onclick =
+  () => {
+
+    const room =
+      getRoom(
+        state.currentWavelink
+      );
+
+
+    if(!room){
+      return;
+    }
+
+
+    const activeMembers =
+      activeRoomMembers(
+        room
+      );
+
+
+    if(
+      room.type === "direct" &&
+      activeMembers.length
+    ){
+
+      showNotice(
+        "這個角色仍在使用中",
+        "仍存在角色卡的私人對話只能封存，不能直接刪除。"
+      );
+
+      return;
+    }
+
+
+    const character =
+      room.type === "direct"
+        ? getAnyCharacter(
+            room.memberIds[0]
+          )
+        : null;
+
+
+    const displayName =
+      character
+        ? publicName(character)
+        : room.name;
+
+
+    showConfirm({
+
+      title:
+        "永久刪除 WAVELINK 對話？",
+
+      message:
+`確定要永久刪除「${displayName}」的 WAVELINK 對話嗎？
+
+這會刪除這個房間與所有 WAVELINK 訊息。
+
+不會刪除論壇、SNS、直播紀錄或其他已存在的歷史資料。`,
+
+      okText:
+        "永久刪除",
+
+      onConfirm(){
+
+        const roomId =
+          room.id;
+
+
+        state.wavelinkRooms =
+          state.wavelinkRooms
+            .filter(
+              item =>
+                item.id !==
+                roomId
+            );
+
+
+        wavelinkGeneratingRooms
+          .delete(
+            roomId
+          );
+
+
+        if(
+          voiceCall.roomId ===
+          roomId
+        ){
+
+          voiceCall.active =
+            false;
+
+          voiceCall.roomId =
+            null;
+
+          voiceCall.startedAt =
+            null;
+
+          voiceCall.entries =
+            [];
+
+          $("voiceCallOverlay").hidden =
+            true;
+        }
+
+
+        state.currentWavelink =
+          firstWavelinkRoomForView();
+
+
+        renderWavelink();
+
+        scheduleStarwaveSave();
+
+
+        toast(
+          "WAVELINK 對話已永久刪除"
+        );
+      }
+    });
+  };
 
 $("sendWl").onclick =
   async () => {
@@ -18391,13 +18820,13 @@ function triggerAutoContent(
   const rooms =
     state.wavelinkRooms
       .filter(
-        room =>
-          room.memberIds.some(
-            id =>
-              getCharacter(id)
-          )
-      );
-
+  room =>
+    !room.archived &&
+    room.memberIds.some(
+      id =>
+        getCharacter(id)
+    )
+);
 
   const room =
     randomItem(
@@ -18704,12 +19133,25 @@ async event => {
   /* WAVELINK
      保留房間與群組，
      只清除聊天紀錄 */
+state.wavelinkRooms =
+  state.wavelinkRooms.filter(
+    room =>
+      room.type === "group" ||
+      room.memberIds.some(
+        id =>
+          getCharacter(id)
+      )
+  );
 
+
+wavelinkRoomView =
+  "active";
   state.wavelinkRooms.forEach(
     room => {
 
-      room.messages = [];
-      room.unread = 0;
+  room.messages = [];
+room.unread = 0;
+room.archived = false;
 
     }
   );
