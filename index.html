@@ -11198,6 +11198,695 @@ function pushWlMessage(
 
   return message;
 }
+
+  const wavelinkGeneratingRooms =
+  new Set();
+
+
+function wavelinkKnownMemories(
+  character
+){
+  return state.memories
+    .filter(memory =>
+      Array.isArray(
+        memory.knownBy
+      ) &&
+      memory.knownBy.includes(
+        character.id
+      )
+    )
+    .slice(0,12)
+    .map(memory => ({
+      summary:
+        memory.summary,
+
+      visibility:
+        memory.visibility,
+
+      time:
+        memory.time
+    }));
+}
+
+
+function wavelinkSelfContext(
+  character
+){
+  return {
+    id:
+      character.id,
+
+    public:
+      publicCharacterContext(
+        character
+      ),
+
+    relationship:
+      character.relationship || "",
+
+    selfCard:
+      String(
+        character.card || ""
+      ),
+
+    offlineStatus:
+      character.offlineStatus ||
+      "locked",
+
+    offlinePendingBy:
+      character.offlinePendingBy ||
+      null,
+
+    knownMemories:
+      wavelinkKnownMemories(
+        character
+      )
+  };
+}
+
+
+function buildWavelinkAiPrompt(
+  room,
+  {
+    playerText="",
+    proactive=false
+  }={}
+){
+
+  const members =
+    activeRoomMembers(room);
+
+
+  const publicMembers =
+    members.map(
+      publicCharacterContext
+    );
+
+
+  const selfContexts =
+    members.map(
+      wavelinkSelfContext
+    );
+
+
+  const recentMessages =
+    (room.messages || [])
+      .filter(
+        message =>
+          !message.system
+      )
+      .slice(-20)
+      .map(message => {
+
+        const character =
+          message.authorId ===
+            "player"
+            ? null
+            : getAnyCharacter(
+                message.authorId
+              );
+
+        return {
+          authorId:
+            message.authorId,
+
+          author:
+            message.authorId ===
+              "player"
+              ? state.player.name
+              : publicName(
+                  character
+                ),
+
+          text:
+            String(
+              message.text || ""
+            ),
+
+          time:
+            realTimeEnabled()
+              ? (
+                  message.time ||
+                  ""
+                )
+              : ""
+        };
+      });
+
+
+  const playerPublic = {
+    name:
+      state.player.name,
+
+    channel:
+      state.player.channel,
+
+    liveId:
+      state.player.liveId,
+
+    snsId:
+      state.player.snsId,
+
+    streamerType:
+      state.player.streamerType,
+
+    content:
+      state.player.content || "",
+
+    publicAppearance:
+      state.player.publicAppearance ||
+      ""
+  };
+
+
+  return `
+你正在模擬 STARWAVE 的私人通訊軟體 WAVELINK。
+
+這不是公開聊天室。
+
+【房間】
+類型：
+${room.type === "group" ? "群組聊天" : "私人一對一聊天"}
+
+房間名稱：
+${room.name || ""}
+
+【玩家公開身分】
+${JSON.stringify(playerPublic)}
+
+注意：
+不要自行取得玩家真實姓名、
+私人外貌、私人背景或其他
+沒有在對話中告知角色的玩家私人資訊。
+
+【房間角色公開資料】
+${JSON.stringify(publicMembers)}
+
+【各角色自己的私人角色設定】
+${JSON.stringify(selfContexts)}
+
+極重要資訊差規則：
+
+selfCard 與 knownMemories
+是「該 id 角色自己的認知資料」。
+
+某角色只能使用：
+1. 自己那份 selfCard
+2. 自己 knownMemories 中的事件
+3. 本房間已經實際出現的聊天內容
+4. 所有人的公開資料
+
+不得因為你看得到其他角色的 selfCard，
+就讓角色 A 知道角色 B 的私人設定。
+
+不得把某角色知道的私人事件
+自動視為其他角色也知道。
+
+群組聊天中尤其必須嚴格遵守。
+
+【最近聊天】
+${JSON.stringify(recentMessages)}
+
+【玩家這次新輸入】
+${playerText || "無"}
+
+【生成模式】
+${
+  proactive
+    ? `角色主動聊天。
+不需要等待玩家先問問題。
+可以自然延續之前話題、
+想到事情、分享近況、
+問問題或角色彼此接話。`
+    : `玩家剛傳送了一則訊息。
+角色應根據對話內容自然回覆。
+不要只是泛泛回「知道了」或「嗯」。`
+}
+
+【群聊規則】
+
+如果是群組：
+- 可以有 1 名或多名角色回覆。
+- 不要求每個角色每回合都說話。
+- 角色可以回覆玩家。
+- 角色也可以回覆其他角色剛說的話。
+- 同一角色可以在合理情況下再次發言。
+- 對話要有真正的連續感。
+- 不要像點名輪流回答。
+
+如果是一對一：
+- 只允許該房間唯一角色發言。
+
+不得替玩家生成台詞。
+
+【線下互動】
+
+只在一對一私人聊天中處理。
+
+目前角色的 offlineStatus
+與 offlinePendingBy
+已包含在角色自己的資料中。
+
+offlineAction 只能是：
+
+"none"
+沒有線下狀態改變。
+
+"character_invites"
+角色主動明確提出私下／現實見面。
+
+"player_invites"
+玩家明確提出見面，
+但角色尚未明確接受或拒絕。
+
+"unlock"
+雙方在實際對話中已經明確同意見面。
+
+"decline"
+邀約被明確拒絕或取消。
+
+只有真的出現明確邀約／同意時
+才能改變狀態。
+
+不得為了解鎖功能
+刻意強迫角色提出邀約。
+
+不得用隨機機率決定角色接受與否。
+必須依角色設定、關係與實際對話判斷。
+
+群組聊天 offlineAction
+必須永遠是 "none"。
+
+【eventSummary】
+
+用一句簡短文字整理
+這次真正值得記住的私人互動。
+
+普通閒聊可以填空字串。
+
+如果有：
+- 關係明顯變化
+- 約定
+- 邀約
+- 線下見面相關進展
+- 重大私人資訊交換
+
+才填寫。
+
+只輸出有效 JSON：
+
+{
+  "messages":[
+    {
+      "authorId":"角色 id",
+      "text":"訊息"
+    }
+  ],
+  "offlineAction":"none",
+  "eventSummary":""
+}
+`;
+}
+
+
+function applyWavelinkOfflineAction(
+  room,
+  action
+){
+
+  if(
+    room.type !== "direct" ||
+    room.memberIds.length !== 1
+  ){
+    return;
+  }
+
+
+  const character =
+    getCharacter(
+      room.memberIds[0]
+    );
+
+
+  if(!character){
+    return;
+  }
+
+
+  const value =
+    String(
+      action || "none"
+    );
+
+
+  if(
+    value === "unlock"
+  ){
+
+    unlockOffline(
+      character
+    );
+
+    return;
+  }
+
+
+  if(
+    character.offlineStatus ===
+      "unlocked"
+  ){
+    return;
+  }
+
+
+  if(
+    value ===
+      "character_invites"
+  ){
+
+    character.offlineStatus =
+      "pending";
+
+    character.offlinePendingBy =
+      "character";
+
+    return;
+  }
+
+
+  if(
+    value ===
+      "player_invites"
+  ){
+
+    character.offlineStatus =
+      "pending";
+
+    character.offlinePendingBy =
+      "player";
+
+    return;
+  }
+
+
+  if(
+    value === "decline"
+  ){
+
+    character.offlineStatus =
+      "locked";
+
+    character.offlinePendingBy =
+      null;
+  }
+}
+
+
+async function generateWavelinkAi(
+  room,
+  {
+    playerText="",
+    proactive=false,
+    background=false
+  }={}
+){
+
+  if(
+    !room ||
+    wavelinkGeneratingRooms.has(
+      room.id
+    )
+  ){
+    return false;
+  }
+
+
+  const members =
+    activeRoomMembers(room);
+
+
+  if(!members.length){
+    return false;
+  }
+
+
+  const profile =
+    state.api.profiles[
+      state.api.active
+    ];
+
+
+  if(
+    !profile ||
+    !String(
+      profile.apiKey || ""
+    ).trim() ||
+    !String(
+      profile.model || ""
+    ).trim()
+  ){
+
+    if(!background){
+      showNotice(
+        "尚未設定可用的 LLM",
+        "請先到「設定 → LLM/API」設定 API Key、模型。"
+      );
+    }
+
+    return false;
+  }
+
+
+  wavelinkGeneratingRooms.add(
+    room.id
+  );
+
+
+  const isCurrent =
+    room.id ===
+    state.currentWavelink;
+
+
+  const sendButton =
+    $("sendWl");
+
+  const refreshButton =
+    $("refreshWl");
+
+
+  const oldRefreshText =
+    refreshButton.textContent;
+
+
+  if(isCurrent){
+
+    sendButton.disabled =
+      true;
+
+    refreshButton.disabled =
+      true;
+
+    refreshButton.textContent =
+      "AI 生成中……";
+  }
+
+
+  if(!background){
+
+    toast(
+      `${profile.provider} 正在生成 WAVELINK……`
+    );
+  }
+
+
+  try{
+
+    const result =
+      await generateWithApi({
+
+        profileIndex:
+          state.api.active,
+
+        prompt:
+          buildWavelinkAiPrompt(
+            room,
+            {
+              playerText,
+              proactive
+            }
+          ),
+
+        systemInstruction:
+          `你是 STARWAVE 的私人角色互動模擬引擎。
+請嚴格維持角色資訊差。
+每個角色只能使用自己知道的私人資訊。
+不得把不同角色的私人設定互相洩漏。
+不得替玩家說話。
+請依指定格式輸出有效 JSON。`,
+
+        json:true
+      });
+
+
+    const data =
+      parseStarwaveLlmJson(
+        result.text
+      );
+
+
+    const messages =
+      Array.isArray(
+        data.messages
+      )
+        ? data.messages
+        : [];
+
+
+    const allowedIds =
+      new Set(
+        members.map(
+          character =>
+            character.id
+        )
+      );
+
+
+    let added =
+      0;
+
+
+    messages.forEach(message => {
+
+      const authorId =
+        String(
+          message?.authorId || ""
+        );
+
+
+      const text =
+        String(
+          message?.text || ""
+        ).trim();
+
+
+      if(
+        !allowedIds.has(
+          authorId
+        ) ||
+        !text
+      ){
+        return;
+      }
+
+
+      pushWlMessage(
+        room,
+        {
+          id:
+            uid("wm"),
+
+          authorId,
+
+          text
+        }
+      );
+
+
+      added++;
+    });
+
+
+    if(!added){
+
+      throw new Error(
+        "AI 沒有回傳有效的 WAVELINK 訊息。"
+      );
+    }
+
+
+    applyWavelinkOfflineAction(
+      room,
+      data.offlineAction
+    );
+
+
+    const eventSummary =
+      String(
+        data.eventSummary || ""
+      ).trim();
+
+
+    if(
+      room.id !==
+      state.currentWavelink
+    ){
+
+      room.unread =
+        Number(
+          room.unread || 0
+        ) +
+        added;
+    }
+
+
+    renderWavelink();
+    renderOffline();
+    renderSubscriptions();
+
+    scheduleStarwaveSave();
+
+
+    return {
+      success:true,
+      added,
+      eventSummary
+    };
+
+
+  }catch(error){
+
+    console.error(
+      "STARWAVE WAVELINK generation failed:",
+      error
+    );
+
+
+    if(!background){
+
+      showNotice(
+        "WAVELINK 生成失敗",
+        error?.message ||
+        "LLM 沒有成功產生 WAVELINK 訊息，可以再次刷新。"
+      );
+    }
+
+
+    return false;
+
+
+  }finally{
+
+    wavelinkGeneratingRooms.delete(
+      room.id
+    );
+
+
+    if(
+      room.id ===
+      state.currentWavelink
+    ){
+
+      sendButton.disabled =
+        false;
+
+      refreshButton.disabled =
+        false;
+
+      refreshButton.textContent =
+        oldRefreshText;
+    }
+  }
+}
   
 function renderWavelink(){
   renderWavelinkRooms();
@@ -11350,17 +12039,17 @@ function renderWavelinkConversation(){
     character &&
     getCharacter(character.id)
   ){
-    const labels = {
-      locked:"尚未建立私人見面管道",
-      pending:"私下邀約確認中",
-      unlocked:"線下已解鎖"
-    };
+   const labels = {
+  locked:"未解鎖",
+  pending:"確認中",
+  unlocked:"已解鎖"
+};
 
     $("wlOfflineState").hidden = false;
 
     $("wlOfflineState").textContent =
       labels[character.offlineStatus] ||
-      "尚未解鎖";
+      "未解鎖";
   }else{
     $("wlOfflineState").hidden = true;
   }
@@ -11466,174 +12155,145 @@ function renderWavelinkConversation(){
     $("wlMessages").scrollHeight;
 }
 
-$("sendWl").onclick = () => {
-  const room =
-    getRoom(state.currentWavelink);
+$("sendWl").onclick =
+  async () => {
 
-  const text =
-    $("wlInput").value.trim();
+    const room =
+      getRoom(
+        state.currentWavelink
+      );
 
-  if(
-    !room ||
-    !text
-  ){
-    return;
-  }
 
-  const members =
-    activeRoomMembers(room);
+    const text =
+      $("wlInput")
+        .value
+        .trim();
 
-  if(!members.length){
-    showNotice(
-      "無法繼續對話",
-      "這個對話中的角色目前已不在訂閱角色中。過往內容仍會保留。"
-    );
-    return;
-  }
-
-  pushWlMessage(room,{
-    id:uid("wm"),
-    authorId:"player",
-    text
-  });
-
-  $("wlInput").value = "";
-
-  const handledInvite =
-    handleOfflineInviteFromPlayer(
-      room,
-      text
-    );
-
-  if(!handledInvite){
-    const replyCount =
-      room.type === "group"
-        ? Math.min(
-            members.length,
-            Math.max(
-              0,
-              Math.floor(Math.random() * (members.length + 1))
-            )
-          )
-        : 1;
-
-    const speakers =
-      [...members]
-        .sort(() => Math.random() - .5)
-        .slice(0,replyCount);
-
-    speakers.forEach(character => {
-      pushWlMessage(room,{
-        id:uid("wm"),
-        authorId:character.id,
-        text:randomItem([
-          "嗯，我有看到。",
-          "等等，我想一下。",
-          "你現在是認真問嗎？",
-          "好，我知道了。",
-          "這個之後再聊。"
-        ])
-      });
-    });
 
     if(
-      room.type === "group" &&
-      speakers.length >= 2 &&
-      Math.random() < .35
+      !room ||
+      !text
     ){
-      pushWlMessage(room,{
-        id:uid("wm"),
-        authorId:speakers[1].id,
-        text:
-          `我剛剛也在想 ${publicName(speakers[0])} 說的那個。`
-      });
+      return;
     }
-  }
 
-  renderWavelink();
 
-  countRpTurn(
-    "WAVELINK 有新的私人互動。"
-  );
+    const members =
+      activeRoomMembers(
+        room
+      );
 
-  triggerAutoContent();
-};
 
-$("refreshWl").onclick = () => {
-  if(state.refresh.wavelink === "off"){
-    toast("WAVELINK 生成目前已關閉");
-    return;
-  }
+    if(!members.length){
 
-  const room =
-    getRoom(state.currentWavelink);
+      showNotice(
+        "無法繼續對話",
+        "這個對話中的角色目前已不在訂閱角色中。過往內容仍會保留。"
+      );
 
-  if(!room){
-    return;
-  }
+      return;
+    }
 
-  const members =
-    activeRoomMembers(room);
 
-  if(!members.length){
-    showNotice(
-      "無法刷新",
-      "這個對話中的角色目前已不在訂閱角色中。"
+    pushWlMessage(
+      room,
+      {
+        id:
+          uid("wm"),
+
+        authorId:
+          "player",
+
+        text
+      }
     );
-    return;
-  }
 
-  const character =
-    room.type === "direct"
-      ? members[0]
-      : null;
 
-  if(
-    character &&
-    character.offlineStatus === "locked" &&
-    Math.random() < .30
-  ){
-    character.offlineStatus = "pending";
-    character.offlinePendingBy = "character";
+    $("wlInput").value =
+      "";
 
-    pushWlMessage(room,{
-      id:uid("wm"),
-      authorId:character.id,
-      text:
-        "對了，你最近有空嗎？要不要找一天私下見面？"
+
+    renderWavelink();
+
+
+    const generated =
+      await generateWavelinkAi(
+        room,
+        {
+          playerText:text,
+          proactive:false
+        }
+      );
+
+
+    if(!generated){
+      return;
+    }
+
+
+    countRpTurn(
+      generated.eventSummary ||
+      "WAVELINK 有新的私人互動。"
+    );
+
+
+    triggerAutoContent({
+      skipWavelink:true
     });
-  }else{
-    const amount =
-      room.type === "group"
-        ? Math.min(
-            members.length,
-            Math.max(
-              0,
-              Math.floor(Math.random() * (members.length + 1))
-            )
-          )
-        : 1;
+  };
 
-    members
-      .sort(() => Math.random() - .5)
-      .slice(0,amount)
-      .forEach(character => {
-        pushWlMessage(room,{
-          id:uid("wm"),
-          authorId:character.id,
-          text:randomItem([
-            "剛剛突然想到一件事。",
-            "你今天有開台嗎？",
-            "我晚一點可能會上線。",
-            "這群今天怎麼這麼安靜。"
-          ])
-        });
-      });
-  }
+$("refreshWl").onclick =
+  async () => {
 
-  renderWavelink();
-};
+    if(
+      state.refresh.wavelink ===
+      "off"
+    ){
 
+      toast(
+        "WAVELINK 生成目前已關閉"
+      );
+
+      return;
+    }
+
+
+    const room =
+      getRoom(
+        state.currentWavelink
+      );
+
+
+    if(!room){
+      return;
+    }
+
+
+    const members =
+      activeRoomMembers(
+        room
+      );
+
+
+    if(!members.length){
+
+      showNotice(
+        "無法刷新",
+        "這個對話中的角色目前已不在訂閱角色中。"
+      );
+
+      return;
+    }
+
+
+    await generateWavelinkAi(
+      room,
+      {
+        proactive:true
+      }
+    );
+  };
+  
 $("wlMobileBack").onclick = () =>
   $("wlLayout").classList.remove("mobile-chat-open");
 
@@ -17030,7 +17690,9 @@ $("memoryInterval").onchange = () => {
     Number($("memoryInterval").value);
 };
 
-function triggerAutoContent(){
+function triggerAutoContent(
+  options={}
+){
   if(state.refresh.forum === "auto"){
     generateForumNow(1);
   }
@@ -17047,52 +17709,41 @@ function triggerAutoContent(){
     generateLifeExpense();
   }
 
-  if(state.refresh.wavelink === "auto"){
-    const rooms =
-      state.wavelinkRooms.filter(
+ if(
+  !options.skipWavelink &&
+  state.refresh.wavelink ===
+    "auto"
+){
+
+  const rooms =
+    state.wavelinkRooms
+      .filter(
         room =>
           room.memberIds.some(
-            id => getCharacter(id)
+            id =>
+              getCharacter(id)
           )
       );
 
-    const room = randomItem(rooms);
 
-    if(room){
-      const members =
-        activeRoomMembers(room);
+  const room =
+    randomItem(
+      rooms
+    );
 
-      const amount =
-        room.type === "group"
-          ? Math.min(
-              members.length,
-              Math.floor(Math.random() * (members.length + 1))
-            )
-          : Math.min(1,members.length);
 
-      members
-        .sort(() => Math.random() - .5)
-        .slice(0,amount)
-        .forEach(character => {
-          pushWlMessage(room,{
-            id:uid("wm"),
-            authorId:character.id,
-            text:randomItem([
-              "剛剛想到一件事。",
-              "晚點再說。",
-              "你們還在嗎？",
-              "我剛忙完。"
-            ])
-          });
-        });
+  if(room){
 
-      if(
-        room.id !== state.currentWavelink
-      ){
-        room.unread += amount;
+    generateWavelinkAi(
+      room,
+      {
+        proactive:true,
+        background:true
       }
-    }
+    );
+
   }
+}
 
   renderWavelink();
 }
