@@ -4325,9 +4325,8 @@ textarea::placeholder{
             </div>
 
             <div class="note" style="margin-bottom:12px">
-  圖片預設只保存在本機，不會自動傳送給 AI。
-  只有主動按下「從圖片建立外貌描述」時，
-  該張圖片才會送至目前使用中的模型分析一次。
+  主動按下「從圖片建立外貌描述」時，
+  圖片才會送至目前使用中的模型分析。
   產生的文字可以自行修改後再儲存。
 </div>
 
@@ -4453,20 +4452,15 @@ textarea::placeholder{
             </select>
           </div>
 
-          <div class="field">
-            <label>線下狀態</label>
+  <div class="field">
+  <label>線下狀態</label>
 
-            <input
-              id="charOfflineStatus"
-              type="text"
-              disabled
-            >
-
-            <div class="field-help">
-              需要在私人互動中雙方明確同意見面後解鎖。
-              解鎖後不會因普通冷戰或斷聯重新鎖定。
-            </div>
-          </div>
+  <input
+    id="charOfflineStatus"
+    type="text"
+    disabled
+  >
+</div>
 
           <div class="field full">
             <label>主要直播內容</label>
@@ -12277,10 +12271,10 @@ $("charPublicDescribe").disabled =
   $("charCard").value = character.card;
 
   const statusText = {
-    locked:"尚未建立私人見面管道",
-    pending:"邀約確認中",
-    unlocked:"已建立私人接觸管道"
-  };
+  locked:"未解鎖",
+  pending:"確認中",
+  unlocked:"已解鎖"
+};
 
   $("charOfflineStatus").value =
     statusText[character.offlineStatus] ||
@@ -12352,8 +12346,8 @@ const CHARACTER_APPEARANCE_MARKERS = {
   },
 
   private:{
-    start:"【STARWAVE｜私人／現實外貌】",
-    end:"【STARWAVE｜私人／現實外貌 END】"
+    start:"【私人／現實外貌】",
+    end:"【私人／現實外貌 END】"
   }
 };
 
