@@ -14682,19 +14682,6 @@ function enableSubscriptionImagePositioning(
   }
 
 
-  cover.addEventListener(
-    "click",
-    event => {
-
-      event.stopPropagation();
-
-      if(!positioning){
-        enterPositioning();
-      }
-    }
-  );
-
-
   done.addEventListener(
     "click",
     event => {
@@ -14708,47 +14695,51 @@ function enableSubscriptionImagePositioning(
 
 
   cover.addEventListener(
-    "pointerdown",
-    event => {
+  "pointerdown",
+  event => {
 
-      if(
-        !positioning ||
-        event.target === done
-      ){
-        return;
-      }
-
-      event.preventDefault();
-      event.stopPropagation();
-
-      dragging =
-        true;
-
-      startClientX =
-        event.clientX;
-
-      startClientY =
-        event.clientY;
-
-
-      const position =
-        getSubscriptionImagePosition(
-          character
-        );
-
-      startImageX =
-        position.x;
-
-      startImageY =
-        position.y;
-
-
-      cover.setPointerCapture(
-        event.pointerId
-      );
+    if(
+      event.target === done
+    ){
+      return;
     }
-  );
 
+    event.preventDefault();
+    event.stopPropagation();
+
+
+    if(!positioning){
+      enterPositioning();
+    }
+
+
+    dragging =
+      true;
+
+    startClientX =
+      event.clientX;
+
+    startClientY =
+      event.clientY;
+
+
+    const position =
+      getSubscriptionImagePosition(
+        character
+      );
+
+    startImageX =
+      position.x;
+
+    startImageY =
+      position.y;
+
+
+    cover.setPointerCapture(
+      event.pointerId
+    );
+  }
+);
 
   cover.addEventListener(
     "pointermove",
