@@ -14852,96 +14852,596 @@ function enableSubscriptionImagePositioning(
   );
 }
 
-function renderSubscriptions(){
-  $("subscriptionGrid").innerHTML = "";
-
-  if(!state.characters.length){
-    $("subscriptionGrid").innerHTML = `
-      <div class="empty-state" style="grid-column:1/-1">
-        尚未匯入角色卡。可以匯入角色卡，或建立一個空白角色開始編輯。
-      </div>
-    `;
-    return;
-  }
-
-  state.characters.forEach(character => {
-    const card = document.createElement("article");
-    card.className = "subscription-card";
-
-    const cover = document.createElement("div");
-    cover.className = "subscription-cover";
-if(character.publicImage){
-
-  const img =
-    document.createElement(
-      "img"
-    );
-
-  const position =
-    getSubscriptionImagePosition(
-      character
-    );
-
-  img.src =
-    character.publicImage;
-
- img.style.objectPosition =
-  `${position.x}% ${position.y}%`;
-
-cover.append(img);
-
-enableSubscriptionImagePositioning(
+  function enableSubscriptionCoverPositioning(
   cover,
   img,
   character
-);
-    }else{
-      cover.innerHTML = `
-        <div
-          class="fallback-star"
-          style="font-size:58px"
-        >
-          ✦
-        </div>
-      `;
+){
+  cover.style.position =
+    "relative";
+
+  img.style.pointerEvents =
+    "none";
+
+
+  const adjust =
+    document.createElement(
+      "button"
+    );
+
+  adjust.type =
+    "button";
+
+  adjust.textContent =
+    "✥ 調整";
+
+  adjust.dataset.subscriptionControl =
+    "true";
+
+  adjust.style.cssText = `
+    position:absolute;
+    right:8px;
+    bottom:8px;
+    z-index:5;
+    min-height:26px;
+    padding:0 9px;
+    border:1px solid rgba(255,255,255,.38);
+    border-radius:999px;
+    background:rgba(20,35,48,.62);
+    color:white;
+    font-size:9px;
+  `;
+
+
+  const guide =
+    document.createElement(
+      "div"
+    );
+
+  guide.hidden =
+    true;
+
+  guide.style.cssText = `
+    position:absolute;
+    inset:0;
+    z-index:3;
+    pointer-events:none;
+  `;
+
+
+  const vertical =
+    document.createElement(
+      "div"
+    );
+
+  vertical.style.cssText = `
+    position:absolute;
+    left:50%;
+    top:12%;
+    bottom:12%;
+    width:1px;
+    background:rgba(255,255,255,.85);
+    box-shadow:0 0 4px rgba(0,0,0,.35);
+  `;
+
+
+  const horizontal =
+    document.createElement(
+      "div"
+    );
+
+  horizontal.style.cssText = `
+    position:absolute;
+    top:50%;
+    left:12%;
+    right:12%;
+    height:1px;
+    background:rgba(255,255,255,.85);
+    box-shadow:0 0 4px rgba(0,0,0,.35);
+  `;
+
+
+  const center =
+    document.createElement(
+      "div"
+    );
+
+  center.textContent =
+    "✥";
+
+  center.style.cssText = `
+    position:absolute;
+    left:50%;
+    top:50%;
+    transform:translate(-50%,-50%);
+    color:white;
+    font-size:18px;
+    text-shadow:0 1px 5px rgba(0,0,0,.65);
+  `;
+
+
+  guide.append(
+    vertical,
+    horizontal,
+    center
+  );
+
+
+  const done =
+    document.createElement(
+      "button"
+    );
+
+  done.type =
+    "button";
+
+  done.textContent =
+    "完成";
+
+  done.dataset.subscriptionControl =
+    "true";
+
+  done.hidden =
+    true;
+
+  done.style.cssText = `
+    position:absolute;
+    right:8px;
+    top:8px;
+    z-index:6;
+    min-height:27px;
+    padding:0 10px;
+    border:1px solid rgba(255,255,255,.40);
+    border-radius:999px;
+    background:rgba(20,35,48,.72);
+    color:white;
+    font-size:9px;
+  `;
+
+
+  cover.append(
+    guide,
+    adjust,
+    done
+  );
+
+
+  let editing =
+    false;
+
+  let dragging =
+    false;
+
+  let startClientX =
+    0;
+
+  let startClientY =
+    0;
+
+  let startImageX =
+    50;
+
+  let startImageY =
+    50;
+
+
+  function enterEditing(){
+
+    editing =
+      true;
+
+    guide.hidden =
+      false;
+
+    adjust.hidden =
+      true;
+
+    done.hidden =
+      false;
+
+    cover.style.cursor =
+      "move";
+
+    cover.style.touchAction =
+      "none";
+  }
+
+
+  function finishEditing(){
+
+    editing =
+      false;
+
+    dragging =
+      false;
+
+    guide.hidden =
+      true;
+
+    adjust.hidden =
+      false;
+
+    done.hidden =
+      true;
+
+    cover.style.cursor =
+      "";
+
+    cover.style.touchAction =
+      "";
+
+    scheduleStarwaveSave();
+  }
+
+
+  adjust.addEventListener(
+    "click",
+    event => {
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      enterEditing();
+    }
+  );
+
+
+  done.addEventListener(
+    "click",
+    event => {
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      finishEditing();
+    }
+  );
+
+
+  /*
+    重要：
+    圖片區任何 click
+    都不得冒泡到頻道卡片。
+  */
+
+  cover.addEventListener(
+    "click",
+    event => {
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      if(!editing){
+        enterEditing();
+      }
+    }
+  );
+
+
+  cover.addEventListener(
+    "pointerdown",
+    event => {
+
+      if(
+        event.target.closest(
+          "[data-subscription-control]"
+        )
+      ){
+        return;
+      }
+
+
+      event.preventDefault();
+      event.stopPropagation();
+
+
+      if(!editing){
+        enterEditing();
+      }
+
+
+      dragging =
+        true;
+
+      startClientX =
+        event.clientX;
+
+      startClientY =
+        event.clientY;
+
+
+      const position =
+        getSubscriptionImagePosition(
+          character
+        );
+
+      startImageX =
+        position.x;
+
+      startImageY =
+        position.y;
+
+
+      cover.setPointerCapture(
+        event.pointerId
+      );
+    }
+  );
+
+
+  cover.addEventListener(
+    "pointermove",
+    event => {
+
+      if(!dragging){
+        return;
+      }
+
+
+      event.preventDefault();
+      event.stopPropagation();
+
+
+      const rect =
+        cover.getBoundingClientRect();
+
+
+      if(
+        rect.width <= 0 ||
+        rect.height <= 0
+      ){
+        return;
+      }
+
+
+      const deltaX =
+        (
+          event.clientX -
+          startClientX
+        ) /
+        rect.width *
+        100;
+
+
+      const deltaY =
+        (
+          event.clientY -
+          startClientY
+        ) /
+        rect.height *
+        100;
+
+
+      character.subscriptionImageX =
+        Math.max(
+          0,
+          Math.min(
+            100,
+            startImageX -
+            deltaX
+          )
+        );
+
+
+      character.subscriptionImageY =
+        Math.max(
+          0,
+          Math.min(
+            100,
+            startImageY -
+            deltaY
+          )
+        );
+
+
+      img.style.objectPosition =
+        `${
+          character.subscriptionImageX
+        }% ${
+          character.subscriptionImageY
+        }%`;
+    }
+  );
+
+
+  function stopDragging(
+    event
+  ){
+
+    if(!dragging){
+      return;
     }
 
-    const body = document.createElement("div");
-    body.className = "subscription-body";
 
-    body.innerHTML = `
-      <div class="subscription-name">
-        ${esc(character.channel)}
-      </div>
+    dragging =
+      false;
 
-      <div class="subscription-handle">
-        ${esc(publicName(character))}
-        ·
-        ${esc(character.liveId)}
-      </div>
 
+    if(
+      cover.hasPointerCapture(
+        event.pointerId
+      )
+    ){
+      cover.releasePointerCapture(
+        event.pointerId
+      );
+    }
+
+
+    scheduleStarwaveSave();
+  }
+
+
+  cover.addEventListener(
+    "pointerup",
+    stopDragging
+  );
+
+
+  cover.addEventListener(
+    "pointercancel",
+    stopDragging
+  );
+}
+function renderSubscriptions(){
+
+  $("subscriptionGrid").innerHTML =
+    "";
+
+
+  if(!state.characters.length){
+
+    $("subscriptionGrid").innerHTML = `
       <div
-        style="
-          margin-top:7px;
-          font-size:10px;
-          color:var(--muted)
-        "
+        class="empty-state"
+        style="grid-column:1/-1"
       >
-        ${
-          character.live
-            ? `● 直播中 · ${fmt(character.viewers)} 人`
-            : "目前離線"
-        }
+        尚未匯入角色卡。可以匯入角色卡，
+        或建立一個空白角色開始編輯。
       </div>
     `;
 
-    card.append(cover,body);
+    return;
+  }
 
-    card.onclick = () =>
-      openCharacter(character.id);
 
-    $("subscriptionGrid").append(card);
-  });
+  state.characters.forEach(
+    character => {
+
+      const card =
+        document.createElement(
+          "article"
+        );
+
+      card.className =
+        "subscription-card";
+
+
+      const cover =
+        document.createElement(
+          "div"
+        );
+
+      cover.className =
+        "subscription-cover";
+
+
+      if(character.publicImage){
+
+        const img =
+          document.createElement(
+            "img"
+          );
+
+
+        const position =
+          getSubscriptionImagePosition(
+            character
+          );
+
+
+        img.src =
+          character.publicImage;
+
+        img.style.objectPosition =
+          `${position.x}% ${position.y}%`;
+
+
+        cover.append(img);
+
+
+        enableSubscriptionCoverPositioning(
+          cover,
+          img,
+          character
+        );
+
+
+      }else{
+
+        cover.innerHTML = `
+          <div
+            class="fallback-star"
+            style="font-size:58px"
+          >
+            ✦
+          </div>
+        `;
+      }
+
+
+      const body =
+        document.createElement(
+          "div"
+        );
+
+      body.className =
+        "subscription-body";
+
+
+      body.innerHTML = `
+        <div class="subscription-name">
+          ${esc(character.channel)}
+        </div>
+
+        <div class="subscription-handle">
+          ${esc(publicName(character))}
+          ·
+          ${esc(character.liveId)}
+        </div>
+
+        <div
+          style="
+            margin-top:7px;
+            font-size:10px;
+            color:var(--muted)
+          "
+        >
+          ${
+            character.live
+              ? `● 直播中 · ${fmt(character.viewers)} 人`
+              : "目前離線"
+          }
+        </div>
+      `;
+
+
+      card.append(
+        cover,
+        body
+      );
+
+
+      /*
+        點圖片：
+        只調圖片。
+
+        點下面頻道資料：
+        才進頻道。
+      */
+
+      card.onclick =
+        event => {
+
+          if(
+            event.target.closest(
+              ".subscription-cover"
+            )
+          ){
+            return;
+          }
+
+          openCharacter(
+            character.id
+          );
+        };
+
+
+      $("subscriptionGrid").append(
+        card
+      );
+    }
+  );
 }
 
 function openCharacter(id){
