@@ -10723,6 +10723,288 @@ $("closeRoleLive").onclick = () => {
   currentRoleLiveId = "";
 };
 
+function roleLiveDurationTurns(){
+  return (
+    4 +
+    Math.floor(
+      Math.random() * 4
+    )
+  );
+}
+
+
+function roleLiveAutoTitle(
+  character
+){
+  const content =
+    sanitizePublicText(
+      String(
+        character.content || ""
+      ).trim()
+    );
+
+  if(
+    content &&
+    content !== "待設定"
+  ){
+    return `${content}｜直播中`;
+  }
+
+  return "正在直播";
+}
+
+
+function startAutonomousRoleLive(
+  character
+){
+  character.live =
+    true;
+
+  character.viewers =
+    0;
+
+  character.peak =
+    0;
+
+  character.liveTurn =
+    0;
+
+  character.liveRemainingTurns =
+    roleLiveDurationTurns();
+
+  character.liveOfflineTurns =
+    0;
+
+  character.liveTitle =
+    roleLiveAutoTitle(
+      character
+    );
+
+  character.liveStory =
+    [];
+
+  character.liveChat =
+    [];
+
+  character.lastViewerAction =
+    "";
+}
+
+
+function stopAutonomousRoleLive(
+  character
+){
+  character.live =
+    false;
+
+  character.viewers =
+    0;
+
+  character.liveRemainingTurns =
+    0;
+
+  character.liveOfflineTurns =
+    0;
+
+  character.lastViewerAction =
+    "";
+
+
+  if(
+    currentRoleLiveId ===
+      character.id &&
+    !$("roleLiveOverlay").hidden
+  ){
+    $("roleLiveOverlay").hidden =
+      true;
+
+    currentRoleLiveId =
+      "";
+
+    toast(
+      `${publicName(character)} 已結束直播`
+    );
+  }
+}
+
+
+function advanceRoleLiveLifecycle(){
+
+  const characters =
+    state.characters.filter(
+      Boolean
+    );
+
+
+  if(!characters.length){
+    return;
+  }
+
+
+  const justEnded =
+    new Set();
+
+
+  /* 已經直播中的角色 */
+
+  characters
+    .filter(
+      character =>
+        character.live
+    )
+    .forEach(character => {
+
+      let remaining =
+        Number(
+          character.liveRemainingTurns
+        );
+
+
+      /* 相容以前已經存在的角色 */
+
+      if(
+        !Number.isFinite(remaining) ||
+        remaining <= 0
+      ){
+        remaining =
+          roleLiveDurationTurns();
+      }
+
+
+      character.liveRemainingTurns =
+        remaining - 1;
+
+
+      if(
+        character.liveRemainingTurns <=
+        0
+      ){
+        justEnded.add(
+          character.id
+        );
+
+        stopAutonomousRoleLive(
+          character
+        );
+      }
+    });
+
+
+  /* 離線中的角色累積離線回合 */
+
+  characters
+    .filter(
+      character =>
+        !character.live &&
+        !justEnded.has(
+          character.id
+        )
+    )
+    .forEach(character => {
+
+      const offlineTurns =
+        Number(
+          character.liveOfflineTurns ||
+          0
+        );
+
+
+      character.liveOfflineTurns =
+        Math.min(
+          10,
+          offlineTurns + 1
+        );
+    });
+
+
+  let liveCount =
+    characters.filter(
+      character =>
+        character.live
+    ).length;
+
+
+  /* 同時最多兩名匯入角色直播 */
+
+  const maxLive =
+    Math.min(
+      2,
+      characters.length
+    );
+
+
+  if(liveCount < maxLive){
+
+    const candidates =
+      characters
+        .filter(
+          character =>
+            !character.live &&
+            !justEnded.has(
+              character.id
+            )
+        )
+        .sort(
+          () =>
+            Math.random() - .5
+        );
+
+
+    for(
+      const character
+      of candidates
+    ){
+
+      if(
+        liveCount >= maxLive
+      ){
+        break;
+      }
+
+
+      const offlineTurns =
+        Number(
+          character.liveOfflineTurns ||
+          0
+        );
+
+
+      /*
+        離線越久，
+        開播可能性逐漸提高。
+
+        最晚累積到 10 個 RP 回合
+        就會自動開播。
+      */
+
+      const chance =
+        Math.min(
+          .30,
+          .05 +
+          offlineTurns * .025
+        );
+
+
+      if(
+        offlineTurns >= 10 ||
+        Math.random() < chance
+      ){
+        startAutonomousRoleLive(
+          character
+        );
+
+        liveCount++;
+      }
+    }
+  }
+
+
+  renderExplore();
+  renderSubscriptions();
+
+  scheduleStarwaveSave();
+}
+  
 function advanceRoleLiveMetrics(){
   state.characters
     .filter(character => character.live)
@@ -12639,6 +12921,8 @@ function createImportedCharacter(raw){
     liveTitle:"正在直播",
     sceneId:"brightRoom",
     liveTurn:0,
+    liveRemainingTurns:0,
+    liveOfflineTurns:0,
     liveStory:[],
     liveChat:[]
   };
@@ -13347,7 +13631,9 @@ $("addBlankChannel").onclick = () => {
     peak:0,
     liveTitle:"正在直播",
     sceneId:"brightRoom",
-    liveTurn:0,
+     liveTurn:0,
+    liveRemainingTurns:0,
+    liveOfflineTurns:0,
     liveStory:[],
     liveChat:[]
   };
@@ -14610,6 +14896,7 @@ function countRpTurn(summary){
   state.memorySettings.counter++;
 
   advanceRoleLiveMetrics();
+  advanceRoleLiveLifecycle();
 
   if(
     state.memorySettings.counter >=
@@ -17182,6 +17469,12 @@ async event => {
 
     character.liveTurn =
       0;
+
+    character.liveRemainingTurns =
+  0;
+
+character.liveOfflineTurns =
+  0;
 
     character.liveStory =
       [];
