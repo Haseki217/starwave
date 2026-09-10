@@ -16402,75 +16402,793 @@ $("sendForumReply").onclick = () => {
   renderForum();
 };
 
-function generateForumNow(count=2){
-  for(let i=0;i<count;i++){
-    const role =
-      state.characters.length &&
-      Math.random() < .25
-        ? randomItem(state.characters)
-        : null;
+function forumPublicAuthors(){
 
-    const fan =
-      role
-        ? null
-        : randomAllowedFan();
+  const creators =
+    state.characters.map(
+      character => ({
+        type:"creator",
+        id:character.id,
+        name:publicName(character),
+        handle:
+          character.snsId ||
+          character.liveId ||
+          ""
+      })
+    );
 
-    if(
-      !role &&
-      !fan
-    ){
-      continue;
-    }
 
-    state.forumPosts.unshift({
-      id:uid("forum"),
-      category:
-        randomItem([
-          "live",
-          "creator",
-          "chat"
-        ]),
-      title:
-        randomItem([
-          "剛剛那段有人注意到了嗎？",
-          "今天平台是不是特別熱鬧",
-          "有人也在看剛才那場嗎？"
-        ]),
-      author:
-        role
-          ? publicName(role)
-          : fan.name,
-      authorId:
-        role?.id ||
-        null,
-      createdAt:
-  currentRpDateTime(),
-      body:
-        sanitizePublicText(
-          state.live.lastText ||
-          "現在平台上最新出現的一則討論。"
-        ),
-      replies:[],
-      views:
-        Math.floor(
-          20 +
-          Math.random() *
-          160
-        )
-    });
-  }
+  const fans =
+    fanAccounts
+      .filter(
+        fan =>
+          !isBlocked(fan.id)
+      )
+      .map(
+        fan => ({
+          type:"fan",
+          id:fan.id,
+          name:fan.name,
+          handle:fan.handle
+        })
+      );
 
-  renderForum();
+
+  return [
+    ...creators,
+    ...fans
+  ];
 }
 
-$("refreshForum").onclick = () => {
-  if(state.refresh.forum === "off"){
-    toast("論壇刷新目前已關閉");
-    return;
+
+function buildForumAiPrompt(
+  count,
+  authors
+){
+
+  const playerPublic = {
+    name:
+      state.player.name,
+
+    channel:
+      state.player.channel,
+
+    liveId:
+      state.player.liveId,
+
+    snsId:
+      state.player.snsId,
+
+    streamerType:
+      state.player.streamerType,
+
+    content:
+      state.player.content || "",
+
+    publicAppearance:
+      state.player
+        .publicAppearance ||
+      ""
+  };
+
+
+  const creators =
+    state.characters.map(
+      character => ({
+
+        ...publicCharacterContext(
+          character
+        ),
+
+        live:
+          Boolean(
+            character.live
+          ),
+
+        liveTitle:
+          character.live
+            ? sanitizePublicText(
+                character.liveTitle ||
+                ""
+              )
+            : "",
+
+        latestLive:
+          character.live
+            ? sanitizePublicText(
+                character.liveStory
+                  ?.at(-1) ||
+                ""
+              )
+            : ""
+      })
+    );
+
+
+  const playerLive =
+    state.live.started
+      ? {
+          live:true,
+
+          title:
+            state.player.title,
+
+          category:
+            state.player.category,
+
+          latest:
+            sanitizePublicText(
+              state.live.lastText ||
+              ""
+            )
+        }
+      : {
+          live:false
+        };
+
+
+  const publicMemories =
+    state.memories
+      .filter(
+        memory =>
+          memory.visibility ===
+          "public"
+      )
+      .slice(0,10)
+      .map(
+        memory =>
+          sanitizePublicText(
+            memory.summary
+          )
+      );
+
+
+  const recentForum =
+    state.forumPosts
+      .slice(0,6)
+      .map(
+        post => ({
+          title:
+            sanitizePublicText(
+              post.title
+            ),
+
+          body:
+            sanitizePublicText(
+              post.body
+            ),
+
+          author:
+            publicAuthor(
+              post.authorId,
+              post.author
+            )
+        })
+      );
+
+
+  return `
+你正在模擬 STARWAVE 平台的
+公開論壇。
+
+請根據目前真正存在的
+公開事件、主播活動與社群氣氛，
+生成新的論壇討論串。
+
+【玩家公開資料】
+${JSON.stringify(playerPublic)}
+
+【玩家目前直播】
+${JSON.stringify(playerLive)}
+
+【平台上的角色主播】
+${JSON.stringify(creators)}
+
+以上角色資料全部都是
+公開資料。
+
+不得自行推測或使用：
+- 私人外貌
+- 私人真名
+- 私下 WAVELINK
+- 線下故事
+- 私人 relationship
+- 私人事件記憶
+- 角色完整 card
+- 其他未公開秘密
+
+【公開事件記憶】
+${JSON.stringify(publicMemories)}
+
+【最近論壇】
+${JSON.stringify(recentForum)}
+
+請避免一直重複最近論壇
+已經出現過的同一個標題與內容。
+
+【可以使用的發文帳號】
+${JSON.stringify(authors)}
+
+authorId 必須從以上帳號的
+id 中選擇。
+
+不得自己創造新的角色主播帳號。
+
+一般觀眾主要以 fan 帳號活動。
+
+creator 可以偶爾親自發文或回覆，
+但只有在符合角色公開身分、
+個性與目前公開情況時才使用。
+
+不得讓玩家帳號自動發文或回覆。
+
+【公開社群設定】
+
+黑粉強度：
+${state.community.blackfan}%
+
+柔和社群：
+${state.community.soft ? "ON" : "OFF"}
+
+黑粉 0%：
+不要生成針對性惡意、
+酸言酸語或攻擊內容。
+
+黑粉越高，
+才可以逐步出現質疑、
+批評、爭論或負面風向。
+
+柔和社群 ON 時，
+即使有負面意見，
+也降低尖銳與惡意程度。
+
+不要把「黑粉」理解成
+每一篇都必須負面。
+
+論壇必須像自然社群，
+可以有：
+- 討論直播內容
+- 推測公開事件
+- 分享觀感
+- 粉絲聊天
+- 主播相關話題
+- 平台上的其他熱門話題
+- 對公開 SNS 或直播的反應
+
+不要每一篇都只寫
+「今天平台好熱鬧」。
+
+【討論串數量】
+
+生成 ${count} 篇。
+
+每篇可以有 0～5 則回覆。
+
+回覆可以互相接話。
+
+replyTo：
+- null = 直接回覆主樓
+- 數字 = 回覆本篇 replies 中
+  更早出現的那一則
+- 使用從 0 開始的索引
+- 最多只做一層巢狀回覆
+
+【category】
+
+只能是：
+
+live
+creator
+chat
+
+live：
+直播相關
+
+creator：
+主播／創作者相關
+
+chat：
+一般平台聊天
+
+【views】
+
+請依話題自然程度給合理整數，
+不要每篇都一樣。
+
+【輸出】
+
+只輸出有效 JSON：
+
+{
+  "posts":[
+    {
+      "category":"live",
+      "authorId":"帳號 id",
+      "title":"討論串標題",
+      "body":"主樓內容",
+      "views":120,
+      "replies":[
+        {
+          "authorId":"帳號 id",
+          "text":"回覆內容",
+          "replyTo":null
+        },
+        {
+          "authorId":"帳號 id",
+          "text":"回覆內容",
+          "replyTo":0
+        }
+      ]
+    }
+  ]
+}
+`;
+}
+
+
+function resolveForumAiAuthor(
+  authorId,
+  authors
+){
+
+  return (
+    authors.find(
+      author =>
+        author.id ===
+        authorId
+    ) ||
+    randomItem(authors) ||
+    null
+  );
+}
+
+
+let forumGenerating =
+  false;
+
+
+async function generateForumNow(
+  count=2,
+  options={}
+){
+
+  const background =
+    Boolean(
+      options.background
+    );
+
+
+  if(forumGenerating){
+
+    if(!background){
+      toast(
+        "論壇 AI 正在生成中"
+      );
+    }
+
+    return false;
   }
 
-  generateForumNow(2);
-};
+
+  const profile =
+    state.api.profiles[
+      state.api.active
+    ];
+
+
+  if(
+    !profile ||
+    !String(
+      profile.apiKey || ""
+    ).trim() ||
+    !String(
+      profile.model || ""
+    ).trim()
+  ){
+
+    if(!background){
+
+      showNotice(
+        "尚未設定可用的 LLM",
+        "請先到「設定 → LLM/API」設定 API Key、模型。"
+      );
+    }
+
+    return false;
+  }
+
+
+  const authors =
+    forumPublicAuthors();
+
+
+  if(!authors.length){
+
+    if(!background){
+      toast(
+        "目前沒有可用的論壇帳號"
+      );
+    }
+
+    return false;
+  }
+
+
+  forumGenerating =
+    true;
+
+
+  const button =
+    $("refreshForum");
+
+  const oldText =
+    button.textContent;
+
+
+  if(!background){
+
+    button.disabled =
+      true;
+
+    button.textContent =
+      "AI 生成中";
+  }
+
+
+  try{
+
+    const result =
+      await generateWithApi({
+
+        profileIndex:
+          state.api.active,
+
+        prompt:
+          buildForumAiPrompt(
+            count,
+            authors
+          ),
+
+        systemInstruction:
+          `你是 STARWAVE 公開論壇模擬引擎。
+只使用提供給你的公開資訊。
+嚴禁洩漏私人角色卡、私人關係、WAVELINK、線下故事與私人事件。
+不得替玩家自動發言。
+請依指定格式輸出有效 JSON。`,
+
+        json:true
+      });
+
+
+    const data =
+      parseStarwaveLlmJson(
+        result.text
+      );
+
+
+    const posts =
+      Array.isArray(
+        data.posts
+      )
+        ? data.posts
+        : [];
+
+
+    let generatedCount =
+      0;
+
+
+    posts
+      .slice(
+        0,
+        Math.max(
+          1,
+          Number(count) || 1
+        )
+      )
+      .forEach(
+        rawPost => {
+
+          const title =
+            sanitizePublicText(
+              String(
+                rawPost?.title ||
+                ""
+              ).trim()
+            );
+
+
+          const body =
+            sanitizePublicText(
+              String(
+                rawPost?.body ||
+                ""
+              ).trim()
+            );
+
+
+          if(
+            !title ||
+            !body
+          ){
+            return;
+          }
+
+
+          const author =
+            resolveForumAiAuthor(
+              rawPost.authorId,
+              authors
+            );
+
+
+          if(!author){
+            return;
+          }
+
+
+          const allowedCategories =
+            new Set([
+              "live",
+              "creator",
+              "chat"
+            ]);
+
+
+          const category =
+            allowedCategories.has(
+              rawPost.category
+            )
+              ? rawPost.category
+              : "chat";
+
+
+          const rawViews =
+            Number(
+              rawPost.views
+            );
+
+
+          const views =
+            Number.isFinite(
+              rawViews
+            )
+              ? Math.max(
+                  0,
+                  Math.min(
+                    999999,
+                    Math.round(
+                      rawViews
+                    )
+                  )
+                )
+              : 30;
+
+
+          const builtReplies =
+            [];
+
+
+          const rawReplies =
+            Array.isArray(
+              rawPost.replies
+            )
+              ? rawPost.replies
+              : [];
+
+
+          rawReplies
+            .slice(0,5)
+            .forEach(
+              rawReply => {
+
+                const text =
+                  sanitizePublicText(
+                    String(
+                      rawReply?.text ||
+                      ""
+                    ).trim()
+                  );
+
+
+                if(!text){
+                  return;
+                }
+
+
+                const replyAuthor =
+                  resolveForumAiAuthor(
+                    rawReply.authorId,
+                    authors
+                  );
+
+
+                if(!replyAuthor){
+                  return;
+                }
+
+
+                let parentId =
+                  null;
+
+
+                const rawReplyTo =
+                  rawReply.replyTo;
+
+
+                if(
+                  rawReplyTo !==
+                    null &&
+                  rawReplyTo !==
+                    undefined &&
+                  rawReplyTo !==
+                    ""
+                ){
+
+                  const parentIndex =
+                    Number(
+                      rawReplyTo
+                    );
+
+
+                  if(
+                    Number.isInteger(
+                      parentIndex
+                    ) &&
+                    parentIndex >= 0 &&
+                    parentIndex <
+                      builtReplies.length
+                  ){
+
+                    const parent =
+                      builtReplies[
+                        parentIndex
+                      ];
+
+
+                    if(
+                      parent &&
+                      !parent.parentId
+                    ){
+
+                      parentId =
+                        parent.id;
+                    }
+                  }
+                }
+
+
+                builtReplies.push({
+                  id:uid("fr"),
+
+                  parentId,
+
+                  author:
+                    replyAuthor.name,
+
+                  authorId:
+                    replyAuthor.id,
+
+                  time:
+                    currentRpTimeShort(),
+
+                  text
+                });
+              }
+            );
+
+
+          state.forumPosts.unshift({
+
+            id:
+              uid("forum"),
+
+            category,
+
+            title,
+
+            author:
+              author.name,
+
+            authorId:
+              author.id,
+
+            createdAt:
+              currentRpDateTime(),
+
+            body,
+
+            replies:
+              builtReplies,
+
+            views
+          });
+
+
+          generatedCount++;
+        }
+      );
+
+
+    if(!generatedCount){
+
+      throw new Error(
+        "AI 沒有產生有效的論壇討論串。"
+      );
+    }
+
+
+    renderForum();
+
+    scheduleStarwaveSave();
+
+
+    if(!background){
+
+      toast(
+        `已生成 ${generatedCount} 篇論壇討論`
+      );
+    }
+
+
+    return true;
+
+
+  }catch(error){
+
+    console.error(
+      "STARWAVE forum generation failed:",
+      error
+    );
+
+
+    if(!background){
+
+      showNotice(
+        "論壇生成失敗",
+        error?.message ||
+        "LLM 沒有成功產生論壇內容，可以再次嘗試。"
+      );
+    }
+
+
+    return false;
+
+
+  }finally{
+
+    forumGenerating =
+      false;
+
+
+    if(!background){
+
+      button.disabled =
+        false;
+
+      button.textContent =
+        oldText;
+    }
+  }
+}
+
+$("refreshForum").onclick =
+  async () => {
+
+    if(
+      state.refresh.forum ===
+      "off"
+    ){
+      toast(
+        "論壇刷新目前已關閉"
+      );
+
+      return;
+    }
+
+
+    await generateForumNow(2);
+  };
 
 $$("[data-forum-category]").forEach(button => {
   button.onclick = () => {
@@ -19443,9 +20161,17 @@ $("memoryInterval").onchange = () => {
 function triggerAutoContent(
   options={}
 ){
-  if(state.refresh.forum === "auto"){
-    generateForumNow(1);
-  }
+ if(
+  state.refresh.forum ===
+  "auto"
+){
+  generateForumNow(
+    1,
+    {
+      background:true
+    }
+  );
+}
 
   if(state.refresh.sns === "auto"){
     generateSnsNow(1);
