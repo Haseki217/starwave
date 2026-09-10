@@ -16244,15 +16244,18 @@ function renderForumThread(){
   $("forumOp").innerHTML = `
     <div class="forum-op">
 
-      <div class="forum-op-meta">
-        PO主：
-        <strong>
-          ${esc(publicAuthor(post.authorId,post.author))}
-        </strong>
-        ·
-        發帖時間：
-        ${esc(post.createdAt)}
-      </div>
+<div class="forum-op-meta">
+  PO主：
+  <strong>
+    ${esc(publicAuthor(post.authorId,post.author))}
+  </strong>
+  ${
+    realTimeEnabled() &&
+    post.createdAt
+      ? ` · 發帖時間：${esc(post.createdAt)}`
+      : ""
+  }
+</div>
 
       <div class="forum-op-body">
         ${esc(sanitizePublicText(post.body))}
