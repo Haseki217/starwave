@@ -13583,6 +13583,49 @@ relationshipUpdate
 
 沒有實質變化時填空字串。
 
+【線下消費記錄】
+
+目前經濟模式：
+${state.economy.mode}
+
+生活帳本刷新方式：
+${state.refresh.ledger}
+
+目前錢包餘額：
+${state.economy.wallet}
+
+${
+  state.economy.mode === "full" &&
+  state.refresh.ledger === "auto"
+    ? `如果玩家這次輸入或本回合故事中
+明確發生了玩家實際支付的生活消費，
+請輸出 economyTransaction。
+
+例如：
+- 玩家支付餐費或飲料
+- 玩家支付交通費
+- 玩家購買門票
+- 玩家支付線下活動費用
+- 玩家購買普通生活用品
+
+玩家已明確輸入金額時，
+必須優先使用該金額。
+
+沒有明確金額時，
+可以依情境產生合理的新臺幣金額。
+
+只記錄玩家實際負擔的金額。
+不得把角色自己支付的費用算到玩家身上。
+不得擅自假設玩家請客或替其他人付款。
+不得重複記錄 SHOP、直播打賞、
+帳單或已經進入帳本的消費。
+
+支出金額必須是負數。
+沒有明確消費時輸出 null。`
+    : `這個模式不在本回合立即記錄線下消費。
+economyTransaction 必須輸出 null。`
+}
+
 【事件摘要】
 
 eventSummary
@@ -13595,6 +13638,12 @@ eventSummary
 {
   "reply":"角色的線下回覆與故事發展",
   "relationshipUpdate":"",
+  "economyTransaction":{
+    "category":"分類",
+    "item":"消費項目",
+    "amount":-100,
+    "source":"線下互動"
+  },
   "eventSummary":""
 }
 `;
@@ -13719,14 +13768,96 @@ async function generateOfflineAi(
       ).trim();
 
 
-    if(relationshipUpdate){
+   if(relationshipUpdate){
 
-      character.relationship =
-        relationshipUpdate;
-    }
+  character.relationship =
+    relationshipUpdate;
+}
 
 
-    const eventSummary =
+let economyRecorded =
+  false;
+
+
+const economyTransaction =
+  data.economyTransaction &&
+  typeof data.economyTransaction ===
+    "object"
+    ? data.economyTransaction
+    : null;
+
+
+if(
+  state.economy.mode ===
+    "full" &&
+  state.refresh.ledger ===
+    "auto" &&
+  economyTransaction
+){
+
+  const amount =
+    Math.trunc(
+      Number(
+        economyTransaction.amount
+      )
+    );
+
+  const category =
+    String(
+      economyTransaction.category ||
+      "線下活動"
+    )
+      .trim()
+      .slice(0,30);
+
+  const item =
+    String(
+      economyTransaction.item || ""
+    )
+      .trim()
+      .slice(0,50);
+
+  const source =
+    String(
+      economyTransaction.source ||
+      "線下互動"
+    )
+      .trim()
+      .slice(0,30);
+
+
+  if(
+    item &&
+    Number.isFinite(amount) &&
+    amount < 0 &&
+    Math.abs(amount) <=
+      30000 &&
+    state.economy.wallet >=
+      Math.abs(amount)
+  ){
+
+    state.economy.wallet +=
+      amount;
+
+
+    addTransaction({
+      category,
+      item,
+      amount,
+      source
+    });
+
+
+    syncNumbers();
+    renderShop();
+
+    economyRecorded =
+      true;
+  }
+}
+
+
+const eventSummary =
       String(
         data.eventSummary || ""
       ).trim();
@@ -13742,11 +13873,11 @@ async function generateOfflineAi(
     scheduleStarwaveSave();
 
 
-    return {
-      success:true,
-      eventSummary
-    };
-
+  return {
+  success:true,
+  eventSummary,
+  economyRecorded
+};
 
   }catch(error){
 
@@ -13851,7 +13982,10 @@ $("sendOffline").onclick =
     );
 
 
-    triggerAutoContent();
+    triggerAutoContent({
+      skipLedger:
+        generated.economyRecorded
+    });
   };
 
 $("rememberOffline").onclick = () => {
@@ -14116,10 +14250,18 @@ ${JSON.stringify(inventory)}
 - 不得憑空生成中獎、遺產、巨額贈與等收入。
 - 正數代表收入，負數代表支出。
 - 普通生活支出金額應符合新臺幣的合理範圍。
-- 沒有適合新增的生活收支時，
-  transaction 輸出 null。
+- 每次刷新原則上必須生成一筆 transaction。
+- 優先補記近期故事中明確發生、
+  而且近期收支尚未記錄的消費或收入。
+- 玩家已明確輸入金額時，
+  優先使用該金額，不得擅自改成其他金額。
+- 如果近期故事沒有提到任何收支，
+  仍要依玩家背景與一般生活需求，
+  合理生成一筆普通日常開銷。
+- 不得因為劇情沒有主動描寫吃飯、交通、
+  飲料、日用品或休閒活動就輸出 null。
 - 不得把錢包扣成負數。
-
+  
 【每月帳單規則】
 
 ${
@@ -14162,8 +14304,11 @@ bills 必須輸出空陣列，
   "summary":"這次新增內容的簡短摘要"
 }
 
-若沒有生活收支，
-transaction 請輸出 null。
+transaction 原則上不得為 null。
+
+只有錢包已無法負擔任何合理日常支出，
+而且近期也沒有合理收入可以記錄時，
+transaction 才可以輸出 null。
 `;
 }
 
@@ -21701,7 +21846,8 @@ if(
   );
 }
 
- if(
+if(
+  !options.skipLedger &&
   state.refresh.ledger === "auto" &&
   state.economy.mode === "full" &&
   (
