@@ -4045,7 +4045,7 @@ textarea::placeholder{
 </button>
 
           <button id="startVoiceCall" class="secondary">
-            模擬語音
+            語音
           </button>
 
           <button id="refreshWl" class="secondary">
@@ -17433,8 +17433,8 @@ function renderSns(){
     const mainSend =
       document.createElement("button");
 
-    mainSend.className = "primary";
-    mainSend.textContent = "送出";
+   mainSend.className = "icon-btn";
+mainSend.textContent = "↑";
 
     mainSend.onclick = () => {
       const value = mainInput.value.trim();
@@ -17684,8 +17684,8 @@ time.textContent =
       const send =
         document.createElement("button");
 
-      send.className = "primary";
-      send.textContent = "送出";
+ send.className = "icon-btn";
+send.textContent = "↑";
 
       send.onclick = () => {
         const value =
