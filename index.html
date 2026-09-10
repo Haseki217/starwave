@@ -14437,7 +14437,7 @@ $("confirmRoleImport").onclick =
     }
   };
 
-  function getSubscriptionImagePosition(
+ function getSubscriptionImagePosition(
   character
 ){
   const rawX =
@@ -14470,23 +14470,27 @@ $("confirmRoleImport").onclick =
 }
 
 
-  function enableSubscriptionCoverDrag(
+function enableSubscriptionCoverDrag(
   cover,
-  img,
   character
 ){
-  let editing = false;
-  let dragging = false;
+  let editing =
+    false;
 
-  let startX = 0;
-  let startY = 0;
+  let dragging =
+    false;
 
-  let startPosX = 50;
-  let startPosY = 50;
+  let startClientX =
+    0;
 
+  let startClientY =
+    0;
 
-  cover.style.position =
-    "relative";
+  let startImageX =
+    50;
+
+  let startImageY =
+    50;
 
 
   const adjust =
@@ -14494,18 +14498,51 @@ $("confirmRoleImport").onclick =
       "button"
     );
 
-  adjust.type = "button";
-  adjust.textContent = "✥ 調整";
+  adjust.type =
+    "button";
+
+  adjust.textContent =
+    "✥ 調整";
 
   adjust.style.cssText = `
     position:absolute;
     right:8px;
     bottom:8px;
     z-index:10;
-    padding:5px 9px;
-    border:1px solid rgba(255,255,255,.4);
+    min-height:27px;
+    padding:0 9px;
+    border:1px solid rgba(255,255,255,.42);
     border-radius:999px;
-    background:rgba(20,35,48,.65);
+    background:rgba(20,35,48,.66);
+    color:white;
+    font-size:9px;
+  `;
+
+
+  const done =
+    document.createElement(
+      "button"
+    );
+
+  done.type =
+    "button";
+
+  done.textContent =
+    "完成";
+
+  done.hidden =
+    true;
+
+  done.style.cssText = `
+    position:absolute;
+    right:8px;
+    top:8px;
+    z-index:10;
+    min-height:27px;
+    padding:0 10px;
+    border:1px solid rgba(255,255,255,.42);
+    border-radius:999px;
+    background:rgba(20,35,48,.72);
     color:white;
     font-size:9px;
   `;
@@ -14516,7 +14553,8 @@ $("confirmRoleImport").onclick =
       "div"
     );
 
-  guide.hidden = true;
+  guide.hidden =
+    true;
 
   guide.style.cssText = `
     position:absolute;
@@ -14526,55 +14564,43 @@ $("confirmRoleImport").onclick =
   `;
 
   guide.innerHTML = `
-    <div style="
-      position:absolute;
-      left:50%;
-      top:10%;
-      bottom:10%;
-      width:1px;
-      background:rgba(255,255,255,.85);
-    "></div>
+    <div
+      style="
+        position:absolute;
+        left:50%;
+        top:10%;
+        bottom:10%;
+        width:1px;
+        background:rgba(255,255,255,.85);
+        box-shadow:0 0 4px rgba(0,0,0,.35);
+      "
+    ></div>
 
-    <div style="
-      position:absolute;
-      top:50%;
-      left:10%;
-      right:10%;
-      height:1px;
-      background:rgba(255,255,255,.85);
-    "></div>
+    <div
+      style="
+        position:absolute;
+        top:50%;
+        left:10%;
+        right:10%;
+        height:1px;
+        background:rgba(255,255,255,.85);
+        box-shadow:0 0 4px rgba(0,0,0,.35);
+      "
+    ></div>
 
-    <div style="
-      position:absolute;
-      left:50%;
-      top:50%;
-      transform:translate(-50%,-50%);
-      color:white;
-      font-size:18px;
-    ">✥</div>
-  `;
-
-
-  const done =
-    document.createElement(
-      "button"
-    );
-
-  done.type = "button";
-  done.textContent = "完成";
-  done.hidden = true;
-
-  done.style.cssText = `
-    position:absolute;
-    right:8px;
-    top:8px;
-    z-index:10;
-    padding:5px 9px;
-    border:1px solid rgba(255,255,255,.4);
-    border-radius:999px;
-    background:rgba(20,35,48,.72);
-    color:white;
-    font-size:9px;
+    <div
+      style="
+        position:absolute;
+        left:50%;
+        top:50%;
+        transform:translate(-50%,-50%);
+        color:white;
+        font-size:18px;
+        text-shadow:0 1px 5px rgba(0,0,0,.55);
+      "
+    >
+      ✥
+    </div>
   `;
 
 
@@ -14585,12 +14611,19 @@ $("confirmRoleImport").onclick =
   );
 
 
-  function enterEdit(){
-    editing = true;
+  function enterEditing(){
 
-    adjust.hidden = true;
-    guide.hidden = false;
-    done.hidden = false;
+    editing =
+      true;
+
+    adjust.hidden =
+      true;
+
+    done.hidden =
+      false;
+
+    guide.hidden =
+      false;
 
     cover.style.cursor =
       "grab";
@@ -14600,47 +14633,51 @@ $("confirmRoleImport").onclick =
   }
 
 
-  function finishEdit(){
-    editing = false;
-    dragging = false;
+  function finishEditing(){
 
-    adjust.hidden = false;
-    guide.hidden = true;
-    done.hidden = true;
+    editing =
+      false;
 
-    cover.style.cursor = "";
-    cover.style.touchAction = "";
+    dragging =
+      false;
+
+    adjust.hidden =
+      false;
+
+    done.hidden =
+      true;
+
+    guide.hidden =
+      true;
+
+    cover.style.cursor =
+      "";
+
+    cover.style.touchAction =
+      "";
 
     scheduleStarwaveSave();
   }
 
 
-  adjust.onpointerdown = event => {
-    event.preventDefault();
-    event.stopPropagation();
-  };
+  adjust.onclick =
+    event => {
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      enterEditing();
+    };
 
 
-  adjust.onclick = event => {
-    event.preventDefault();
-    event.stopPropagation();
+  done.onclick =
+    event => {
 
-    enterEdit();
-  };
+      event.preventDefault();
+      event.stopPropagation();
 
-
-  done.onpointerdown = event => {
-    event.preventDefault();
-    event.stopPropagation();
-  };
-
-
-  done.onclick = event => {
-    event.preventDefault();
-    event.stopPropagation();
-
-    finishEdit();
-  };
+      finishEditing();
+    };
 
 
   cover.addEventListener(
@@ -14648,6 +14685,7 @@ $("confirmRoleImport").onclick =
     event => {
 
       if(
+        !editing ||
         event.target === adjust ||
         event.target === done
       ){
@@ -14657,22 +14695,16 @@ $("confirmRoleImport").onclick =
       event.preventDefault();
       event.stopPropagation();
 
-
-      if(!editing){
-        return;
-      }
-
-
-      dragging = true;
+      dragging =
+        true;
 
       cover.style.cursor =
         "grabbing";
 
-
-      startX =
+      startClientX =
         event.clientX;
 
-      startY =
+      startClientY =
         event.clientY;
 
 
@@ -14681,10 +14713,10 @@ $("confirmRoleImport").onclick =
           character
         );
 
-      startPosX =
+      startImageX =
         position.x;
 
-      startPosY =
+      startImageY =
         position.y;
 
 
@@ -14710,20 +14742,27 @@ $("confirmRoleImport").onclick =
       const rect =
         cover.getBoundingClientRect();
 
+      if(
+        !rect.width ||
+        !rect.height
+      ){
+        return;
+      }
 
-      const dx =
+
+      const deltaX =
         (
           event.clientX -
-          startX
+          startClientX
         ) /
         rect.width *
         100;
 
 
-      const dy =
+      const deltaY =
         (
           event.clientY -
-          startY
+          startClientY
         ) /
         rect.height *
         100;
@@ -14734,7 +14773,8 @@ $("confirmRoleImport").onclick =
           0,
           Math.min(
             100,
-            startPosX - dx
+            startImageX -
+            deltaX
           )
         );
 
@@ -14744,12 +14784,13 @@ $("confirmRoleImport").onclick =
           0,
           Math.min(
             100,
-            startPosY - dy
+            startImageY -
+            deltaY
           )
         );
 
 
-      img.style.objectPosition =
+      cover.style.backgroundPosition =
         `${
           character.subscriptionImageX
         }% ${
@@ -14759,14 +14800,16 @@ $("confirmRoleImport").onclick =
   );
 
 
-  function endDrag(
+  function stopDragging(
     event
   ){
+
     if(!dragging){
       return;
     }
 
-    dragging = false;
+    dragging =
+      false;
 
     cover.style.cursor =
       editing
@@ -14790,27 +14833,16 @@ $("confirmRoleImport").onclick =
 
   cover.addEventListener(
     "pointerup",
-    endDrag
+    stopDragging
   );
+
 
   cover.addEventListener(
     "pointercancel",
-    endDrag
-  );
-
-
-  /*
-    不論是否正在編輯，
-    點圖片區都不能進頻道。
-  */
-  cover.addEventListener(
-    "click",
-    event => {
-      event.preventDefault();
-      event.stopPropagation();
-    }
+    stopDragging
   );
 }
+  
 function renderSubscriptions(){
 
   $("subscriptionGrid").innerHTML =
@@ -14854,35 +14886,33 @@ function renderSubscriptions(){
         "subscription-cover";
 
 
-      if(character.publicImage){
+    if(character.publicImage){
 
-        const img =
-          document.createElement(
-            "img"
-          );
+  const position =
+    getSubscriptionImagePosition(
+      character
+    );
+
+  cover.style.backgroundImage =
+    `url("${character.publicImage}")`;
+
+  cover.style.backgroundSize =
+    "cover";
+
+  cover.style.backgroundRepeat =
+    "no-repeat";
+
+  cover.style.backgroundPosition =
+    `${position.x}% ${position.y}%`;
 
 
-        const position =
-          getSubscriptionImagePosition(
-            character
-          );
+  enableSubscriptionCoverDrag(
+    cover,
+    character
+  );
 
 
-        img.src =
-          character.publicImage;
-
-       img.style.objectPosition =
-  `${position.x}% ${position.y}%`;
-
-cover.append(img);
-
-enableSubscriptionCoverDrag(
-  cover,
-  img,
-  character
-);
-
-      }else{
+}else{
 
         cover.innerHTML = `
           <div
