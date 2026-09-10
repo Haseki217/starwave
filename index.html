@@ -11379,10 +11379,10 @@ function buildWavelinkAiPrompt(
   room,
   {
     playerText="",
-    proactive=false
+    proactive=false,
+    mode="text"
   }={}
 ){
-
   const members =
     activeRoomMembers(room);
 
@@ -11470,9 +11470,25 @@ function buildWavelinkAiPrompt(
 
 
   return `
+return `
 你正在模擬 STARWAVE 的私人通訊軟體 WAVELINK。
 
 這不是公開聊天室。
+
+【目前互動形式】
+${
+  mode === "voice"
+    ? `目前正在進行私人語音通話，
+但介面只以文字呈現，不生成或播放真實音訊。
+
+角色回覆必須像通話中自然說出口的內容，
+可以有停頓、語氣與角色彼此接話，
+不要寫成社群貼文或一般文字訊息。
+
+messages 中的 text 只填角色實際說出的內容，
+不要自行加入「〔語音〕」標籤。`
+    : `目前是 WAVELINK 私人文字聊天。`
+}
 
 【房間】
 類型：
@@ -11799,7 +11815,8 @@ async function generateWavelinkAi(
   {
     playerText="",
     proactive=false,
-    background=false
+    background=false,
+    mode="text"
   }={}
 ){
 
@@ -11849,12 +11866,18 @@ async function generateWavelinkAi(
   }
 
 
-  wavelinkGeneratingRooms.add(
-    room.id
-  );
+wavelinkGeneratingRooms.add(
+  room.id
+);
 
 
-  const isCurrent =
+const interactionLabel =
+  mode === "voice"
+    ? "語音通話"
+    : "WAVELINK";
+
+
+const isCurrent =
     room.id ===
     state.currentWavelink;
 
@@ -11885,9 +11908,9 @@ async function generateWavelinkAi(
 
   if(!background){
 
-    toast(
-      `${profile.provider} 正在生成 WAVELINK……`
-    );
+   toast(
+  `${profile.provider} 正在生成${interactionLabel}`
+);
   }
 
 
@@ -11899,15 +11922,15 @@ async function generateWavelinkAi(
         profileIndex:
           state.api.active,
 
-        prompt:
-          buildWavelinkAiPrompt(
-            room,
-            {
-              playerText,
-              proactive
-            }
-          ),
-
+     prompt:
+  buildWavelinkAiPrompt(
+    room,
+    {
+      playerText,
+      proactive,
+      mode
+    }
+  ),
         systemInstruction:
           `你是 STARWAVE 的私人角色互動模擬引擎。
 請嚴格維持角色資訊差。
@@ -11943,11 +11966,14 @@ async function generateWavelinkAi(
       );
 
 
-    let added =
-      0;
+  let added =
+  0;
+
+const generatedMessages =
+  [];
 
 
-    messages.forEach(message => {
+messages.forEach(message => {
 
       const authorId =
         String(
@@ -11971,28 +11997,41 @@ async function generateWavelinkAi(
       }
 
 
-      pushWlMessage(
-        room,
-        {
-          id:
-            uid("wm"),
-
-          authorId,
-
-          text
-        }
-      );
+  const storedText =
+  mode === "voice"
+    ? `〔語音〕${text}`
+    : text;
 
 
-      added++;
+pushWlMessage(
+  room,
+  {
+    id:
+      uid("wm"),
+
+    authorId,
+
+    text:
+      storedText
+  }
+);
+
+
+generatedMessages.push({
+  authorId,
+  text
+});
+
+
+added++;
     });
 
 
     if(!added){
 
-      throw new Error(
-        "AI 沒有回傳有效的 WAVELINK 訊息。"
-      );
+    throw new Error(
+  `AI 沒有回傳有效的${interactionLabel}內容。`
+);
     }
 
 
@@ -12033,12 +12072,13 @@ async function generateWavelinkAi(
     scheduleStarwaveSave();
 
 
-    return {
-      success:true,
-      added,
-      eventSummary
-    };
-
+return {
+  success:true,
+  added,
+  eventSummary,
+  messages:
+    generatedMessages
+};
 
   }catch(error){
 
@@ -12050,11 +12090,11 @@ async function generateWavelinkAi(
 
     if(!background){
 
-      showNotice(
-        "WAVELINK 生成失敗",
-        error?.message ||
-        "LLM 沒有成功產生 WAVELINK 訊息，可以再次刷新。"
-      );
+   showNotice(
+  `${interactionLabel}生成失敗`,
+  error?.message ||
+  `LLM 沒有成功產生${interactionLabel}內容，可以再次嘗試。`
+);
     }
 
 
@@ -13051,102 +13091,152 @@ $("startVoiceCall").onclick = () => {
   renderWavelinkConversation();
 };
 
-$("sendVoice").onclick = () => {
-  const room =
-    getRoom(voiceCall.roomId);
+$("sendVoice").onclick =
+  async () => {
 
-  const text =
-    $("voiceInput").value.trim();
+    const room =
+      getRoom(
+        voiceCall.roomId
+      );
 
-  if(
-    !room ||
-    !text
-  ){
-    return;
-  }
+    const text =
+      $("voiceInput")
+        .value
+        .trim();
 
-  const members =
-    activeRoomMembers(room);
+    if(
+      !room ||
+      !text
+    ){
+      return;
+    }
 
-  if(!members.length){
-    return;
-  }
+    const members =
+      activeRoomMembers(
+        room
+      );
 
-  voiceCall.entries.push({
-    authorId:"player",
-    text
-  });
+    if(!members.length){
+      return;
+    }
 
-  pushWlMessage(room,{
-    id:uid("wm"),
-    authorId:"player",
-    text:`〔語音〕${text}`
-  });
 
-  $("voiceInput").value = "";
+    const sendButton =
+      $("sendVoice");
 
-  const replyCount =
-    room.type === "group"
-      ? Math.min(
-          members.length,
-          Math.floor(Math.random() * (members.length + 1))
-        )
-      : (
-          Math.random() < .90
-            ? 1
-            : 0
+    const endButton =
+      $("endVoiceCall");
+
+    const oldSendText =
+      sendButton.textContent;
+
+
+    voiceCall.entries.push({
+      authorId:"player",
+      text
+    });
+
+
+    pushWlMessage(
+      room,
+      {
+        id:
+          uid("wm"),
+
+        authorId:
+          "player",
+
+        text:
+          `〔語音〕${text}`
+      }
+    );
+
+
+    $("voiceInput").value =
+      "";
+
+    renderVoiceLog();
+    renderWavelinkRooms();
+
+
+    sendButton.disabled =
+      true;
+
+    endButton.disabled =
+      true;
+
+    $("voiceInput").disabled =
+      true;
+
+    sendButton.textContent =
+      "AI 生成中";
+
+
+    try{
+
+      const generated =
+        await generateWavelinkAi(
+          room,
+          {
+            playerText:text,
+            proactive:false,
+            mode:"voice"
+          }
         );
 
-  const speakers =
-    [...members]
-      .sort(() => Math.random() - .5)
-      .slice(0,replyCount);
 
-  speakers.forEach(character => {
-    const response =
-      randomItem([
-        "嗯，我聽到了。",
-        "等等，你剛剛那句再說一次。",
-        "我現在有在聽。",
-        "好，我知道你的意思。",
-        "……你突然在通話裡講這個喔？"
-      ]);
+      if(!generated){
+        return;
+      }
 
-    voiceCall.entries.push({
-      authorId:character.id,
-      text:response
-    });
 
-    pushWlMessage(room,{
-      id:uid("wm"),
-      authorId:character.id,
-      text:`〔語音〕${response}`
-    });
-  });
+      (
+        generated.messages ||
+        []
+      ).forEach(message => {
 
-  if(
-    room.type === "group" &&
-    speakers.length >= 2 &&
-    Math.random() < .35
-  ){
-    const response =
-      `等一下，${publicName(speakers[0])} 剛剛那句我也有聽到。`;
+        voiceCall.entries.push({
+          authorId:
+            message.authorId,
 
-    voiceCall.entries.push({
-      authorId:speakers[1].id,
-      text:response
-    });
+          text:
+            message.text
+        });
+      });
 
-    pushWlMessage(room,{
-      id:uid("wm"),
-      authorId:speakers[1].id,
-      text:`〔語音〕${response}`
-    });
-  }
 
-  renderVoiceLog();
-  renderWavelinkRooms();
-};
+      renderVoiceLog();
+      renderWavelinkRooms();
+
+
+      countRpTurn(
+        generated.eventSummary ||
+        "WAVELINK 語音通話有新的私人互動。"
+      );
+
+
+      triggerAutoContent({
+        skipWavelink:true
+      });
+
+
+    }finally{
+
+      sendButton.disabled =
+        false;
+
+      endButton.disabled =
+        false;
+
+      $("voiceInput").disabled =
+        false;
+
+      sendButton.textContent =
+        oldSendText;
+
+      $("voiceInput").focus();
+    }
+  };
 
 $("voiceInput").onkeydown = event => {
   if(event.key === "Enter"){
