@@ -5366,48 +5366,15 @@ textarea::placeholder{
 
       </div>
 
-      <div class="economy-explain">
+  <div class="economy-explain">
 
-        <div class="economy-card">
+  <div
+    id="economyModeExplain"
+    class="economy-card"
+    style="grid-column:1/-1"
+  ></div>
 
-          <strong>輕量模式</strong>
-
-          <p>
-            只處理與直播及平台玩法直接相關的明確金錢變動，
-            例如直播收到打賞、玩家到其他創作者直播打賞、
-            SHOP 購買等。
-            不模擬房租、水電、網路、飲食、交通、
-            日用品等日常生活開銷。
-          </p>
-
-        </div>
-
-        <div class="economy-card">
-
-          <strong>完整生活經濟</strong>
-
-          <p>
-            除了直播與平台交易，也會依故事進度模擬房租、
-            水電、網路、飲食、交通、日用品、
-            線下活動等生活收支。
-            不模擬稅金，也不另外扣除直播打賞的提領手續費。
-          </p>
-
-        </div>
-
-        <div class="economy-card">
-
-          <strong>關閉</strong>
-
-          <p>
-            停止新的 SHOP 購買、打賞、繳費與其他金錢玩法。
-            已存在的錢包餘額、生活帳本與交易歷史仍會保留。
-          </p>
-
-        </div>
-
-      </div>
-
+</div>
     </div>
 
     <div class="settings-section">
@@ -5501,7 +5468,17 @@ textarea::placeholder{
             <option value="off">關閉</option>
           </select>
         </div>
+<div class="refresh-row">
+  <strong>角色卡頻道生成</strong>
 
+  <select
+    class="refreshSelect"
+    data-refresh-feature="characterImport"
+  >
+    <option value="auto">自動生成</option>
+    <option value="off">關閉</option>
+  </select>
+</div>
       </div>
 
     </div>
@@ -6055,6 +6032,8 @@ textarea::placeholder{
     <div class="note" style="margin-bottom:10px">
       支援 JSON、TXT 與直接貼上角色卡文字。
       PNG 角色卡目前不支援。
+<br><br>
+      匯入角色卡將會由 AI 自動生成頻道內容，可在設定中關閉。
     </div>
 
     <div class="field">
@@ -6838,13 +6817,14 @@ live:{
     transactions:[]
   },
 
-  refresh:{
-    preset:"custom",
-    forum:"manual",
-    sns:"manual",
-    wavelink:"manual",
-    ledger:"manual"
-  },
+refresh:{
+  preset:"custom",
+  forum:"manual",
+  sns:"manual",
+  wavelink:"manual",
+  ledger:"manual",
+  characterImport:"auto"
+},
 
   memorySettings:{
     interval:10,
@@ -14623,8 +14603,8 @@ const publicActivityName =
     root.streamer_name ||
     root.publicName ||
     root.public_name ||
-    generated.streamerName ||
-    name
+   generated.streamerName ||
+   ""
   ).trim();
 
   const id = uid("character");
@@ -14649,24 +14629,36 @@ const publicActivityName =
     root.channel ||
     root.channelName ||
     generated.channel ||
-    `${publicActivityName} Channel`
+    ""
   ).trim(),
 
 liveId:
-  normalizeCreatorHandle(
+  (
     root.liveId ||
     root.live_id ||
-    generated.liveId,
-    safeId
-  ),
+    generated.liveId
+  )
+    ? normalizeCreatorHandle(
+        root.liveId ||
+        root.live_id ||
+        generated.liveId,
+        safeId
+      )
+    : "",
 
 snsId:
-  normalizeCreatorHandle(
+  (
     root.snsId ||
     root.sns_id ||
-    generated.snsId,
-    safeId
-  ),
+    generated.snsId
+  )
+    ? normalizeCreatorHandle(
+        root.snsId ||
+        root.sns_id ||
+        generated.snsId,
+        safeId
+      )
+    : "",
 
 streamerType:
   (
@@ -14681,7 +14673,7 @@ content:
     root.content ||
     root.mainContent ||
     generated.content ||
-    "待設定"
+    ""
   ).trim(),
     publicImage:"",
 subscriptionImageX:50,
@@ -14735,7 +14727,9 @@ $("confirmRoleImport").onclick =
         .value
         .trim();
 
+
     if(!raw){
+
       showNotice(
         "尚未輸入角色卡",
         "請選擇 JSON／TXT 檔，或直接貼上角色卡內容。"
@@ -14745,25 +14739,43 @@ $("confirmRoleImport").onclick =
     }
 
 
+    const autoGenerate =
+      state.refresh
+        .characterImport !==
+      "off";
+
+
     const button =
       $("confirmRoleImport");
+
 
     const oldText =
       button.textContent;
 
+
     button.disabled =
       true;
 
+
     button.textContent =
-      "AI 建立頻道中……";
+      autoGenerate
+        ? "AI 建立頻道中……"
+        : "匯入中……";
 
 
     try{
 
-      const generated =
-        await generateImportedCharacterProfile(
-          raw
-        );
+      let generated =
+        {};
+
+
+      if(autoGenerate){
+
+        generated =
+          await generateImportedCharacterProfile(
+            raw
+          );
+      }
 
 
       const character =
@@ -14794,22 +14806,29 @@ $("confirmRoleImport").onclick =
 
 
       toast(
-        `${character.name} 已匯入，AI 已建立初始頻道資料`
+        autoGenerate
+          ? `${character.name} 已匯入，AI 已建立初始頻道資料`
+          : `${character.name} 已匯入，可自行設定頻道資料`
       );
 
 
     }catch(error){
 
       console.error(
-        "STARWAVE character import generation failed:",
+        "STARWAVE character import failed:",
         error
       );
 
 
       showNotice(
         "角色卡匯入失敗",
+
         error?.message ||
-        "AI 沒有成功建立角色的初始頻道資料，請再次嘗試。"
+        (
+          autoGenerate
+            ? "AI 沒有成功建立角色的初始頻道資料，請再次嘗試。"
+            : "角色卡沒有成功匯入，請檢查內容後再次嘗試。"
+        )
       );
 
 
@@ -20122,35 +20141,83 @@ $$("[data-refresh-preset]").forEach(button => {
 
     state.refresh.preset = preset;
 
-    if(preset === "auto"){
-      state.refresh.forum = "auto";
-      state.refresh.sns = "auto";
-      state.refresh.wavelink = "auto";
-      state.refresh.ledger = "auto";
-    }
+  if(preset === "auto"){
+  state.refresh.forum = "auto";
+  state.refresh.sns = "auto";
+  state.refresh.wavelink = "auto";
+  state.refresh.ledger = "auto";
+  state.refresh.characterImport = "auto";
+}
 
-    if(preset === "manual"){
-      state.refresh.forum = "manual";
-      state.refresh.sns = "manual";
-      state.refresh.wavelink = "manual";
-      state.refresh.ledger = "manual";
-    }
+if(preset === "manual"){
+  state.refresh.forum = "manual";
+  state.refresh.sns = "manual";
+  state.refresh.wavelink = "manual";
+  state.refresh.ledger = "manual";
+  state.refresh.characterImport = "off";
+}
 
-    if(preset === "liveonly"){
-      state.refresh.forum = "off";
-      state.refresh.sns = "off";
-      state.refresh.wavelink = "off";
-      state.refresh.ledger = "off";
-    }
-
+if(preset === "liveonly"){
+  state.refresh.forum = "off";
+  state.refresh.sns = "off";
+  state.refresh.wavelink = "off";
+  state.refresh.ledger = "off";
+  state.refresh.characterImport = "off";
+}
     syncRefreshSelects();
     renderLedger();
   };
 });
 
+  function updateEconomyModeExplain(){
+
+  const content = {
+
+    light:{
+      title:"輕量模式",
+      text:
+        "只處理與直播及平台玩法直接相關的明確金錢變動，例如直播收到打賞、玩家到其他創作者直播打賞、SHOP 購買等。不模擬房租、水電、網路、飲食、交通、日用品等日常生活開銷。"
+    },
+
+    full:{
+      title:"完整生活經濟",
+      text:
+        "除了直播與平台交易，也會依故事進度模擬房租、水電、網路、飲食、交通、日用品、線下活動等生活收支。不模擬稅金，也不另外扣除直播打賞的提領手續費。"
+    },
+
+    off:{
+      title:"關閉",
+      text:
+        "停止新的 SHOP 購買、打賞、繳費與其他金錢玩法。已存在的錢包餘額、生活帳本與交易歷史仍會保留。"
+    }
+
+  }[
+    state.economy.mode
+  ];
+
+
+  if(!content){
+    return;
+  }
+
+
+  $("economyModeExplain").innerHTML = `
+    <strong>
+      ${content.title}
+    </strong>
+
+    <p>
+      ${content.text}
+    </p>
+  `;
+}
+
 $("economyMode").onchange = () => {
+
   state.economy.mode =
     $("economyMode").value;
+
+  updateEconomyModeExplain();
 
   renderLedger();
   renderShop();
@@ -20888,6 +20955,8 @@ function fullRender(){
 
   $("economyMode").value =
     state.economy.mode;
+  
+  updateEconomyModeExplain();
 
   $("memoryInterval").value =
     state.memorySettings.interval;
