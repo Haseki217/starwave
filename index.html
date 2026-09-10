@@ -17351,16 +17351,15 @@ function renderSns(){
           ${esc(authorName)}
         </strong>
 
-        <span class="sns-meta">
-          ${esc(publicHandle(post.authorId,post.handle))}
-          ·
-          ${
-  realTimeEnabled() &&
-  post.createdAt
-    ? esc(post.createdAt)
-    : ""
-}
-        </span>
+     <span class="sns-meta">
+  ${esc(publicHandle(post.authorId,post.handle))}
+  ${
+    realTimeEnabled() &&
+    post.createdAt
+      ? ` · ${esc(post.createdAt)}`
+      : ""
+  }
+</span>
 
       </div>
 
@@ -17760,66 +17759,891 @@ $("sendSns").onclick = () => {
   renderSns();
 };
 
-function generateSnsNow(count=2){
-  for(let i=0;i<count;i++){
-    const character =
-      state.characters.length &&
-      Math.random() < .45
-        ? randomItem(state.characters)
-        : null;
+function snsPublicAuthors(){
 
-    const fan =
-      character
-        ? null
-        : randomAllowedFan();
-
-    if(
-      !character &&
-      !fan
-    ){
-      continue;
-    }
-
-    state.snsPosts.unshift({
-      id:uid("sns"),
-      authorId:character?.id || null,
-      name:
-        character
-          ? publicName(character)
-          : fan.name,
-      handle:
-        character?.snsId ||
-        fan.handle,
-      createdAt:currentRpDateTime(),
-      text:
-        sanitizePublicText(
-          randomItem([
-            "剛剛看了一下直播。",
-            "今天平台好像很熱鬧。",
-            "晚點可能會開台。",
-            "怎麼大家都在聊同一件事。"
-          ])
-        ),
-      likes:
-        Math.floor(Math.random() * 80),
-      likedByPlayer:false,
-      reposts:
-        Math.floor(Math.random() * 10),
-      comments:[]
-    });
-  }
-
-  renderSns();
+  return forumPublicAuthors()
+    .filter(
+      author =>
+        !isBlocked(author.id)
+    );
 }
 
-$("refreshSns").onclick = () => {
-  if(state.refresh.sns === "off"){
-    toast("SNS 刷新目前已關閉");
-    return;
+
+function buildSnsAiPrompt(
+  count,
+  authors
+){
+
+  const playerPublic = {
+    name:
+      state.player.name,
+
+    channel:
+      state.player.channel,
+
+    liveId:
+      state.player.liveId,
+
+    snsId:
+      state.player.snsId,
+
+    streamerType:
+      state.player.streamerType,
+
+    content:
+      state.player.content || "",
+
+    publicAppearance:
+      state.player
+        .publicAppearance ||
+      ""
+  };
+
+
+  const creators =
+    state.characters.map(
+      character => ({
+
+        ...publicCharacterContext(
+          character
+        ),
+
+        live:
+          Boolean(
+            character.live
+          ),
+
+        liveTitle:
+          character.live
+            ? sanitizePublicText(
+                character.liveTitle ||
+                ""
+              )
+            : ""
+      })
+    );
+
+
+  const playerLive =
+    state.live.started
+      ? {
+          live:true,
+
+          title:
+            sanitizePublicText(
+              state.player.title
+            ),
+
+          category:
+            state.player.category,
+
+          latest:
+            sanitizePublicText(
+              state.live.lastText ||
+              ""
+            )
+        }
+      : {
+          live:false
+        };
+
+
+  const publicMemories =
+    state.memories
+      .filter(
+        memory =>
+          memory.visibility ===
+          "public"
+      )
+      .slice(0,8)
+      .map(
+        memory =>
+          sanitizePublicText(
+            memory.summary
+          )
+      );
+
+
+  const recentForum =
+    state.forumPosts
+      .slice(0,4)
+      .map(
+        post => ({
+          title:
+            sanitizePublicText(
+              post.title
+            ),
+
+          body:
+            sanitizePublicText(
+              post.body
+            )
+        })
+      );
+
+
+  const recentSns =
+    state.snsPosts
+      .slice(0,8)
+      .map(
+        post => ({
+
+          id:
+            post.id,
+
+          author:
+            publicAuthor(
+              post.authorId,
+              post.name
+            ),
+
+          handle:
+            publicHandle(
+              post.authorId,
+              post.handle
+            ),
+
+          text:
+            sanitizePublicText(
+              post.text
+            ),
+
+          comments:
+            (post.comments || [])
+              .slice(-4)
+              .map(
+                comment => ({
+                  id:
+                    comment.id,
+
+                  author:
+                    publicAuthor(
+                      comment.authorId,
+                      comment.author
+                    ),
+
+                  text:
+                    sanitizePublicText(
+                      comment.text
+                    )
+                })
+              )
+        })
+      );
+
+
+  return `
+你正在模擬 STARWAVE 平台的
+公開 SNS 動態。
+
+SNS 是較即時、簡短、
+偏個人發言的公開社群，
+不是論壇討論串。
+
+請根據目前公開事件、
+主播活動與既有 SNS，
+自然產生新的公開動態
+或對既有貼文的留言。
+
+【玩家公開資料】
+${JSON.stringify(playerPublic)}
+
+【玩家目前直播】
+${JSON.stringify(playerLive)}
+
+【角色創作者公開資料】
+${JSON.stringify(creators)}
+
+以上只有公開資料。
+
+嚴禁自行使用或推測：
+- 私人真名
+- 私人／現實外貌
+- 完整角色卡
+- 私人 relationship
+- WAVELINK 私聊
+- 線下故事
+- 私人事件記憶
+- 其他未公開資訊
+
+【公開事件記憶】
+${JSON.stringify(publicMemories)}
+
+【近期論壇】
+${JSON.stringify(recentForum)}
+
+【近期 SNS】
+${JSON.stringify(recentSns)}
+
+【可由 AI 操作的帳號】
+${JSON.stringify(authors)}
+
+所有 authorId
+都必須從以上帳號中選擇。
+
+不得創造新的角色主播帳號。
+
+不得替玩家帳號
+自動發文或自動留言。
+
+玩家自己已經發出的貼文
+可以被其他角色或觀眾留言。
+
+【社群設定】
+
+黑粉強度：
+${state.community.blackfan}%
+
+柔和社群：
+${state.community.soft ? "ON" : "OFF"}
+
+黑粉 0% 時，
+不要產生針對性惡意、
+攻擊或酸言酸語。
+
+黑粉越高，
+負評、質疑與衝突
+才可以逐步增加。
+
+柔和社群 ON 時，
+降低過度尖銳與攻擊內容。
+
+【SNS 風格】
+
+內容應像自然社群動態。
+
+可以包含：
+- 主播自己的公開日常
+- 對直播的簡短感想
+- 公開活動或企劃
+- 角色創作者互動
+- 粉絲留言
+- 對論壇或 SNS 話題的反應
+- 平台上的普通日常話題
+
+不要每次都只寫：
+「今天平台好熱鬧」
+「剛剛看了一下直播」
+「晚點可能會開台」
+
+角色創作者不必每次都出現。
+粉絲帳號也可以自然發文。
+
+【新增貼文】
+
+最多生成 ${count} 篇。
+
+每篇可以帶 0～4 則留言。
+
+likes 與 reposts
+請給合理非負整數，
+不要每次都一樣。
+
+新貼文留言中的 replyTo：
+
+null
+= 直接留言貼文
+
+數字
+= 回覆同一篇 comments 中
+更早出現的留言索引，
+從 0 開始。
+
+最多一層回覆即可。
+
+【回覆既有 SNS】
+
+existingComments
+可以針對 recentSns
+中的既有貼文追加留言。
+
+postId 必須使用
+recentSns 中存在的 id。
+
+replyToCommentId：
+null
+= 回覆貼文本身
+
+若要回覆既有留言，
+必須使用該貼文中
+真正存在的 comment id。
+
+不需要每次都追加留言。
+
+只輸出有效 JSON：
+
+{
+  "posts":[
+    {
+      "authorId":"帳號 id",
+      "text":"貼文內容",
+      "likes":12,
+      "reposts":1,
+      "comments":[
+        {
+          "authorId":"帳號 id",
+          "text":"留言內容",
+          "replyTo":null
+        }
+      ]
+    }
+  ],
+
+  "existingComments":[
+    {
+      "postId":"既有 SNS id",
+      "authorId":"帳號 id",
+      "text":"留言內容",
+      "replyToCommentId":null
+    }
+  ]
+}
+`;
+}
+
+
+function resolveSnsAiAuthor(
+  authorId,
+  authors
+){
+
+  return (
+    authors.find(
+      author =>
+        author.id ===
+        authorId
+    ) ||
+    null
+  );
+}
+
+
+function snsSafeCount(
+  value,
+  fallback=0
+){
+
+  const number =
+    Number(value);
+
+  if(
+    !Number.isFinite(number)
+  ){
+    return fallback;
   }
 
-  generateSnsNow(2);
-};
+  return Math.max(
+    0,
+    Math.min(
+      999999,
+      Math.round(number)
+    )
+  );
+}
+
+
+let snsGenerating =
+  false;
+
+
+async function generateSnsNow(
+  count=2,
+  options={}
+){
+
+  const background =
+    Boolean(
+      options.background
+    );
+
+
+  if(snsGenerating){
+
+    if(!background){
+      toast(
+        "SNS AI 正在生成中"
+      );
+    }
+
+    return false;
+  }
+
+
+  const profile =
+    state.api.profiles[
+      state.api.active
+    ];
+
+
+  if(
+    !profile ||
+    !String(
+      profile.apiKey || ""
+    ).trim() ||
+    !String(
+      profile.model || ""
+    ).trim()
+  ){
+
+    if(!background){
+
+      showNotice(
+        "尚未設定可用的 LLM",
+        "請先到「設定 → LLM/API」設定 API Key、模型。"
+      );
+    }
+
+    return false;
+  }
+
+
+  const authors =
+    snsPublicAuthors();
+
+
+  if(!authors.length){
+
+    if(!background){
+      toast(
+        "目前沒有可用的 SNS 帳號"
+      );
+    }
+
+    return false;
+  }
+
+
+  snsGenerating =
+    true;
+
+
+  const button =
+    $("refreshSns");
+
+  const oldText =
+    button.textContent;
+
+
+  if(!background){
+
+    button.disabled =
+      true;
+
+    button.textContent =
+      "AI 生成中";
+  }
+
+
+  try{
+
+    const result =
+      await generateWithApi({
+
+        profileIndex:
+          state.api.active,
+
+        prompt:
+          buildSnsAiPrompt(
+            count,
+            authors
+          ),
+
+        systemInstruction:
+          `你是 STARWAVE 公開 SNS 模擬引擎。
+只能使用提供給你的公開資訊。
+嚴禁洩漏私人角色卡、私人關係、WAVELINK、線下故事與私人事件。
+不得替玩家帳號自動發言。
+請依指定格式輸出有效 JSON。`,
+
+        json:true
+      });
+
+
+    const data =
+      parseStarwaveLlmJson(
+        result.text
+      );
+
+
+    let changed =
+      0;
+
+
+    const newPosts =
+      Array.isArray(
+        data.posts
+      )
+        ? data.posts
+        : [];
+
+
+    newPosts
+      .slice(
+        0,
+        Math.max(
+          1,
+          Number(count) || 1
+        )
+      )
+      .forEach(
+        rawPost => {
+
+          const author =
+            resolveSnsAiAuthor(
+              rawPost?.authorId,
+              authors
+            );
+
+
+          const text =
+            sanitizePublicText(
+              String(
+                rawPost?.text ||
+                ""
+              ).trim()
+            );
+
+
+          if(
+            !author ||
+            !text
+          ){
+            return;
+          }
+
+
+          const builtComments =
+            [];
+
+
+          const rawComments =
+            Array.isArray(
+              rawPost.comments
+            )
+              ? rawPost.comments
+              : [];
+
+
+          rawComments
+            .slice(0,4)
+            .forEach(
+              rawComment => {
+
+                const commentAuthor =
+                  resolveSnsAiAuthor(
+                    rawComment?.authorId,
+                    authors
+                  );
+
+
+                const commentText =
+                  sanitizePublicText(
+                    String(
+                      rawComment?.text ||
+                      ""
+                    ).trim()
+                  );
+
+
+                if(
+                  !commentAuthor ||
+                  !commentText
+                ){
+                  return;
+                }
+
+
+                let parentId =
+                  null;
+
+
+                if(
+                  rawComment.replyTo !==
+                    null &&
+                  rawComment.replyTo !==
+                    undefined &&
+                  rawComment.replyTo !==
+                    ""
+                ){
+
+                  const index =
+                    Number(
+                      rawComment.replyTo
+                    );
+
+
+                  if(
+                    Number.isInteger(index) &&
+                    index >= 0 &&
+                    index <
+                      builtComments.length
+                  ){
+
+                    parentId =
+                      builtComments[
+                        index
+                      ].id;
+                  }
+                }
+
+
+                builtComments.push({
+
+                  id:
+                    uid("comment"),
+
+                  parentId,
+
+                  authorId:
+                    commentAuthor.id,
+
+                  author:
+                    commentAuthor.name,
+
+                  handle:
+                    commentAuthor.handle,
+
+                  time:
+                    currentRpTimeShort(),
+
+                  text:
+                    commentText,
+
+                  likes:0,
+
+                  likedByPlayer:false
+                });
+              }
+            );
+
+
+          state.snsPosts.unshift({
+
+            id:
+              uid("sns"),
+
+            authorId:
+              author.id,
+
+            name:
+              author.name,
+
+            handle:
+              author.handle,
+
+            createdAt:
+              currentRpDateTime(),
+
+            text,
+
+            likes:
+              snsSafeCount(
+                rawPost.likes
+              ),
+
+            likedByPlayer:
+              false,
+
+            reposts:
+              snsSafeCount(
+                rawPost.reposts
+              ),
+
+            comments:
+              builtComments
+          });
+
+
+          changed++;
+        }
+      );
+
+
+    const existingComments =
+      Array.isArray(
+        data.existingComments
+      )
+        ? data.existingComments
+        : [];
+
+
+    existingComments
+      .slice(0,5)
+      .forEach(
+        rawComment => {
+
+          const post =
+            state.snsPosts.find(
+              item =>
+                item.id ===
+                rawComment?.postId
+            );
+
+
+          if(!post){
+            return;
+          }
+
+
+          const author =
+            resolveSnsAiAuthor(
+              rawComment?.authorId,
+              authors
+            );
+
+
+          const text =
+            sanitizePublicText(
+              String(
+                rawComment?.text ||
+                ""
+              ).trim()
+            );
+
+
+          if(
+            !author ||
+            !text
+          ){
+            return;
+          }
+
+
+          let parentId =
+            null;
+
+
+          if(
+            rawComment
+              .replyToCommentId
+          ){
+
+            const parent =
+              post.comments.find(
+                comment =>
+                  comment.id ===
+                  rawComment
+                    .replyToCommentId
+              );
+
+
+            if(parent){
+              parentId =
+                parent.id;
+            }
+          }
+
+
+          post.comments.push({
+
+            id:
+              uid("comment"),
+
+            parentId,
+
+            authorId:
+              author.id,
+
+            author:
+              author.name,
+
+            handle:
+              author.handle,
+
+            time:
+              currentRpTimeShort(),
+
+            text,
+
+            likes:0,
+
+            likedByPlayer:false
+          });
+
+
+          changed++;
+        }
+      );
+
+
+    if(!changed){
+
+      throw new Error(
+        "AI 沒有產生有效的 SNS 內容。"
+      );
+    }
+
+
+    renderSns();
+
+    scheduleStarwaveSave();
+
+
+    if(!background){
+
+      toast(
+        "SNS 已更新"
+      );
+    }
+
+
+    return true;
+
+
+  }catch(error){
+
+    console.error(
+      "STARWAVE SNS generation failed:",
+      error
+    );
+
+
+    if(!background){
+
+      showNotice(
+        "SNS 生成失敗",
+        error?.message ||
+        "LLM 沒有成功產生 SNS 內容，可以再次嘗試。"
+      );
+    }
+
+
+    return false;
+
+
+  }finally{
+
+    snsGenerating =
+      false;
+
+
+    if(!background){
+
+      button.disabled =
+        false;
+
+      button.textContent =
+        oldText;
+    }
+  }
+}
+$("refreshSns").onclick =
+  async () => {
+
+    if(
+      state.refresh.sns ===
+      "off"
+    ){
+      toast(
+        "SNS 刷新目前已關閉"
+      );
+
+      return;
+    }
+
+
+    await generateSnsNow(2);
+  };
 
 function addMemory(
   summary,
@@ -20243,9 +21067,17 @@ function triggerAutoContent(
   );
 }
 
-  if(state.refresh.sns === "auto"){
-    generateSnsNow(1);
-  }
+if(
+  state.refresh.sns ===
+  "auto"
+){
+  generateSnsNow(
+    1,
+    {
+      background:true
+    }
+  );
+}
 
   if(
     state.refresh.ledger === "auto" &&
