@@ -2665,6 +2665,10 @@ textarea::placeholder{
   line-height:1.55;
 }
 
+  .blackfan-row{
+  grid-template-columns:minmax(0,1fr) minmax(420px,46%);
+}
+
 .blackfan-control{
   display:grid;
   gap:7px;
@@ -2697,11 +2701,7 @@ textarea::placeholder{
 }
 
 .blackfan-description{
-  padding:7px 9px;
-  border:1px solid var(--line);
-  border-radius:7px;
-  background:rgba(255,255,255,.18);
-  color:var(--body);
+  color:var(--muted);
   font-size:10px;
   line-height:1.55;
 }
@@ -5246,7 +5246,7 @@ textarea::placeholder{
 
     <div class="settings-section">
 
-      <div class="setting-row">
+      <div class="setting-row blackfan-row">
 
         <div>
           <strong>黑粉強度</strong>
