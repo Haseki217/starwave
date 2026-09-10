@@ -6154,7 +6154,7 @@ textarea::placeholder{
     <div class="voice-head">
 
       <div>
-        <strong id="voiceCallTitle">模擬語音通話</strong>
+        <strong id="voiceCallTitle">語音通話</strong>
         <small>以文字模擬私人語音通話，不播放或生成真實音訊。</small>
       </div>
 
@@ -13030,18 +13030,18 @@ $("startVoiceCall").onclick = () => {
   voiceCall.entries = [
     {
       system:true,
-      text:"模擬語音通話已開始。"
+      text:"語音通話已開始。"
     }
   ];
 
   pushWlMessage(room,{
     id:uid("wm"),
     system:true,
-    text:"〔模擬語音通話開始〕"
+    text:"〔語音通話開始〕"
   });
 
   $("voiceCallTitle").textContent =
-    `${room.type === "group" ? room.name : publicName(members[0])} · 模擬語音`;
+    `${room.type === "group" ? room.name : publicName(members[0])} · 語音`;
 
   renderVoiceParticipants(room);
   renderVoiceLog();
@@ -13163,7 +13163,7 @@ $("endVoiceCall").onclick = () => {
     pushWlMessage(room,{
       id:uid("wm"),
       system:true,
-      text:"〔模擬語音通話結束〕"
+      text:"〔語音通話結束〕"
     });
   }
 
