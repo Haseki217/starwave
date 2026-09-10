@@ -6808,7 +6808,7 @@ live:{
 
   economy:{
     mode:"light",
-    wallet:0,
+    wallet:30000,
     donationIncome:0,
     memberFee:120,
     inventory:{},
@@ -13917,93 +13917,629 @@ function showInsufficientFunds(price){
   );
 }
 
-function ensureBills(){
-  if(state.economy.mode !== "full"){
-    return;
-  }
+let lifeLedgerGenerating =
+  false;
 
-  const cycle = monthKey();
 
-  if(state.economy.billCycle === cycle){
-    return;
-  }
+function buildLifeLedgerAiPrompt(){
 
-  state.economy.billCycle = cycle;
+  const cycle =
+    monthKey();
 
-  state.economy.bills = [
-    {
-      id:uid("bill"),
-      cycle,
-      name:"房租",
-      category:"房租",
-      amount:8500,
-      due:"每月 5 日",
-      paid:false
-    },
-    {
-      id:uid("bill"),
-      cycle,
-      name:"水電費",
-      category:"水電",
-      amount:1280,
-      due:"每月 10 日",
-      paid:false
-    },
-    {
-      id:uid("bill"),
-      cycle,
-      name:"網路費",
-      category:"網路",
-      amount:899,
-      due:"每月 15 日",
-      paid:false
-    }
-  ];
+  const needsBills =
+    state.economy.billCycle !==
+    cycle;
+
+
+  const playerContext = {
+    age:
+      state.player.age || "",
+
+    streamerType:
+      state.player.streamerType || "",
+
+    content:
+      state.player.content || "",
+
+    personality:
+      state.player.personality || "",
+
+    background:
+      state.player.background || ""
+  };
+
+
+  const recentMemories =
+    state.memories
+      .slice(0,12)
+      .map(memory => ({
+        summary:
+          memory.summary || "",
+
+        visibility:
+          memory.visibility || ""
+      }));
+
+
+  const recentLive =
+    state.live.stageEntries
+      .slice(-6)
+      .map(text =>
+        String(text || "")
+      );
+
+
+  const recentOffline =
+    Object.entries(
+      state.offline.stories || {}
+    )
+      .flatMap(
+        ([characterId,entries]) => {
+
+          const character =
+            getAnyCharacter(
+              characterId
+            );
+
+          return (
+            Array.isArray(entries)
+              ? entries
+              : []
+          )
+            .filter(
+              entry =>
+                !entry.system
+            )
+            .slice(-4)
+            .map(entry => ({
+              character:
+                publicName(
+                  character
+                ),
+
+              text:
+                String(
+                  entry.text || ""
+                )
+            }));
+        }
+      )
+      .slice(-10);
+
+
+  const recentTransactions =
+    state.economy.transactions
+      .slice(0,12)
+      .map(transaction => ({
+        category:
+          transaction.category,
+
+        item:
+          transaction.item,
+
+        amount:
+          transaction.amount,
+
+        source:
+          transaction.source
+      }));
+
+
+  const previousBills =
+    state.economy.bills
+      .slice(-10)
+      .map(bill => ({
+        cycle:
+          bill.cycle,
+
+        name:
+          bill.name,
+
+        category:
+          bill.category,
+
+        amount:
+          bill.amount,
+
+        due:
+          bill.due,
+
+        paid:
+          bill.paid
+      }));
+
+
+  const inventory =
+    products
+      .map(product => ({
+        name:
+          product.name,
+
+        quantity:
+          Number(
+            state.economy
+              .inventory[
+                product.id
+              ] || 0
+          )
+      }))
+      .filter(
+        product =>
+          product.quantity > 0
+      );
+
+
+  return `
+你正在替 STARWAVE 的完整生活經濟模式
+生成一筆合理的生活收支更新。
+
+這是私人生活資料，
+不得將內容公開到論壇、SNS 或直播聊天室。
+
+【目前月份】
+${cycle}
+
+【本月是否尚未建立帳單】
+${needsBills ? "是" : "否"}
+
+【目前錢包餘額】
+${state.economy.wallet}
+
+【玩家生活背景】
+${JSON.stringify(playerContext)}
+
+【近期事件記憶】
+${JSON.stringify(recentMemories)}
+
+【近期直播故事】
+${JSON.stringify(recentLive)}
+
+【近期線下故事】
+${JSON.stringify(recentOffline)}
+
+【近期收支】
+${JSON.stringify(recentTransactions)}
+
+【既有帳單】
+${JSON.stringify(previousBills)}
+
+【已持有物品】
+${JSON.stringify(inventory)}
+
+【生活收支規則】
+
+- 根據玩家背景、近期故事與一般生活需求判斷。
+- 可以生成飲食、交通、日用品、休閒、
+  醫療、工作、退款或其他合理生活收支。
+- 不得重複記錄 SHOP 購買、直播打賞、
+  已繳帳單或近期已記錄的同一件事情。
+- 不得憑空生成中獎、遺產、巨額贈與等收入。
+- 正數代表收入，負數代表支出。
+- 普通生活支出金額應符合新臺幣的合理範圍。
+- 沒有適合新增的生活收支時，
+  transaction 輸出 null。
+- 不得把錢包扣成負數。
+
+【每月帳單規則】
+
+${
+  needsBills
+    ? `這個月尚未建立帳單。
+
+請依玩家背景建立 2～5 筆合理的每月帳單，
+例如房租、水電、瓦斯、網路、手機、
+訂閱服務或其他固定生活費。
+
+房租與固定契約不應每次月份變更就劇烈浮動。
+水電等浮動費用可以有合理變化。
+
+所有帳單合計不得超過 25000。
+不得生成稅金。
+不得扣除直播打賞的提領手續費。`
+    : `這個月的帳單已經建立。
+
+bills 必須輸出空陣列，
+不得在同一月份重複建立帳單。`
 }
 
-function generateLifeExpense(){
-  if(state.economy.mode !== "full"){
+只輸出有效 JSON：
+
+{
+  "bills":[
+    {
+      "name":"帳單名稱",
+      "category":"分類",
+      "amount":1000,
+      "due":"本月 10 日前"
+    }
+  ],
+  "transaction":{
+    "category":"分類",
+    "item":"收支項目",
+    "amount":-100,
+    "source":"日常生活"
+  },
+  "summary":"這次新增內容的簡短摘要"
+}
+
+若沒有生活收支，
+transaction 請輸出 null。
+`;
+}
+
+
+async function generateLifeLedgerAi(
+  options={}
+){
+
+  const background =
+    Boolean(
+      options.background
+    );
+
+
+  if(
+    state.economy.mode !==
+      "full" ||
+    lifeLedgerGenerating
+  ){
     return false;
   }
 
-  const events = [
-    ["飲食","日常餐費",180],
-    ["飲食","飲料與點心",95],
-    ["交通","外出交通",120],
-    ["日用品","生活用品補充",260],
-    ["線下活動","休閒活動",350]
-  ];
 
-  const [
-    category,
-    item,
-    amount
-  ] = randomItem(events);
+  const profile =
+    state.api.profiles[
+      state.api.active
+    ];
 
-  if(state.economy.wallet < amount){
+
+  if(
+    !profile ||
+    !String(
+      profile.apiKey || ""
+    ).trim() ||
+    !String(
+      profile.model || ""
+    ).trim()
+  ){
+
+    if(!background){
+
+      showNotice(
+        "尚未設定可用的 LLM",
+        "請先到「設定 → LLM/API」設定 API Key、模型。"
+      );
+    }
+
     return false;
   }
 
-  state.economy.wallet -= amount;
 
-  addTransaction({
-    category,
-    item,
-    amount:-amount,
-    source:"日常生活"
-  });
+  lifeLedgerGenerating =
+    true;
 
-  syncNumbers();
 
-  return true;
+  const button =
+    $("refreshLedger");
+
+  const oldText =
+    button.textContent;
+
+
+  if(!background){
+
+    button.disabled =
+      true;
+
+    button.textContent =
+      "AI 生成中";
+  }
+
+
+  try{
+
+    const cycle =
+      monthKey();
+
+    const needsBills =
+      state.economy.billCycle !==
+      cycle;
+
+
+    const result =
+      await generateWithApi({
+
+        profileIndex:
+          state.api.active,
+
+        prompt:
+          buildLifeLedgerAiPrompt(),
+
+        systemInstruction:
+          `你是 STARWAVE 的私人生活經濟模擬引擎。
+請依玩家背景、近期故事與既有收支，
+生成合理的新臺幣生活帳本內容。
+不得重複記帳，不得生成不合理巨額收支。
+不得把私人資訊寫成公開事件。
+只輸出指定格式的有效 JSON。`,
+
+        json:true
+      });
+
+
+    const data =
+      parseStarwaveLlmJson(
+        result.text
+      );
+
+
+    let changed =
+      false;
+
+
+    if(needsBills){
+
+      const generatedBills =
+        Array.isArray(
+          data.bills
+        )
+          ? data.bills
+          : [];
+
+
+      const normalizedBills =
+        [];
+
+      let billTotal =
+        0;
+
+
+      generatedBills
+        .slice(0,5)
+        .forEach(bill => {
+
+          const amount =
+            Math.round(
+              Number(
+                bill?.amount
+              )
+            );
+
+          const name =
+            String(
+              bill?.name || ""
+            )
+              .trim()
+              .slice(0,40);
+
+          const category =
+            String(
+              bill?.category ||
+              "生活帳單"
+            )
+              .trim()
+              .slice(0,30);
+
+          const due =
+            String(
+              bill?.due ||
+              "本月內"
+            )
+              .trim()
+              .slice(0,30);
+
+
+          if(
+            !name ||
+            !Number.isFinite(amount) ||
+            amount <= 0 ||
+            amount > 20000 ||
+            billTotal + amount >
+              25000
+          ){
+            return;
+          }
+
+
+          billTotal +=
+            amount;
+
+
+          normalizedBills.push({
+            id:
+              uid("bill"),
+
+            cycle,
+
+            name,
+
+            category,
+
+            amount,
+
+            due,
+
+            paid:false
+          });
+        });
+
+
+      if(!normalizedBills.length){
+
+        throw new Error(
+          "AI 沒有產生有效的本月帳單。"
+        );
+      }
+
+
+      const carriedBills =
+        state.economy.bills
+          .filter(
+            bill =>
+              !bill.paid &&
+              bill.cycle !==
+                cycle
+          );
+
+
+      state.economy.bills = [
+        ...carriedBills,
+        ...normalizedBills
+      ];
+
+
+      state.economy.billCycle =
+        cycle;
+
+      changed =
+        true;
+    }
+
+
+    const transaction =
+      data.transaction &&
+      typeof data.transaction ===
+        "object"
+        ? data.transaction
+        : null;
+
+
+    if(transaction){
+
+      const amount =
+        Math.trunc(
+          Number(
+            transaction.amount
+          )
+        );
+
+      const category =
+        String(
+          transaction.category ||
+          "生活"
+        )
+          .trim()
+          .slice(0,30);
+
+      const item =
+        String(
+          transaction.item || ""
+        )
+          .trim()
+          .slice(0,50);
+
+      const source =
+        String(
+          transaction.source ||
+          "AI 生活模擬"
+        )
+          .trim()
+          .slice(0,30);
+
+
+      if(
+        item &&
+        Number.isFinite(amount) &&
+        amount !== 0 &&
+        Math.abs(amount) <=
+          30000 &&
+        (
+          amount > 0 ||
+          state.economy.wallet >=
+            Math.abs(amount)
+        )
+      ){
+
+        state.economy.wallet +=
+          amount;
+
+
+        addTransaction({
+          category,
+          item,
+          amount,
+          source
+        });
+
+
+        changed =
+          true;
+      }
+    }
+
+
+    syncNumbers();
+    renderLedger();
+    renderShop();
+
+    scheduleStarwaveSave();
+
+
+    if(!background){
+
+      const summary =
+        String(
+          data.summary || ""
+        ).trim();
+
+
+      toast(
+        changed
+          ? (
+              summary ||
+              "生活帳本已由 AI 更新"
+            )
+          : "AI 判斷目前沒有需要新增的生活收支"
+      );
+    }
+
+
+    return {
+      success:true,
+      changed
+    };
+
+
+  }catch(error){
+
+    console.error(
+      "STARWAVE life ledger generation failed:",
+      error
+    );
+
+
+    if(!background){
+
+      showNotice(
+        "生活帳本生成失敗",
+        error?.message ||
+        "AI 沒有成功產生生活帳本內容，可以再次嘗試。"
+      );
+    }
+
+
+    return false;
+
+
+  }finally{
+
+    lifeLedgerGenerating =
+      false;
+
+
+    if(!background){
+
+      button.disabled =
+        false;
+
+      button.textContent =
+        oldText;
+    }
+  }
 }
 
 function renderLedger(){
   syncNumbers();
-
-  if(state.economy.mode === "full"){
-    ensureBills();
-  }
 
   const thisMonth = monthKey();
 
@@ -14174,23 +14710,21 @@ function renderLedger(){
   });
 }
 
-$("refreshLedger").onclick = () => {
-  if(
-    state.refresh.ledger !== "manual" ||
-    state.economy.mode !== "full"
-  ){
-    return;
-  }
+$("refreshLedger").onclick =
+  async () => {
 
-  const generated =
-    generateLifeExpense();
+    if(
+      state.refresh.ledger !==
+        "manual" ||
+      state.economy.mode !==
+        "full"
+    ){
+      return;
+    }
 
-  toast(
-    generated
-      ? "已生成一筆目前情境的生活紀錄"
-      : "目前沒有適合生成的生活紀錄"
-  );
-};
+
+    await generateLifeLedgerAi();
+  };
 
 let shopCategory = "all";
 
@@ -21167,13 +21701,19 @@ if(
   );
 }
 
-  if(
-    state.refresh.ledger === "auto" &&
-    state.economy.mode === "full" &&
+ if(
+  state.refresh.ledger === "auto" &&
+  state.economy.mode === "full" &&
+  (
+    state.economy.billCycle !==
+      monthKey() ||
     Math.random() < .30
-  ){
-    generateLifeExpense();
-  }
+  )
+){
+  generateLifeLedgerAi({
+    background:true
+  });
+}
 
  if(
   !options.skipWavelink &&
@@ -21622,8 +22162,8 @@ character.liveOfflineTurns =
      經濟模式本身保留 */
 
   state.economy.wallet =
-    0;
-
+    30000;
+    
   state.economy.donationIncome =
     0;
 
