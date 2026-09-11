@@ -8884,7 +8884,6 @@ $("startLive").onclick = () => {
       character =>
         character.id
     );
-
   if(collabRoom){
     collabRoom.collabPlan.status =
       "live";
@@ -8894,6 +8893,44 @@ $("startLive").onclick = () => {
 
     collabRoom.collabVoiceActive =
       true;
+
+    const sharedDuration =
+      roleLiveDurationTurns();
+
+    collabCharacters.forEach(
+      character => {
+        const otherIds =
+          collabCharacters
+            .filter(
+              item =>
+                item.id !==
+                character.id
+            )
+            .map(item => item.id);
+
+        startAutonomousRoleLive(
+          character,
+          {
+            collabIds:[
+              "player",
+              ...otherIds
+            ],
+            collabRoomId:
+              collabRoom.id,
+            managedByPlayer:
+              true,
+            remainingTurns:
+              sharedDuration,
+            title:
+              collabRoom
+                .collabPlan
+                ?.topic
+                ? `${collabRoom.collabPlan.topic}｜連動直播`
+                : `與 ${state.player.name} 連動`
+          }
+        );
+      }
+    );
   }
 
   state.player.title =
@@ -10080,6 +10117,32 @@ $("endLive").onclick = () => {
         }
       }
 
+          state.live.collabIds
+        .map(getCharacter)
+        .filter(Boolean)
+        .forEach(character => {
+          character.liveManagedByPlayer =
+            false;
+
+          character.liveCollabIds =
+            (
+              character.liveCollabIds ||
+              []
+            ).filter(
+              id => id !== "player"
+            );
+
+          character.liveRemainingTurns =
+            Math.max(
+              1,
+              Number(
+                character
+                  .liveRemainingTurns ||
+                0
+              )
+            );
+        });
+
       state.player.liveHistory.unshift({
         title:state.player.title,
         time:new Date().toLocaleString("zh-TW"),
@@ -10281,6 +10344,121 @@ function buildRoleLiveAiPrompt(
       ""
     );
 
+  const collabIds =
+    Array.isArray(
+      character.liveCollabIds
+    )
+      ? character.liveCollabIds
+      : [];
+
+  const collabParticipants =
+    collabIds
+      .map(id => {
+        if(id === "player"){
+          return {
+            id:"player",
+            name:state.player.name,
+            channel:state.player.channel,
+            liveId:state.player.liveId,
+            streamerType:
+              state.player.streamerType,
+            content:
+              state.player.content || "",
+            publicAppearance:
+              state.player.publicAppearance ||
+              ""
+          };
+        }
+
+        const member =
+          getCharacter(id);
+
+        return member
+          ? publicCharacterContext(
+              member
+            )
+          : null;
+      })
+      .filter(Boolean);
+
+  const collabViews =
+    collabIds
+      .map(id => {
+        if(id === "player"){
+          return {
+            id:"player",
+            name:state.player.name,
+            recentStory:
+              (
+                state.live
+                  .stageEntries ||
+                []
+              ).slice(-6)
+          };
+        }
+
+        const member =
+          getCharacter(id);
+
+        if(!member){
+          return null;
+        }
+
+        return {
+          id:member.id,
+          name:publicName(member),
+          recentStory:
+            (
+              member.liveStory ||
+              []
+            )
+              .slice(-4)
+              .map(segment =>
+                sanitizePublicText(
+                  segment.text || ""
+                )
+              )
+        };
+      })
+      .filter(Boolean);
+
+  const collabRoom =
+    getRoom(
+      character.liveCollabRoomId
+    );
+
+  const privateCoordination =
+    collabRoom
+      ? (
+          collabRoom.messages ||
+          []
+        )
+          .filter(message =>
+            !message.system
+          )
+          .slice(-12)
+          .map(message => ({
+            author:
+              message.authorId ===
+                "player"
+                ? state.player.name
+                : publicName(
+                    getAnyCharacter(
+                      message.authorId
+                    )
+                  ),
+            mode:
+              message.mode ===
+                "voice"
+                ? "voice"
+                : "text",
+            text:
+              String(
+                message.text || ""
+              )
+          }))
+      : [];
+
 
   return `
 你正在模擬 STARWAVE 中一名角色創作者正在進行的公開直播。
@@ -10322,6 +10500,35 @@ ${lastViewerAction || "無"}
 
 若有玩家行動，主播可以注意到並合理回應，
 但不保證每次都必須立刻回應。
+
+【本場連動成員】
+${JSON.stringify(collabParticipants)}
+
+【其他連動視角的近期公開內容】
+${JSON.stringify(collabViews)}
+
+【連動房間近期私下訊息】
+${JSON.stringify(privateCoordination)}
+
+【連動直播規則】
+${
+  collabParticipants.length
+    ? `這是連動直播。
+每位創作者都是平等的連動成員，沒有主人與來賓之分。
+本視窗只描寫 ${role.name} 自己頻道的直播視角。
+其他連動成員也有各自的直播視窗。
+所有視角必須是同一場活動、同一時間線，
+但不要逐字複製其他視角的敘事。
+
+stageText 中角色說出的台詞與語音，
+都是這個直播視窗的觀眾能聽見的公開內容。
+
+私下訊息只能用來協調直播進行。
+不得逐字念出、轉述或暗示私訊內容，
+不得告訴觀眾有人正在私訊，
+也不得把私訊寫進公開聊天室。`
+    : "這不是連動直播。"
+}
 
 【社群設定】
 黑粉強度：${state.community.blackfan}%
@@ -10832,8 +11039,31 @@ function renderRoleLive(){
   $("roleLiveTitle").textContent =
     sanitizePublicText(character.liveTitle);
 
+  const collabNames =
+    (
+      character.liveCollabIds ||
+      []
+    )
+      .map(id => {
+        if(id === "player"){
+          return state.player.name;
+        }
+
+        const member =
+          getCharacter(id);
+
+        return member
+          ? publicName(member)
+          : "";
+      })
+      .filter(Boolean);
+
   $("roleLiveMeta").textContent =
-    `${publicName(character)} · ${character.channel}`;
+    `${publicName(character)} · ${character.channel}${
+      collabNames.length
+        ? ` · 🎙 連動：${collabNames.join("・")}`
+        : ""
+    }`;
 
   $("roleLiveViewer").textContent =
     `◉ ${fmt(character.viewers)}`;
@@ -11088,8 +11318,14 @@ function roleLiveAutoTitle(
 
 
 function startAutonomousRoleLive(
-  character
+  character,
+  options={}
 ){
+  const remainingTurns =
+    Number(
+      options.remainingTurns
+    );
+
   character.live =
     true;
 
@@ -11103,14 +11339,20 @@ function startAutonomousRoleLive(
     0;
 
   character.liveRemainingTurns =
-    roleLiveDurationTurns();
+    Number.isFinite(remainingTurns) &&
+    remainingTurns > 0
+      ? Math.trunc(remainingTurns)
+      : roleLiveDurationTurns();
 
   character.liveOfflineTurns =
     0;
 
   character.liveTitle =
-    roleLiveAutoTitle(
-      character
+    sanitizePublicText(
+      options.title ||
+      roleLiveAutoTitle(
+        character
+      )
     );
 
   character.liveStory =
@@ -11121,12 +11363,47 @@ function startAutonomousRoleLive(
 
   character.lastViewerAction =
     "";
+
+  character.liveCollabIds =
+    Array.isArray(
+      options.collabIds
+    )
+      ? [
+          ...new Set(
+            options.collabIds
+              .filter(
+                id =>
+                  id &&
+                  id !== character.id
+              )
+          )
+        ]
+      : [];
+
+  character.liveCollabRoomId =
+    String(
+      options.collabRoomId || ""
+    );
+
+  character.liveManagedByPlayer =
+    Boolean(
+      options.managedByPlayer
+    );
 }
 
 
 function stopAutonomousRoleLive(
   character
 ){
+  const formerCollabIds =
+    Array.isArray(
+      character.liveCollabIds
+    )
+      ? [
+          ...character.liveCollabIds
+        ]
+      : [];
+
   character.live =
     false;
 
@@ -11139,8 +11416,32 @@ function stopAutonomousRoleLive(
   character.liveOfflineTurns =
     0;
 
-  character.lastViewerAction =
+   character.lastViewerAction =
     "";
+
+  character.liveCollabIds =
+    [];
+
+  character.liveCollabRoomId =
+    "";
+
+  character.liveManagedByPlayer =
+    false;
+
+  formerCollabIds
+    .filter(id => id !== "player")
+    .map(getCharacter)
+    .filter(Boolean)
+    .forEach(peer => {
+      peer.liveCollabIds =
+        (
+          peer.liveCollabIds ||
+          []
+        ).filter(
+          id =>
+            id !== character.id
+        );
+    });
 
 
   if(
@@ -11181,9 +11482,10 @@ function advanceRoleLiveLifecycle(){
   /* 已經直播中的角色 */
 
   characters
-    .filter(
+       .filter(
       character =>
-        character.live
+        character.live &&
+        !character.liveManagedByPlayer
     )
     .forEach(character => {
 
@@ -11281,6 +11583,50 @@ function advanceRoleLiveLifecycle(){
           () =>
             Math.random() - .5
         );
+
+
+    /*
+      有兩個空位且至少兩名角色可開播時，
+      有 20% 機率開始雙視角角色連動。
+    */
+
+    if(
+      maxLive - liveCount >= 2 &&
+      candidates.length >= 2 &&
+      Math.random() < .20
+    ){
+      const pair =
+        candidates.splice(0,2);
+
+      const sharedDuration =
+        roleLiveDurationTurns();
+
+      pair.forEach(
+        (character,index) => {
+          const peer =
+            pair[
+              index === 0
+                ? 1
+                : 0
+            ];
+
+          startAutonomousRoleLive(
+            character,
+            {
+              collabIds:[
+                peer.id
+              ],
+              remainingTurns:
+                sharedDuration,
+              title:
+                `與 ${publicName(peer)} 連動`
+            }
+          );
+        }
+      );
+
+      liveCount += 2;
+    }
 
 
     for(
@@ -16062,6 +16408,9 @@ privateImage:"",
     liveTurn:0,
     liveRemainingTurns:0,
     liveOfflineTurns:0,
+    liveCollabIds:[],
+    liveCollabRoomId:"",
+    liveManagedByPlayer:false,
     liveStory:[],
     liveChat:[]
   };
@@ -17430,6 +17779,9 @@ relationship:"",
      liveTurn:0,
     liveRemainingTurns:0,
     liveOfflineTurns:0,
+    liveCollabIds:[],
+    liveCollabRoomId:"",
+    liveManagedByPlayer:false,
     liveStory:[],
     liveChat:[]
   };
@@ -22910,6 +23262,15 @@ room.archived = false;
 
 character.liveOfflineTurns =
   0;
+
+    character.liveCollabIds =
+      [];
+
+    character.liveCollabRoomId =
+      "";
+
+    character.liveManagedByPlayer =
+      false;
 
     character.liveStory =
       [];
