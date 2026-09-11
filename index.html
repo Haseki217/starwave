@@ -4022,6 +4022,12 @@ textarea::placeholder{
 
         <div class="actions" style="margin:0">
 
+       <span
+            id="wlCollabState"
+            class="offline-unlock-state"
+            hidden
+          ></span>
+
           <span
             id="wlOfflineState"
             class="offline-unlock-state"
@@ -11496,6 +11502,11 @@ ${room.type === "group" ? "群組聊天" : "私人一對一聊天"}
 房間名稱：
 ${room.name || ""}
 
+【目前連動約定】
+${JSON.stringify(
+  room.collabPlan || null
+)}
+
 【玩家公開身分】
 ${JSON.stringify(playerPublic)}
 
@@ -11602,8 +11613,65 @@ offlineAction 只能是：
 群組聊天 offlineAction
 必須永遠是 "none"。
 
-【目前關係更新】
+【連動直播邀約】
 
+連動邀約只能根據本房間實際對話判斷，
+不得使用隨機機率決定角色是否答應。
+
+一對一房間的連動參與者只能是：
+玩家與該房間唯一角色。
+
+群組房間的連動參與者必須是：
+玩家與本群組所有仍存在的角色。
+
+普通聊天、唱歌、玩遊戲等連動
+不需要任何 SHOP 商品。
+
+collabPlan 只有在連動約定狀態
+真的發生變化時才輸出完整物件。
+
+status 只能是：
+- "pending"：有人提出邀約，但尚未全員答應
+- "ready"：所有參與者都已明確答應
+- "declined"：有人明確拒絕
+- "cancelled"：原有約定被明確取消
+
+initiatorId 必須是 "player"
+或本房間內實際存在的角色 id。
+
+acceptedIds 只能包含 "player"
+與本房間內實際存在的角色 id。
+
+只有所有 participantIds 都已經
+明確答應時才能輸出 "ready"。
+
+沒有新增邀約、答應、拒絕或取消時，
+collabPlan 必須輸出 null，
+保留既有約定，不要重複改寫。
+
+如果目前正在連動直播，
+本房間的文字訊息仍是私下訊息，
+觀眾看不到。
+角色可以主動傳送提醒、吐槽、
+技術狀況或不方便公開的協調內容，
+但不得把私訊內容當成公開直播台詞。
+
+格式：
+
+"collabPlan":{
+  "status":"pending",
+  "initiatorId":"player",
+  "participantIds":[
+    "player",
+    "角色 id"
+  ],
+  "acceptedIds":[
+    "player"
+  ],
+  "topic":"連動內容"
+}
+
+【目前關係更新】
 relationshipUpdates 用來更新
 「每個角色與玩家之間的目前關係」。
 
@@ -11658,6 +11726,7 @@ relationshipUpdates 用來更新
     }
   ],
   "offlineAction":"none",
+  "collabPlan":null,
   "relationshipUpdates":[
     {
       "characterId":"角色 id",
@@ -11808,6 +11877,111 @@ function applyWavelinkOfflineAction(
   }
 }
 
+  function applyWavelinkCollabPlan(
+  room,
+  value
+){
+  if(
+    !room ||
+    !value ||
+    typeof value !== "object"
+  ){
+    return false;
+  }
+
+  const memberIds =
+    activeRoomMembers(room)
+      .map(character =>
+        character.id
+      );
+
+  if(!memberIds.length){
+    return false;
+  }
+
+  const participantIds = [
+    "player",
+    ...memberIds
+  ];
+
+  const allowedIds =
+    new Set(participantIds);
+
+  const acceptedIds = [
+    ...new Set(
+      Array.isArray(
+        value.acceptedIds
+      )
+        ? value.acceptedIds
+            .map(id =>
+              String(id || "")
+            )
+            .filter(id =>
+              allowedIds.has(id)
+            )
+        : []
+    )
+  ];
+
+  const allowedStatuses =
+    new Set([
+      "pending",
+      "ready",
+      "declined",
+      "cancelled"
+    ]);
+
+  let status =
+    allowedStatuses.has(
+      String(value.status || "")
+    )
+      ? String(value.status)
+      : "pending";
+
+  const everyoneAccepted =
+    participantIds.every(id =>
+      acceptedIds.includes(id)
+    );
+
+  if(
+    status === "ready" &&
+    !everyoneAccepted
+  ){
+    status = "pending";
+  }
+
+  const initiatorId =
+    allowedIds.has(
+      String(
+        value.initiatorId || ""
+      )
+    )
+      ? String(value.initiatorId)
+      : (
+          room.collabPlan
+            ?.initiatorId ||
+          "player"
+        );
+
+  room.collabPlan = {
+    status,
+    initiatorId,
+    participantIds,
+    acceptedIds,
+    topic:
+      String(
+        value.topic ||
+        room.collabPlan?.topic ||
+        ""
+      )
+        .trim()
+        .slice(0,100),
+    updatedAt:
+      new Date().toISOString()
+  };
+
+  return true;
+}
 
 async function generateWavelinkAi(
   room,
@@ -12037,6 +12211,11 @@ added++;
     applyWavelinkOfflineAction(
       room,
       data.offlineAction
+    );
+
+    applyWavelinkCollabPlan(
+      room,
+      data.collabPlan
     );
 
     applyWavelinkRelationshipUpdates(
@@ -12351,6 +12530,7 @@ function renderWavelinkConversation(){
         : "匯入角色後即可開始私人對話";
 
     $("wlOfflineState").hidden = true;
+    $("wlCollabState").hidden = true;
 
     $("wlMessages").innerHTML = `
       <div class="empty-state">
@@ -12427,6 +12607,34 @@ if(room.type === "group"){
       ? character.liveId
       : "";
 }
+
+
+/* 連動約定狀態 */
+
+const collabPlan =
+  room.collabPlan || null;
+
+const collabLabels = {
+  pending:"連動確認中",
+  ready:"連動已約定",
+  declined:"連動未成立",
+  cancelled:"連動已取消",
+  live:"連動中",
+  completed:"連動已結束"
+};
+
+$("wlCollabState").hidden =
+  !collabPlan;
+
+$("wlCollabState").textContent =
+  collabPlan
+    ? (
+        collabLabels[
+          collabPlan.status
+        ] ||
+        "連動安排"
+      )
+    : "";
 
 
 /* 線下狀態 */
