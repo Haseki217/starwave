@@ -3602,6 +3602,18 @@ textarea::placeholder{
       </div>
 
       <div class="field full">
+        <label>連動直播</label>
+
+        <select id="preLiveCollabRoom">
+          <option value="">單人直播</option>
+        </select>
+
+        <div class="field-help">
+          只顯示已在 WAVELINK 中由所有成員答應的連動。
+        </div>
+      </div>
+
+      <div class="field full">
         <label>直播場景</label>
         <div id="scenePicker" class="scene-picker"></div>
       </div>
@@ -6808,6 +6820,7 @@ live:{
   chat:[],
   lastText:"",
   collabIds:[],
+  collabRoomId:"",
   date:"",
   turnLogs:[]
 },
@@ -8703,6 +8716,116 @@ function generatePlayerLiveChat(){
     text:randomItem(fanCommentPool())
   });
 }
+
+  function readyPlayerCollabRooms(){
+  return state.wavelinkRooms
+    .filter(room => {
+      const plan =
+        room.collabPlan;
+
+      if(
+        room.archived ||
+        !plan ||
+        plan.status !== "ready"
+      ){
+        return false;
+      }
+
+      const memberIds =
+        activeRoomMembers(room)
+          .map(character =>
+            character.id
+          );
+
+      if(!memberIds.length){
+        return false;
+      }
+
+      const expectedIds = [
+        "player",
+        ...memberIds
+      ];
+
+      return expectedIds.every(id =>
+        plan.participantIds
+          ?.includes(id) &&
+        plan.acceptedIds
+          ?.includes(id)
+      );
+    });
+}
+
+
+function renderPlayerCollabOptions(){
+  const select =
+    $("preLiveCollabRoom");
+
+  if(!select){
+    return;
+  }
+
+  const previousValue =
+    select.value ||
+    state.live.collabRoomId ||
+    "";
+
+  select.innerHTML =
+    `<option value="">單人直播</option>`;
+
+  readyPlayerCollabRooms()
+    .forEach(room => {
+      const option =
+        document.createElement(
+          "option"
+        );
+
+      const names =
+        activeRoomMembers(room)
+          .map(publicName);
+
+      option.value =
+        room.id;
+
+      option.textContent =
+        `與 ${names.join("・")} 連動${
+          room.collabPlan?.topic
+            ? `｜${room.collabPlan.topic}`
+            : ""
+        }`;
+
+      select.append(option);
+    });
+
+  select.value =
+    [
+      ...select.options
+    ].some(option =>
+      option.value ===
+      previousValue
+    )
+      ? previousValue
+      : "";
+}
+
+
+function selectedPlayerCollabRoom(){
+  const roomId =
+    $("preLiveCollabRoom")
+      ?.value ||
+    "";
+
+  if(!roomId){
+    return null;
+  }
+
+  return (
+    readyPlayerCollabRooms()
+      .find(room =>
+        room.id === roomId
+      ) ||
+    null
+  );
+}
   
 $("preLiveCategory").onchange = () => {
   $("preLiveCategoryCustom").hidden =
@@ -8714,6 +8837,65 @@ $("preLiveCategory").onchange = () => {
 };
   
 $("startLive").onclick = () => {
+  const selectedRoomId =
+    $("preLiveCollabRoom")
+      ?.value ||
+    "";
+
+  const collabRoom =
+    selectedPlayerCollabRoom();
+
+  if(
+    selectedRoomId &&
+    !collabRoom
+  ){
+    showNotice(
+      "連動尚未準備完成",
+      "請先在 WAVELINK 中取得所有參與者的明確同意。"
+    );
+    return;
+  }
+
+  const collabCharacters =
+    collabRoom
+      ? activeRoomMembers(
+          collabRoom
+        )
+      : [];
+
+  if(
+    collabCharacters.some(
+      character =>
+        character.live
+    )
+  ){
+    showNotice(
+      "角色正在直播",
+      "連動成員目前已有其他直播進行中，請等該場直播結束後再開始。"
+    );
+    return;
+  }
+
+  state.live.collabRoomId =
+    collabRoom?.id || "";
+
+  state.live.collabIds =
+    collabCharacters.map(
+      character =>
+        character.id
+    );
+
+  if(collabRoom){
+    collabRoom.collabPlan.status =
+      "live";
+
+    collabRoom.collabLiveActive =
+      true;
+
+    collabRoom.collabVoiceActive =
+      true;
+  }
+
   state.player.title =
     $("preLiveTitle").value.trim() ||
     "未命名直播";
@@ -8741,6 +8923,7 @@ state.live.turnLogs = [];
   syncLive();
   renderExplore();
   renderLiveChat();
+  renderWavelink();
   
 };
 
@@ -8824,6 +9007,11 @@ $("liveDateText").textContent =
   $("turnPill").textContent =
     `回合 ${state.live.turn}`;
 
+  $("liveInput").placeholder =
+    state.live.collabIds.length
+      ? "輸入公開直播中的對話、行動、語音或敘事"
+      : "輸入你在直播中的對話、行動或敘事";
+
   $("sceneOpacity").value =
     state.live.sceneOpacity;
 
@@ -8900,7 +9088,7 @@ requestAnimationFrame(() => {
 
     $("liveCollabBadge").hidden = false;
     $("liveCollabBadge").textContent =
-      `連動：${names.join("・")}`;
+      `🎙 語音連線中 · 連動：${names.join("・")}`;
   }else{
     $("liveCollabBadge").hidden = true;
   }
@@ -8979,6 +9167,43 @@ const collabs =
       publicCharacterContext
     );
 
+const collabRoom =
+  getRoom(
+    state.live.collabRoomId
+  );
+
+const privateCoordination =
+  collabRoom
+    ? (
+        collabRoom.messages || []
+      )
+        .filter(message =>
+          !message.system
+        )
+        .slice(-12)
+        .map(message => ({
+          author:
+            message.authorId ===
+              "player"
+              ? state.player.name
+              : publicName(
+                  getAnyCharacter(
+                    message.authorId
+                  )
+                ),
+
+          mode:
+            message.mode === "voice"
+              ? "voice"
+              : "text",
+
+          text:
+            String(
+              message.text || ""
+            )
+        }))
+    : [];
+
   return `
 你正在模擬 STARWAVE 中一場公開直播的下一個回合。
 
@@ -9034,6 +9259,41 @@ authorId 必須完全使用上面清單中存在的 id。
 
 【本場連動角色】
 ${JSON.stringify(collabs)}
+
+【連動直播規則】
+
+${
+  collabs.length
+    ? `本場是連動直播，
+所有參與者目前以語音連線。
+
+玩家在直播畫面輸入的內容，
+屬於公開直播中的對話、行動、
+語音或敘事。
+
+角色在 stageText 中說出的內容，
+也屬於觀眾能聽見的連動語音。
+
+不得把直播畫面中的公開語音
+寫成 WAVELINK 私訊。`
+    : "本場不是連動直播。"
+}
+
+【連動房間近期私下訊息】
+${JSON.stringify(privateCoordination)}
+
+這些訊息只有連動成員知道。
+
+角色可以根據私訊內容：
+- 自然配合狀況
+- 調整直播行動
+- 避免提到不能公開的事情
+
+但不得：
+- 逐字念出私訊
+- 告訴觀眾有人正在私訊
+- 把私訊內容寫進直播聊天室
+- 洩漏任何私人資訊
 
 【前幾段直播內容】
 ${JSON.stringify(previousStory)}
@@ -9805,6 +10065,21 @@ $("endLive").onclick = () => {
     okText:"結束直播",
 
     onConfirm(){
+      const collabRoom =
+        getRoom(
+          state.live.collabRoomId
+        );
+
+      if(collabRoom){
+        collabRoom.collabLiveActive =
+          false;
+
+        if(collabRoom.collabPlan){
+          collabRoom.collabPlan.status =
+            "voice";
+        }
+      }
+
       state.player.liveHistory.unshift({
         title:state.player.title,
         time:new Date().toLocaleString("zh-TW"),
@@ -9815,11 +10090,14 @@ $("endLive").onclick = () => {
 state.player.viewers = 0;
 state.live.turnLogs = [];
 state.live.lastText = "";
+state.live.collabIds = [];
+state.live.collabRoomId = "";
 
       syncLive();
       syncNumbers();
       renderExplore();
       renderBackstage();
+      renderWavelink();
       
     }
   });
@@ -11434,9 +11712,22 @@ function buildWavelinkAiPrompt(
                   character
                 ),
 
+                    mode:
+            message.mode === "voice" ||
+            String(
+              message.text || ""
+            ).startsWith(
+              "〔語音〕"
+            )
+              ? "voice"
+              : "text",
+
           text:
             String(
               message.text || ""
+            ).replace(
+              /^〔語音〕/,
+              ""
             ),
 
           time:
@@ -12170,24 +12461,22 @@ messages.forEach(message => {
       }
 
 
-  const storedText =
-  mode === "voice"
-    ? `〔語音〕${text}`
-    : text;
+    pushWlMessage(
+      room,
+      {
+        id:
+          uid("wm"),
 
+        authorId,
 
-pushWlMessage(
-  room,
-  {
-    id:
-      uid("wm"),
+        mode:
+          mode === "voice"
+            ? "voice"
+            : "text",
 
-    authorId,
-
-    text:
-      storedText
-  }
-);
+        text
+      }
+    );
 
 
 generatedMessages.push({
@@ -12306,6 +12595,7 @@ return {
 function renderWavelink(){
   renderWavelinkRooms();
   renderWavelinkConversation();
+  renderPlayerCollabOptions();
 }
 
 function renderWavelinkRooms(){
@@ -12624,8 +12914,13 @@ const collabLabels = {
 };
 
 $("wlCollabState").hidden =
-  !collabPlan;
-
+  !collabPlan ||
+  [
+    "voice",
+    "completed"
+  ].includes(
+    collabPlan.status
+  );
 $("wlCollabState").textContent =
   collabPlan
     ? (
@@ -12675,7 +12970,18 @@ const readOnly =
   $("wlInput").disabled = readOnly;
   $("sendWl").disabled = readOnly;
   $("refreshWl").disabled = readOnly;
-  $("startVoiceCall").disabled = readOnly;
+  $("startVoiceCall").disabled =
+    readOnly ||
+    Boolean(
+      room.collabLiveActive
+    );
+
+  $("startVoiceCall").textContent =
+    room.collabLiveActive
+      ? "語音連線中"
+      : room.collabVoiceActive
+        ? "繼續語音"
+        : "語音";
 
   $("wlMessages").innerHTML = "";
 
@@ -12714,9 +13020,37 @@ const readOnly =
       bubble.append(speaker);
     }
 
-    const text = document.createElement("span");
+    const text =
+      document.createElement(
+        "span"
+      );
 
-    text.textContent = message.text;
+    const legacyVoice =
+      String(
+        message.text || ""
+      ).startsWith(
+        "〔語音〕"
+      );
+
+    const voiceText =
+      legacyVoice
+        ? String(
+            message.text || ""
+          ).replace(
+            /^〔語音〕/,
+            ""
+          )
+        : String(
+            message.text || ""
+          );
+
+    text.textContent =
+      (
+        message.mode === "voice" ||
+        legacyVoice
+      )
+        ? `🎙 ${voiceText}`
+        : voiceText;
 
     bubble.append(text);
 
@@ -13254,7 +13588,9 @@ function renderVoiceLog(){
 
 $("startVoiceCall").onclick = () => {
   const room =
-    getRoom(state.currentWavelink);
+    getRoom(
+      state.currentWavelink
+    );
 
   if(!room){
     return;
@@ -13271,29 +13607,67 @@ $("startVoiceCall").onclick = () => {
     return;
   }
 
-  voiceCall.active = true;
-  voiceCall.roomId = room.id;
-  voiceCall.startedAt = Date.now();
+  if(room.collabLiveActive){
+    toast(
+      "連動直播中的語音請在直播畫面使用"
+    );
+    return;
+  }
+
+  const continuingCollab =
+    Boolean(
+      room.collabVoiceActive
+    );
+
+  room.voiceActive =
+    true;
+
+  voiceCall.active =
+    true;
+
+  voiceCall.roomId =
+    room.id;
+
+  voiceCall.startedAt =
+    room.voiceStartedAt ||
+    Date.now();
+
+  room.voiceStartedAt =
+    voiceCall.startedAt;
+
   voiceCall.entries = [
     {
       system:true,
-      text:"語音通話已開始。"
+      text:
+        continuingCollab
+          ? "連動語音仍在進行。"
+          : "語音通話已開始。"
     }
   ];
 
-  pushWlMessage(room,{
-    id:uid("wm"),
-    system:true,
-    text:"〔語音通話開始〕"
-  });
+  if(!continuingCollab){
+    pushWlMessage(
+      room,
+      {
+        id:uid("wm"),
+        system:true,
+        text:"〔語音通話開始〕"
+      }
+    );
+  }
 
   $("voiceCallTitle").textContent =
-    `${room.type === "group" ? room.name : publicName(members[0])} · 語音`;
+    `${
+      room.type === "group"
+        ? room.name
+        : publicName(members[0])
+    } · 語音`;
 
   renderVoiceParticipants(room);
   renderVoiceLog();
 
-  $("voiceCallOverlay").hidden = false;
+  $("voiceCallOverlay").hidden =
+    false;
 
   renderWavelinkConversation();
 };
@@ -13353,8 +13727,10 @@ $("sendVoice").onclick =
         authorId:
           "player",
 
-        text:
-          `〔語音〕${text}`
+        mode:
+          "voice",
+
+        text
       }
     );
 
@@ -13453,14 +13829,25 @@ $("voiceInput").onkeydown = event => {
 };
 
 $("endVoiceCall").onclick = () => {
-  const room =
-    getRoom(voiceCall.roomId);
+  const room = getRoom(voiceCall.roomId);
+  const wasCollab =
+    Boolean(room?.collabVoiceActive);
 
   if(room){
+    room.voiceActive = false;
+    room.voiceStartedAt = null;
+    room.collabVoiceActive = false;
+
+    if(wasCollab && room.collabPlan){
+      room.collabPlan.status = "completed";
+    }
+
     pushWlMessage(room,{
       id:uid("wm"),
       system:true,
-      text:"〔語音通話結束〕"
+      text:wasCollab
+        ? "〔連動語音結束〕"
+        : "〔語音通話結束〕"
     });
   }
 
@@ -13474,7 +13861,11 @@ $("endVoiceCall").onclick = () => {
 
   renderWavelink();
 
-  toast("通話已結束");
+  toast(
+    wasCollab
+      ? "連動語音已結束"
+      : "通話已結束"
+  );
 };
 
 function setOfflineView(view){
@@ -22085,10 +22476,30 @@ if(
     )
 );
 
-  const room =
-    randomItem(
-      rooms
+  const activeCollabRoom =
+    state.wavelinkRooms
+      .find(room =>
+        !room.archived &&
+        room.collabVoiceActive
+      ) ||
+    (
+      state.live.started
+        ? getRoom(
+            state.live.collabRoomId
+          )
+        : null
     );
+
+  const room =
+    activeCollabRoom &&
+    rooms.some(item =>
+      item.id ===
+      activeCollabRoom.id
+    )
+      ? activeCollabRoom
+      : randomItem(
+          rooms
+        );
 
 
   if(room){
@@ -22370,6 +22781,7 @@ async event => {
   state.live.chat = [];
   state.live.lastText = "";
   state.live.collabIds = [];
+  state.live.collabRoomId = "";
   state.live.date = "";
   state.live.turnLogs = [];
 
