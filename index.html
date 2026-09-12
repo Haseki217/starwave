@@ -6769,6 +6769,8 @@ const state = {
     blockedAccounts:[]
   },
 
+  fanAccounts:[],
+
   sync:{
     provider:null,
     account:"",
@@ -7650,15 +7652,147 @@ function requestBlockAccount(accountId,name){
   });
 }
 
-function randomAllowedFan(){
-  const allowed =
-    fanAccounts.filter(
-      fan => !isBlocked(fan.id)
+function storedFanAccounts(){
+  if(
+    !Array.isArray(
+      state.fanAccounts
+    )
+  ){
+    state.fanAccounts = [];
+  }
+
+  return state.fanAccounts;
+}
+
+function normalizeAiFanHandle(
+  value
+){
+  const handle =
+    String(value || "")
+      .trim()
+      .replace(/^@+/,"")
+      .replace(
+        /[^\p{L}\p{N}_]/gu,
+        ""
+      )
+      .slice(0,30);
+
+  return handle
+    ? `@${handle}`
+    : "";
+}
+
+function publicAiFanAccounts(){
+  return storedFanAccounts()
+    .filter(
+      fan =>
+        !isBlocked(fan.id)
+    )
+    .map(fan => ({
+      type:"fan",
+      id:fan.id,
+      name:fan.name,
+      handle:fan.handle
+    }));
+}
+
+function resolveAiFanAccount(
+  raw
+){
+  const authorId =
+    String(
+      raw?.authorId || ""
+    ).trim();
+
+  const requestedHandle =
+    normalizeAiFanHandle(
+      raw?.fanHandle
     );
 
-  return allowed.length
-    ? randomItem(allowed)
-    : null;
+  let existing =
+    storedFanAccounts()
+      .find(fan =>
+        (
+          authorId &&
+          fan.id === authorId
+        ) ||
+        (
+          requestedHandle &&
+          fan.handle.toLowerCase() ===
+            requestedHandle.toLowerCase()
+        )
+      );
+
+  if(existing){
+    return isBlocked(existing.id)
+      ? null
+      : existing;
+  }
+
+  const name =
+    sanitizePublicText(
+      String(
+        raw?.fanName || ""
+      ).trim()
+    ).slice(0,30);
+
+  if(
+    !name ||
+    !requestedHandle
+  ){
+    return null;
+  }
+
+  const fan = {
+    id:uid("fan"),
+    name,
+    handle:requestedHandle
+  };
+
+  state.fanAccounts.push(fan);
+
+  return fan;
+}
+
+function applyAiFanMembership(
+  fan,
+  status
+){
+  if(
+    !fan ||
+    !Array.isArray(
+      state.player.memberAccounts
+    )
+  ){
+    state.player.memberAccounts = [];
+  }
+
+  if(!fan){
+    return;
+  }
+
+  if(status === "join"){
+    if(
+      !state.player.memberAccounts
+        .includes(fan.id)
+    ){
+      state.player.memberAccounts
+        .push(fan.id);
+    }
+  }
+
+  if(status === "leave"){
+    state.player.memberAccounts =
+      state.player.memberAccounts
+        .filter(
+          id =>
+            id !== fan.id
+        );
+  }
+
+  if(state.player.members <= 0){
+    state.player.memberAccounts = [];
+  }
 }
 
 function isPlayerMemberFan(
@@ -7672,79 +7806,6 @@ function isPlayerMemberFan(
     state.player.memberAccounts
       .includes(accountId)
   );
-}
-
-
-function updateKnownMemberSample(
-  memberDelta = 0
-){
-  if(
-    !Array.isArray(
-      state.player.memberAccounts
-    )
-  ){
-    state.player.memberAccounts = [];
-  }
-
-
-  if(state.player.members <= 0){
-    state.player.memberAccounts = [];
-    return;
-  }
-
-
-  const members =
-    state.player.memberAccounts;
-
-
-  /* 有會員離開時，
-     從目前已知會員觀眾中移除一位 */
-
-  if(memberDelta < 0){
-
-    if(members.length){
-
-      const index =
-        Math.floor(
-          Math.random() *
-          members.length
-        );
-
-      members.splice(
-        index,
-        1
-      );
-    }
-
-    return;
-  }
-
-
-  /* 新增會員時，
-     或總會員已有數字但尚未建立代表帳號，
-     從固定觀眾中選一位 */
-
-  if(
-    memberDelta > 0 ||
-    !members.length
-  ){
-
-    const available =
-      fanAccounts.filter(
-        fan =>
-          !members.includes(fan.id) &&
-          !isBlocked(fan.id)
-      );
-
-
-    const fan =
-      randomItem(available);
-
-
-    if(fan){
-      members.push(fan.id);
-    }
-  }
 }
 
 
@@ -8041,61 +8102,6 @@ $("realTimeSwitch").onclick = () => {
   scheduleStarwaveSave();
 };
   
-function fanCommentPool(){
-  const positive = [
-    "剛剛那句笑死",
-    "我才剛進來",
-    "今天聊天室超熱鬧",
-    "主播有看到留言嗎",
-    "這段好有趣",
-    "等等這發展也太突然",
-    "今天狀態很好耶"
-  ];
-
-  if(state.community.blackfan === 0){
-    return positive;
-  }
-
-  const mild = [
-    "今天節奏好像有點慢",
-    "我比較喜歡別種風格",
-    "這個話題我有點跟不上",
-    "剛才那段是不是有點尷尬"
-  ];
-
-  const high = [
-    "今天真的沒有平常好看",
-    "這安排到底是誰想的",
-    "聊天室現在也太亂了吧",
-    "我看不太懂今天在播什麼"
-  ];
-
-  const pressure =
-    (
-      state.community.blackfan /
-      100
-    ) *
-    (
-      state.community.soft
-        ? .28
-        : .60
-    );
-
-  if(Math.random() < pressure){
-    return [
-      ...mild,
-      ...(
-        state.community.blackfan >= 75 &&
-        !state.community.soft
-          ? high
-          : []
-      )
-    ];
-  }
-
-  return positive;
-}
-
 function fillProfile(){
   $("playerRealName").value = state.player.realName;
   $("playerAge").value = state.player.age;
@@ -8711,45 +8717,6 @@ author.innerHTML =
     $("chatList").scrollHeight;
 }
 
-function generatePlayerLiveChat(){
-  const creatorVisit =
-    state.characters.length &&
-    Math.random() < .12;
-
-  if(creatorVisit){
-    const character =
-      randomItem(state.characters);
-
-    state.live.chat.push({
-      id:uid("chat"),
-      authorId:character.id,
-      accountId:null,
-      author:publicName(character),
-      text:randomItem([
-        "我剛好路過。",
-        "這段有點好笑。",
-        "你今天還真的開了。",
-        "聊天室好熱鬧。"
-      ])
-    });
-
-    return;
-  }
-
-  const fan = randomAllowedFan();
-
-  if(!fan){
-    return;
-  }
-
-  state.live.chat.push({
-    id:uid("chat"),
-    authorId:null,
-    accountId:fan.id,
-    author:fan.name,
-    text:randomItem(fanCommentPool())
-  });
-}
 
   function readyPlayerCollabRooms(){
   return state.wavelinkRooms
@@ -9230,6 +9197,9 @@ function buildPlayerLiveAiPrompt(
   const creators =
     liveAiPublicCreators();
 
+  const knownFans =
+    publicAiFanAccounts();
+
 const collabs =
   state.live.collabIds
     .map(getCharacter)
@@ -9343,9 +9313,26 @@ VTuber 模型／公開形象設定：${state.player.vtuberModel || "無"}
 ${JSON.stringify(creators)}
 
 如果留言 kind 為 "creator"：
-authorId 必須完全使用上面清單中存在的 id。
+authorId 必須完全使用上面清單中存在的角色 id。
 不得自己創造角色 id。
-如果沒有適合的創作者留言，就全部使用 fan。
+
+【已出現過的一般觀眾帳號】
+${JSON.stringify(knownFans)}
+
+如果要讓既有粉絲再次出現：
+- kind 使用 "fan"
+- authorId 使用上面既有粉絲的 id
+- fanName 與 fanHandle 可以留空
+
+如果要建立新的粉絲帳號：
+- kind 使用 "fan"
+- authorId 留空
+- fanName 由你自行產生自然的顯示名稱
+- fanHandle 由你自行產生以 @ 開頭的帳號
+- 不要使用固定格式或重複相似名稱
+- fanName 與 fanHandle 都必須填寫
+
+不得把角色創作者當成一般粉絲帳號。
 
 【本場連動角色】
 ${JSON.stringify(collabs)}
@@ -9440,13 +9427,23 @@ comments：
 不同觀眾語氣應有差異，不要每句都像同一個人。
 可以是 1～6 則。
 kind 只能是 "fan" 或 "creator"。
-fan 的 authorId 請填空字串。
-creator 必須使用上方公開創作者清單裡的 id。
+
+一般粉絲必須使用既有帳號，
+或自行產生完整的 fanName 與 fanHandle。
+
+memberStatus 只能是：
+- "join"：這個帳號成為付費會員
+- "leave"：這個既有帳號退出付費會員
+- ""：會員狀態沒有改變
+
+不要為了填欄位而強制改變會員狀態。
 
 donation：
 依當前直播情況判斷是否有人打賞。
 沒有打賞時 amount 必須為 0。
 有打賞時 amount 為正整數，message 為自然留言。
+打賞者也必須使用既有粉絲 authorId，
+或自行產生完整的 fanName 與 fanHandle。
 目前經濟模式：
 ${state.economy.mode}
 
@@ -9468,11 +9465,17 @@ eventSummary：
     {
       "kind": "fan",
       "authorId": "",
+      "fanName": "新粉絲顯示名稱",
+      "fanHandle": "@new_fan",
+      "memberStatus": "",
       "text": "留言"
     }
   ],
   "donation": {
     "amount": 0,
+    "authorId": "",
+    "fanName": "",
+    "fanHandle": "",
     "message": ""
   },
   "eventSummary": ""
@@ -9865,17 +9868,27 @@ async function generatePlayerLiveTurn(
       }
 
       const fan =
-        randomAllowedFan();
+        resolveAiFanAccount(
+          comment
+        );
 
       if(!fan){
         return;
       }
+
+      applyAiFanMembership(
+        fan,
+        String(
+          comment?.memberStatus || ""
+        )
+      );
 
       state.live.chat.push({
         id:uid("chat"),
         authorId:null,
         accountId:fan.id,
         author:fan.name,
+        handle:fan.handle,
         text:commentText
       });
     });
@@ -9897,8 +9910,10 @@ async function generatePlayerLiveTurn(
 
     if(donationAmount > 0){
 
-      const fan =
-        randomAllowedFan();
+         const fan =
+        resolveAiFanAccount(
+          data?.donation
+        );
 
       if(fan){
 
@@ -9932,6 +9947,7 @@ async function generatePlayerLiveTurn(
           authorId:null,
           accountId:fan.id,
           author:fan.name,
+          handle:fan.handle,
           donation:true,
           text:
             `${money(donationAmount)}｜${donationMessage}`
@@ -10367,6 +10383,9 @@ function buildRoleLiveAiPrompt(
         publicCharacterContext
       );
 
+  const knownFans =
+    publicAiFanAccounts();
+
 
   const previousStory =
     (
@@ -10698,6 +10717,17 @@ fan 的 authorId 填空字串。
 creator 的 authorId
 只能使用上面的其他創作者 id。
 
+【已出現過的一般觀眾帳號】
+${JSON.stringify(knownFans)}
+
+既有粉絲可以使用其 authorId。
+
+新粉絲的 authorId 必須留空，
+並由你自行產生：
+- fanName
+- 以 @ 開頭的 fanHandle
+
+不得使用固定名字模板。
 留言語氣要有差異。
 
 【donation】
@@ -10728,11 +10758,16 @@ amount 必須為 0。
     {
       "kind": "fan",
       "authorId": "",
+      "fanName": "新粉絲顯示名稱",
+      "fanHandle": "@new_fan",
       "text": "留言"
     }
   ],
   "donation": {
     "amount": 0,
+    "authorId": "",
+    "fanName": "",
+    "fanHandle": "",
     "message": ""
   }
 }
@@ -10974,8 +11009,10 @@ async function generateRoleLiveNext(
       }
 
 
-      const fan =
-        randomAllowedFan();
+        const fan =
+        resolveAiFanAccount(
+          comment
+        );
 
 
       if(!fan){
@@ -10991,11 +11028,14 @@ async function generateRoleLiveNext(
         authorId:
           null,
 
-        accountId:
+         accountId:
           fan.id,
 
         author:
           fan.name,
+
+        handle:
+          fan.handle,
 
         text:
           commentText
@@ -11023,7 +11063,9 @@ async function generateRoleLiveNext(
     if(donationAmount > 0){
 
       const fan =
-        randomAllowedFan();
+        resolveAiFanAccount(
+          data?.donation
+        );
 
 
       if(fan){
@@ -11048,11 +11090,14 @@ async function generateRoleLiveNext(
           authorId:
             null,
 
-          accountId:
+           accountId:
             fan.id,
 
           author:
             fan.name,
+
+          handle:
+            fan.handle,
 
           donation:
             true,
