@@ -6353,7 +6353,11 @@ textarea::placeholder{
 
     <div class="field">
       <label>標題</label>
-      <input id="loreEntryTitle" type="text">
+      <input
+        id="loreEntryTitle"
+        type="text"
+        maxlength="80"
+      >
     </div>
 
     <div class="field" style="margin-top:8px">
@@ -6362,8 +6366,26 @@ textarea::placeholder{
       <input
         id="loreEntryKeywords"
         type="text"
+        maxlength="840"
         placeholder="例如：學校, 魔法, 星港"
       >
+
+      <div class="field-help">
+        可用逗號、頓號或換行分隔，最多 20 個；每個最多 40 字。
+      </div>
+    </div>
+
+    <div class="field" style="margin-top:8px">
+      <label>使用範圍</label>
+
+      <select id="loreEntryVisibility">
+        <option value="private">私人</option>
+        <option value="public">公開</option>
+      </select>
+
+      <div class="field-help">
+        私人條目只供私人互動使用；公開條目也可供公開直播使用。
+      </div>
     </div>
 
     <div class="field" style="margin-top:8px">
@@ -6371,8 +6393,13 @@ textarea::placeholder{
 
       <textarea
         id="loreEntryContent"
+        maxlength="3000"
         style="min-height:150px"
       ></textarea>
+
+      <div class="field-help">
+        每個條目最多 3,000 字。
+      </div>
     </div>
 
     <div class="confirm-actions">
@@ -20863,6 +20890,227 @@ function countRpTurn(summary){
   }
 }
 
+function normalizeLoreTriggerText(
+  value
+){
+  return String(value || "")
+    .normalize("NFKC")
+    .toLocaleLowerCase();
+}
+
+function parseLoreKeywords(
+  value
+){
+  const values =
+    Array.isArray(value)
+      ? value
+      : String(value || "")
+          .split(/[,，、\n\r]+/);
+
+  const seen =
+    new Set();
+
+  const keywords =
+    [];
+
+  values.forEach(value => {
+    const keyword =
+      String(value || "")
+        .trim();
+
+    const normalized =
+      normalizeLoreTriggerText(
+        keyword
+      );
+
+    if(
+      !keyword ||
+      !normalized ||
+      seen.has(normalized)
+    ){
+      return;
+    }
+
+    seen.add(normalized);
+    keywords.push(keyword);
+  });
+
+  return keywords;
+}
+
+function resolveTriggeredLorebookEntries(
+  {
+    characterIds=[],
+    text="",
+    scope="private",
+    maxEntries=8,
+    maxCharacters=8000
+  }={}
+){
+  const normalizedText =
+    normalizeLoreTriggerText(
+      text
+    );
+
+  const linkedIds =
+    new Set(
+      characterIds
+        .map(id =>
+          String(id || "")
+        )
+        .filter(Boolean)
+    );
+
+  if(
+    !normalizedText ||
+    !linkedIds.size
+  ){
+    return [];
+  }
+
+  const books =
+    state.lorebooks
+      .filter(book =>
+        state.characters.some(
+          character =>
+            linkedIds.has(
+              character.id
+            ) &&
+            (
+              character.lorebookIds ||
+              []
+            ).includes(book.id)
+        )
+      );
+
+  const candidates =
+    [];
+
+  books.forEach(book => {
+    (
+      book.entries ||
+      []
+    ).forEach((entry,index) => {
+      const visibility =
+        entry.visibility ===
+          "public"
+          ? "public"
+          : "private";
+
+      if(
+        scope === "public" &&
+        visibility !== "public"
+      ){
+        return;
+      }
+
+      const keywords =
+        parseLoreKeywords(
+          entry.keywords
+        );
+
+      const matchedKeywords =
+        keywords.filter(keyword =>
+          normalizedText.includes(
+            normalizeLoreTriggerText(
+              keyword
+            )
+          )
+        );
+
+      const content =
+        String(
+          entry.content || ""
+        ).trim();
+
+      if(
+        !matchedKeywords.length ||
+        !content
+      ){
+        return;
+      }
+
+      candidates.push({
+        bookId:book.id,
+        bookName:
+          String(book.name || ""),
+        entryId:entry.id,
+        title:
+          String(entry.title || ""),
+        visibility,
+        matchedKeywords,
+        content,
+        score:
+          matchedKeywords.length *
+            1000 +
+          Math.max(
+            ...matchedKeywords.map(
+              keyword =>
+                normalizeLoreTriggerText(
+                  keyword
+                ).length
+            )
+          ),
+        order:index
+      });
+    });
+  });
+
+  candidates.sort((a,b) =>
+    b.score - a.score ||
+    a.order - b.order
+  );
+
+  const entryLimit =
+    Math.max(
+      0,
+      Math.trunc(
+        Number(maxEntries) || 0
+      )
+    );
+
+  const characterLimit =
+    Math.max(
+      0,
+      Math.trunc(
+        Number(maxCharacters) || 0
+      )
+    );
+
+  const selected =
+    [];
+
+  let usedCharacters =
+    0;
+
+  for(const entry of candidates){
+    if(
+      selected.length >= entryLimit
+    ){
+      break;
+    }
+
+    const entryCharacters =
+      entry.title.length +
+      entry.content.length;
+
+    if(
+      usedCharacters +
+        entryCharacters >
+      characterLimit
+    ){
+      continue;
+    }
+
+    selected.push(entry);
+
+    usedCharacters +=
+      entryCharacters;
+  }
+
+  return selected;
+}
+
 function getSelectedLorebook(){
   return state.lorebooks.find(
     book =>
@@ -20935,8 +21183,9 @@ function renderLorebooks(){
       <strong>${esc(entry.title)}</strong>
 
       <small>
+        ${entry.visibility === "public" ? "公開" : "私人"} ·
         關鍵詞：
-        ${esc(entry.keywords.join("、"))}
+        ${esc(parseLoreKeywords(entry.keywords).join("、"))}
       </small>
 
       <div
@@ -21137,7 +21386,14 @@ function openLoreEntryEditor(entryId=null){
     entry?.title || "";
 
   $("loreEntryKeywords").value =
-    entry?.keywords?.join(", ") || "";
+    parseLoreKeywords(
+      entry?.keywords
+    ).join(", ");
+
+  $("loreEntryVisibility").value =
+    entry?.visibility === "public"
+      ? "public"
+      : "private";
 
   $("loreEntryContent").value =
     entry?.content || "";
@@ -21165,11 +21421,16 @@ $("saveLoreEntry").onclick = () => {
     $("loreEntryTitle").value.trim();
 
   const keywords =
-    $("loreEntryKeywords")
-      .value
-      .split(",")
-      .map(value => value.trim())
-      .filter(Boolean);
+    parseLoreKeywords(
+      $("loreEntryKeywords")
+        .value
+    );
+
+  const visibility =
+    $("loreEntryVisibility").value ===
+      "public"
+      ? "public"
+      : "private";
 
   const content =
     $("loreEntryContent").value.trim();
@@ -21186,6 +21447,35 @@ $("saveLoreEntry").onclick = () => {
     return;
   }
 
+  if(keywords.length > 20){
+    showNotice(
+      "關鍵詞太多",
+      "每個 Lorebook 條目最多可設定 20 個關鍵詞。"
+    );
+    return;
+  }
+
+  if(
+    keywords.some(
+      keyword =>
+        keyword.length > 40
+    )
+  ){
+    showNotice(
+      "關鍵詞太長",
+      "每個關鍵詞最多 40 字。"
+    );
+    return;
+  }
+
+  if(content.length > 3000){
+    showNotice(
+      "條目內容太長",
+      "每個 Lorebook 條目最多 3,000 字。"
+    );
+    return;
+  }
+
   const existing =
     book.entries.find(
       entry =>
@@ -21195,12 +21485,15 @@ $("saveLoreEntry").onclick = () => {
   if(existing){
     existing.title = title;
     existing.keywords = keywords;
+    existing.visibility =
+      visibility;
     existing.content = content;
   }else{
     book.entries.push({
       id:uid("lore"),
       title,
       keywords,
+      visibility,
       content
     });
   }
