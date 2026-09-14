@@ -6727,14 +6727,6 @@ const products = [
   }
 ];
 
-const fanAccounts = [
-  {id:"fan_star_sand",name:"星砂",handle:"@star_sand"},
-  {id:"fan_sea_salt",name:"海鹽汽水",handle:"@sea_salt"},
-  {id:"fan_moon_fish",name:"月光魚",handle:"@moonfish"},
-  {id:"fan_night_owl",name:"夜航貓",handle:"@night_owl"},
-  {id:"fan_cloud",name:"雲朵麵包",handle:"@cloudbread"},
-  {id:"fan_anon_88",name:"匿名觀眾88",handle:"@viewer88"}
-];
 
 const STARWAVE_PROXY_URL =
   "https://starwave-api-proxy.chibahaseki.workers.dev";
@@ -9515,6 +9507,8 @@ function captureLiveUndoSnapshot(inputText){
         viewers:state.player.viewers,
         subscribers:state.player.subscribers,
         members:state.player.members,
+        memberAccounts:
+          state.player.memberAccounts,
         peak:state.player.peak
       },
 
@@ -9532,6 +9526,7 @@ function captureLiveUndoSnapshot(inputText){
       forumPosts:state.forumPosts,
       snsPosts:state.snsPosts,
       wavelinkRooms:state.wavelinkRooms,
+      fanAccounts:state.fanAccounts,
 
       characters:
         state.characters.map(character => ({
@@ -9575,6 +9570,17 @@ function restoreLiveUndoSnapshot(record){
   state.player.members =
     snap.player.members;
 
+  if(
+    Array.isArray(
+      snap.player.memberAccounts
+    )
+  ){
+    state.player.memberAccounts =
+      deepClone(
+        snap.player.memberAccounts
+      );
+  }
+
   state.player.peak =
     snap.player.peak;
 
@@ -9603,6 +9609,17 @@ function restoreLiveUndoSnapshot(record){
 
   state.wavelinkRooms =
     deepClone(snap.wavelinkRooms);
+
+  if(
+    Array.isArray(
+      snap.fanAccounts
+    )
+  ){
+    state.fanAccounts =
+      deepClone(
+        snap.fanAccounts
+      );
+  }
 
   const savedMap = new Map(
     (snap.characters || []).map(
@@ -18631,29 +18648,11 @@ function forumPublicAuthors(){
       })
     );
 
-
-  const fans =
-    fanAccounts
-      .filter(
-        fan =>
-          !isBlocked(fan.id)
-      )
-      .map(
-        fan => ({
-          type:"fan",
-          id:fan.id,
-          name:fan.name,
-          handle:fan.handle
-        })
-      );
-
-
   return [
     ...creators,
-    ...fans
+    ...publicAiFanAccounts()
   ];
 }
-
 
 function buildForumAiPrompt(
   count,
@@ -18820,21 +18819,28 @@ ${JSON.stringify(recentForum)}
 請避免一直重複最近論壇
 已經出現過的同一個標題與內容。
 
-【可以使用的發文帳號】
+【已存在的可用帳號】
 ${JSON.stringify(authors)}
 
-authorId 必須從以上帳號的
-id 中選擇。
+如果使用已存在的角色創作者或粉絲：
+- authorId 使用上面帳號真正存在的 id
+- fanName 與 fanHandle 留空
 
-不得自己創造新的角色主播帳號。
+如果建立新的普通粉絲：
+- authorId 留空
+- fanName 由你自行產生自然的顯示名稱
+- fanHandle 由你自行產生以 @ 開頭的帳號
+- fanName 與 fanHandle 都必須填寫
+- 不要使用固定名稱模板
+
+不得自行創造新的角色主播帳號。
+不得替玩家帳號自動發文或回覆。
 
 一般觀眾主要以 fan 帳號活動。
 
 creator 可以偶爾親自發文或回覆，
 但只有在符合角色公開身分、
 個性與目前公開情況時才使用。
-
-不得讓玩家帳號自動發文或回覆。
 
 【公開社群設定】
 
@@ -18917,18 +18923,24 @@ chat：
   "posts":[
     {
       "category":"live",
-      "authorId":"帳號 id",
+      "authorId":"",
+      "fanName":"新粉絲顯示名稱",
+      "fanHandle":"@new_fan",
       "title":"討論串標題",
       "body":"主樓內容",
       "views":120,
       "replies":[
         {
-          "authorId":"帳號 id",
+          "authorId":"",
+          "fanName":"新粉絲顯示名稱",
+          "fanHandle":"@new_fan",
           "text":"回覆內容",
           "replyTo":null
         },
         {
-          "authorId":"帳號 id",
+          "authorId":"",
+          "fanName":"另一名粉絲",
+          "fanHandle":"@another_fan",
           "text":"回覆內容",
           "replyTo":0
         }
@@ -18941,22 +18953,31 @@ chat：
 
 
 function resolveForumAiAuthor(
-  authorId,
+  raw,
   authors
 ){
+  const authorId =
+    String(
+      raw?.authorId || ""
+    ).trim();
 
-  return (
+  const existing =
     authors.find(
       author =>
-        author.id ===
-        authorId
-    ) ||
-    randomItem(authors) ||
-    null
-  );
+        author.id === authorId
+    );
+
+  if(existing){
+    return (
+      existing.type === "fan" &&
+      isBlocked(existing.id)
+    )
+      ? null
+      : existing;
+  }
+
+  return resolveAiFanAccount(raw);
 }
-
-
 let forumGenerating =
   false;
 
@@ -19014,18 +19035,6 @@ async function generateForumNow(
 
   const authors =
     forumPublicAuthors();
-
-
-  if(!authors.length){
-
-    if(!background){
-      toast(
-        "目前沒有可用的論壇帳號"
-      );
-    }
-
-    return false;
-  }
 
 
   forumGenerating =
@@ -19129,12 +19138,11 @@ async function generateForumNow(
           }
 
 
-          const author =
+            const author =
             resolveForumAiAuthor(
-              rawPost.authorId,
+              rawPost,
               authors
             );
-
 
           if(!author){
             return;
@@ -19212,7 +19220,7 @@ async function generateForumNow(
 
                 const replyAuthor =
                   resolveForumAiAuthor(
-                    rawReply.authorId,
+                    rawReply,
                     authors
                   );
 
@@ -20165,11 +20173,19 @@ ${JSON.stringify(recentForum)}
 【近期 SNS】
 ${JSON.stringify(recentSns)}
 
-【可由 AI 操作的帳號】
+【已存在的可用帳號】
 ${JSON.stringify(authors)}
 
-所有 authorId
-都必須從以上帳號中選擇。
+如果使用已存在的角色創作者或粉絲：
+- authorId 使用上面帳號真正存在的 id
+- fanName 與 fanHandle 留空
+
+如果建立新的普通粉絲：
+- authorId 留空
+- fanName 由你自行產生自然的顯示名稱
+- fanHandle 由你自行產生以 @ 開頭的帳號
+- fanName 與 fanHandle 都必須填寫
+- 不要使用固定名稱模板
 
 不得創造新的角色主播帳號。
 
@@ -20265,18 +20281,35 @@ null
 {
   "posts":[
     {
-      "authorId":"帳號 id",
+      "authorId":"",
+      "fanName":"新粉絲顯示名稱",
+      "fanHandle":"@new_fan",
       "text":"貼文內容",
       "likes":12,
       "reposts":1,
       "comments":[
         {
-          "authorId":"帳號 id",
+          "authorId":"",
+          "fanName":"另一名粉絲",
+          "fanHandle":"@another_fan",
           "text":"留言內容",
           "replyTo":null
         }
       ]
     }
+  ],
+
+  "existingComments":[
+    {
+      "postId":"既有 SNS id",
+      "authorId":"",
+      "fanName":"新粉絲顯示名稱",
+      "fanHandle":"@new_fan",
+      "text":"留言內容",
+      "replyToCommentId":null
+    }
+  ]
+}
   ],
 
   "existingComments":[
@@ -20291,19 +20324,13 @@ null
 `;
 }
 
-
 function resolveSnsAiAuthor(
-  authorId,
+  raw,
   authors
 ){
-
-  return (
-    authors.find(
-      author =>
-        author.id ===
-        authorId
-    ) ||
-    null
+  return resolveForumAiAuthor(
+    raw,
+    authors
   );
 }
 
@@ -20391,18 +20418,6 @@ async function generateSnsNow(
     snsPublicAuthors();
 
 
-  if(!authors.length){
-
-    if(!background){
-      toast(
-        "目前沒有可用的 SNS 帳號"
-      );
-    }
-
-    return false;
-  }
-
-
   snsGenerating =
     true;
 
@@ -20480,7 +20495,7 @@ async function generateSnsNow(
 
           const author =
             resolveSnsAiAuthor(
-              rawPost?.authorId,
+              rawPost,
               authors
             );
 
@@ -20521,7 +20536,7 @@ async function generateSnsNow(
 
                 const commentAuthor =
                   resolveSnsAiAuthor(
-                    rawComment?.authorId,
+                    rawComment,
                     authors
                   );
 
@@ -20677,7 +20692,7 @@ async function generateSnsNow(
 
           const author =
             resolveSnsAiAuthor(
-              rawComment?.authorId,
+              rawComment,
               authors
             );
 
