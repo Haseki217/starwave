@@ -3625,6 +3625,16 @@ textarea::placeholder{
       </div>
 
       <div class="field full">
+        <label>本場使用物品</label>
+
+        <div id="preLiveShopItems" class="note"></div>
+
+        <div class="field-help">
+          器材購入後會自動生效；濾鏡與企劃用品只套用於本場。
+        </div>
+      </div>
+
+      <div class="field full">
         <label>直播場景</label>
         <div id="scenePicker" class="scene-picker"></div>
       </div>
@@ -6860,6 +6870,7 @@ live:{
   lastText:"",
   collabIds:[],
   collabRoomId:"",
+  activeShopItemIds:[],
   date:"",
   turnLogs:[]
 },
@@ -8830,6 +8841,321 @@ function selectedPlayerCollabRoom(){
     null
   );
 }
+
+const liveFilterItemIds = [
+  "catFilter",
+  "starFilter"
+];
+
+const liveConsumableItemIds = [
+  "specialProject",
+  "cookingProject",
+  "outdoorProject",
+  "collabProject",
+  "promotion"
+];
+
+function shopQuantity(productId){
+  return Number(
+    state.economy.inventory[productId] || 0
+  );
+}
+
+function currentPreLiveCategory(){
+  return $("preLiveCategory").value === "other"
+    ? (
+        $("preLiveCategoryCustom").value.trim() ||
+        "其他"
+      )
+    : $("preLiveCategory").value;
+}
+
+function renderPreLiveShopItems(){
+  const container =
+    $("preLiveShopItems");
+
+  if(!container){
+    return;
+  }
+
+  const previousSelection =
+    new Set(
+      [
+        ...container.querySelectorAll(
+          "[data-live-shop-item]:checked"
+        )
+      ].map(
+        input =>
+          input.dataset.liveShopItem
+      )
+    );
+
+  const category =
+    currentPreLiveCategory();
+
+  const collabSelected =
+    Boolean(
+      $("preLiveCollabRoom")?.value
+    );
+
+  const itemIds = [];
+
+  liveFilterItemIds.forEach(
+    productId => {
+      if(shopQuantity(productId) > 0){
+        itemIds.push(productId);
+      }
+    }
+  );
+
+  const requiredItemId = {
+    "料理":"cookingProject",
+    "戶外":"outdoorProject"
+  }[category];
+
+  if(requiredItemId){
+    itemIds.push(requiredItemId);
+  }
+
+  [
+    "specialProject",
+    "promotion"
+  ].forEach(
+    productId => {
+      if(shopQuantity(productId) > 0){
+        itemIds.push(productId);
+      }
+    }
+  );
+
+  if(
+    collabSelected &&
+    shopQuantity("collabProject") > 0
+  ){
+    itemIds.push("collabProject");
+  }
+
+  const uniqueItemIds =
+    [...new Set(itemIds)];
+
+  if(!uniqueItemIds.length){
+    container.textContent =
+      "目前沒有可於本場選用的濾鏡或企劃用品。";
+    return;
+  }
+
+  container.innerHTML =
+    uniqueItemIds
+      .map(productId => {
+        const product =
+          products.find(
+            item =>
+              item.id === productId
+          );
+
+        if(!product){
+          return "";
+        }
+
+        const quantity =
+          shopQuantity(productId);
+
+        const unavailable =
+          quantity < 1;
+
+        const checked =
+          !unavailable &&
+          previousSelection.has(productId);
+
+        return `
+          <label
+            style="
+              display:flex;
+              align-items:flex-start;
+              gap:8px;
+              margin:7px 0;
+            "
+          >
+            <input
+              type="checkbox"
+              data-live-shop-item="${product.id}"
+              ${checked ? "checked" : ""}
+              ${unavailable ? "disabled" : ""}
+            >
+
+            <span>
+              <strong>${esc(product.name)}</strong>
+
+              <small style="display:block">
+                ${
+                  unavailable
+                    ? "尚未持有"
+                    : (
+                        product.type === "consumable"
+                          ? `持有 ×${quantity} · 本場開始時消耗 1 個`
+                          : "永久持有 · 本場啟用"
+                      )
+                }
+              </small>
+            </span>
+          </label>
+        `;
+      })
+      .join("");
+}
+
+function selectedPreLiveShopItems(){
+  return new Set(
+    [
+      ...$("preLiveShopItems")
+        .querySelectorAll(
+          "[data-live-shop-item]:checked"
+        )
+    ].map(
+      input =>
+        input.dataset.liveShopItem
+    )
+  );
+}
+
+function prepareLiveShopPlan(
+  category,
+  collabRoom
+){
+  const selectedIds =
+    selectedPreLiveShopItems();
+
+  const requiredItemId = {
+    "料理":"cookingProject",
+    "戶外":"outdoorProject"
+  }[category];
+
+  if(
+    requiredItemId &&
+    shopQuantity(requiredItemId) < 1
+  ){
+    const product =
+      products.find(
+        item =>
+          item.id === requiredItemId
+      );
+
+    showNotice(
+      `缺少${product.name}`,
+      `進行${category}企劃前需要先至 SHOP 購買。`
+    );
+
+    return null;
+  }
+
+  if(
+    requiredItemId &&
+    !selectedIds.has(requiredItemId)
+  ){
+    const product =
+      products.find(
+        item =>
+          item.id === requiredItemId
+      );
+
+    showNotice(
+      `尚未使用${product.name}`,
+      `請在「本場使用物品」勾選${product.name}。`
+    );
+
+    return null;
+  }
+
+  const selectedProducts =
+    [...selectedIds]
+      .map(
+        productId =>
+          products.find(
+            product =>
+              product.id === productId
+          )
+      )
+      .filter(Boolean);
+
+  for(const product of selectedProducts){
+    if(shopQuantity(product.id) < 1){
+      showNotice(
+        "物品數量不足",
+        `${product.name}目前沒有可使用的庫存。`
+      );
+
+      return null;
+    }
+  }
+
+  if(
+    selectedIds.has("collabProject") &&
+    !collabRoom
+  ){
+    showNotice(
+      "目前不是連動直播",
+      "連動企劃用品只能在已確認的連動直播中使用。"
+    );
+
+    return null;
+  }
+
+  const automaticEquipmentIds =
+    products
+      .filter(
+        product =>
+          product.type === "durable" &&
+          (
+            product.cat === "equipment" ||
+            product.cat === "vtuber"
+          ) &&
+          shopQuantity(product.id) > 0
+      )
+      .map(
+        product =>
+          product.id
+      );
+
+  const consumableIds =
+    selectedProducts
+      .filter(
+        product =>
+          liveConsumableItemIds.includes(
+            product.id
+          )
+      )
+      .map(
+        product =>
+          product.id
+      );
+
+  return {
+    consumableIds,
+    activeItemIds:[
+      ...new Set([
+        ...automaticEquipmentIds,
+        ...selectedProducts.map(
+          product =>
+            product.id
+        )
+      ])
+    ]
+  };
+}
+
+function consumeLiveShopItems(
+  productIds
+){
+  productIds.forEach(
+    productId => {
+      state.economy.inventory[productId] =
+        Math.max(
+          0,
+          shopQuantity(productId) - 1
+        );
+    }
+  );
+}
   
 $("preLiveCategory").onchange = () => {
   $("preLiveCategoryCustom").hidden =
@@ -8838,7 +9164,15 @@ $("preLiveCategory").onchange = () => {
   if($("preLiveCategory").value !== "other"){
     $("preLiveCategoryCustom").value = "";
   }
+
+  renderPreLiveShopItems();
 };
+
+$("preLiveCategoryCustom").oninput =
+  renderPreLiveShopItems;
+
+$("preLiveCollabRoom").onchange =
+  renderPreLiveShopItems;
   
 $("startLive").onclick = () => {
   const selectedRoomId =
@@ -8877,6 +9211,16 @@ $("startLive").onclick = () => {
       "角色正在直播",
       "連動成員目前已有其他直播進行中，請等該場直播結束後再開始。"
     );
+    return;
+  }
+
+  const liveShopPlan =
+    prepareLiveShopPlan(
+      currentPreLiveCategory(),
+      collabRoom
+    );
+
+  if(!liveShopPlan){
     return;
   }
 
@@ -8946,6 +9290,15 @@ state.player.category =
     ? ($("preLiveCategoryCustom").value.trim() || "其他")
     : $("preLiveCategory").value;
 
+state.live.activeShopItemIds =
+  liveShopPlan.activeItemIds;
+
+consumeLiveShopItems(
+  liveShopPlan.consumableIds
+);
+
+renderBackstage();
+
 state.live.started = true;
 state.live.turn = 0;
 state.live.date =
@@ -9014,6 +9367,10 @@ function syncLiveSettingsLocation(){
 function syncLive(){
 
   syncLiveSettingsLocation();
+
+  if(!state.live.started){
+    renderPreLiveShopItems();
+  }
 
   $("preLiveConfig").hidden =
     state.live.started;
@@ -10264,6 +10621,7 @@ state.live.turnLogs = [];
 state.live.lastText = "";
 state.live.collabIds = [];
 state.live.collabRoomId = "";
+state.live.activeShopItemIds = [];
 
       syncLive();
       syncNumbers();
@@ -16422,6 +16780,7 @@ function purchaseProduct(product){
   syncNumbers();
   renderShop();
   renderBackstage();
+  renderPreLiveShopItems();
 
   toast(`${product.name} 已購入`);
 }
