@@ -6737,6 +6737,59 @@ const products = [
   }
 ];
 
+const shopProductDescriptions = {
+  mic:
+    "改善人聲收音的清晰度與細節。",
+
+  camera:
+    "提供更清楚穩定的直播畫面。",
+
+  capture:
+    "讓遊戲或外部設備畫面更穩定地進入直播。",
+
+  light:
+    "改善人物或模型在畫面中的照明表現。",
+
+  audioInterface:
+    "讓麥克風、音樂與其他聲音來源更容易維持清楚平衡。",
+
+  control:
+    "讓切換場景、音效與常用操作更加流暢。",
+
+  headset:
+    "方便監聽連動語音與直播聲音。",
+
+  mocap2d:
+    "讓 2D 模型的表情與動作呈現更加自然。",
+
+  mocap3d:
+    "讓 3D 模型的身體動作與姿態呈現更加完整。",
+
+  catFilter:
+    "在本場直播畫面使用虛擬貓耳濾鏡，觀眾看得見。",
+
+  starFilter:
+    "在本場直播畫面使用星光特效濾鏡，觀眾看得見。",
+
+  specialProject:
+    "用於玩家主動安排的特別企劃。",
+
+  cookingProject:
+    "進行料理直播時需要使用。",
+
+  outdoorProject:
+    "進行戶外直播時需要使用。",
+
+  collabProject:
+    "用於玩家主動安排的大型連動企劃；一般連動不需要。",
+
+  gift:
+    "可送給指定角色，角色會依自身設定與當下情境回應。",
+
+  promotion:
+    "在本場直播前進行宣傳，可能讓更多人注意到這場直播。"
+};
+
 
 const STARWAVE_PROXY_URL =
   "https://starwave-api-proxy.chibahaseki.workers.dev";
@@ -9529,6 +9582,59 @@ function liveAiPublicCreators(){
   );
 }
 
+function activePlayerLiveShopContext(){
+  const automaticEquipmentIds =
+    products
+      .filter(
+        product =>
+          product.type === "durable" &&
+          (
+            product.cat === "equipment" ||
+            product.cat === "vtuber"
+          ) &&
+          shopQuantity(product.id) > 0
+      )
+      .map(
+        product =>
+          product.id
+      );
+
+  const activeIds =
+    [
+      ...new Set([
+        ...automaticEquipmentIds,
+        ...(
+          state.live.activeShopItemIds ||
+          []
+        )
+      ])
+    ];
+
+  return activeIds
+    .map(
+      productId => {
+        const product =
+          products.find(
+            item =>
+              item.id === productId
+          );
+
+        if(!product){
+          return null;
+        }
+
+        return {
+          name:product.name,
+          effect:
+            shopProductDescriptions[
+              product.id
+            ] || ""
+        };
+      }
+    )
+    .filter(Boolean);
+}
+
 
 function buildPlayerLiveAiPrompt(
   playerText
@@ -9559,6 +9665,9 @@ function buildPlayerLiveAiPrompt(
 
   const knownFans =
     publicAiFanAccounts();
+
+  const activeShopItems =
+    activePlayerLiveShopContext();
 
 const collabs =
   state.live.collabIds
@@ -9642,6 +9751,19 @@ VTuber 模型／公開形象設定：${state.player.vtuberModel || "無"}
 即時觀看：${state.player.viewers}
 訂閱人數：${state.player.subscribers}
 付費會員：${state.player.members}
+
+【本場已啟用的設備、濾鏡與企劃用品】
+${JSON.stringify(activeShopItems)}
+
+使用規則：
+- 已列出的直播器材視為已安裝並正常使用。
+- 可以讓觀眾自然注意到收音、畫面、照明、操作或動態捕捉的改善。
+- 已列出的濾鏡會出現在公開直播畫面中，觀眾與連動成員都看得見。
+- 已列出的企劃用品可以成為本場活動、道具與敘事的一部分。
+- 不要把這些內容描述成遊戲數值、系統加成或 SHOP 道具。
+- 器材、濾鏡與企劃用品不得直接增加觀看數、訂閱數或會員數。
+- 宣傳服務可以自然帶來因宣傳而注意到直播的新觀眾，但不得保證成長、固定增加人數或套用百分比。
+- 連動企劃用品不影響任何角色是否答應連動。
 
 【社群設定】
 黑粉強度：${state.community.blackfan}%
@@ -10897,6 +11019,12 @@ function buildRoleLiveAiPrompt(
       character.liveCollabRoomId
     );
 
+  const playerLiveShopItems =
+    collabIds.includes("player") &&
+    state.live.started
+      ? activePlayerLiveShopContext()
+      : [];
+
   const privateCoordination =
     collabRoom
       ? (
@@ -11014,6 +11142,17 @@ ${JSON.stringify(collabParticipants)}
 
 【其他連動視角的近期公開內容】
 ${JSON.stringify(collabViews)}
+
+【玩家視角本場使用的設備、濾鏡與企劃內容】
+${JSON.stringify(playerLiveShopItems)}
+
+如果以上清單不是空的：
+- 這些是玩家直播視角正在使用的內容。
+- 連動角色可以看見公開濾鏡，並感受到共同直播中的設備或企劃狀況。
+- 可以產生符合角色個性的自然反應。
+- 不得稱為系統加成或 SHOP 道具。
+- 不得因此直接改變角色視角的 viewerDelta。
+- 不得因連動企劃用品改變角色的連動意願或同意狀態。
 
 【連動房間近期私下訊息】
 ${JSON.stringify(privateCoordination)}
@@ -16703,6 +16842,16 @@ function renderShop(){
         </div>
 
         <h3>${esc(product.name)}</h3>
+
+        <p>
+          ${
+            esc(
+              shopProductDescriptions[
+                product.id
+              ] || ""
+            )
+          }
+        </p>
 
         ${
           product.type === "consumable" &&
@@ -24263,6 +24412,7 @@ async event => {
   state.live.lastText = "";
   state.live.collabIds = [];
   state.live.collabRoomId = "";
+  state.live.activeShopItemIds = [];
   state.live.date = "";
   state.live.turnLogs = [];
 
