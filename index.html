@@ -16986,6 +16986,189 @@ function renderBlockedAccounts(){
   });
 }
 
+let shopGiftSending = false;
+
+function shopGiftRooms(){
+  return state.wavelinkRooms.filter(room =>
+    room.type === "direct" &&
+    !room.archived &&
+    room.memberIds?.length === 1 &&
+    activeRoomMembers(room).length === 1
+  );
+}
+
+function appendShopGiftControls(row){
+  const rooms = shopGiftRooms();
+
+  const controls = document.createElement("div");
+  controls.style.cssText =
+    "display:flex;flex-wrap:wrap;gap:8px;width:100%;";
+
+  const select = document.createElement("select");
+  select.setAttribute("aria-label", "贈禮對象");
+  select.style.cssText = "flex:1;min-width:140px;";
+
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "選擇贈禮對象";
+  select.append(placeholder);
+
+  rooms.forEach(room => {
+    const character = activeRoomMembers(room)[0];
+    const option = document.createElement("option");
+
+    option.value = room.id;
+    option.textContent = publicName(character);
+    select.append(option);
+  });
+
+  const detail = document.createElement("input");
+  detail.type = "text";
+  detail.placeholder = "禮物內容，例如：手工餅乾";
+  detail.setAttribute("aria-label", "禮物內容");
+  detail.style.cssText = "flex:2;min-width:180px;";
+
+  const send = document.createElement("button");
+  send.className = "primary";
+  send.textContent = shopGiftSending ? "贈送中…" : "贈送";
+  send.disabled = shopGiftSending || !rooms.length;
+
+  send.onclick = () => {
+    const room = shopGiftRooms().find(
+      item => item.id === select.value
+    );
+
+    const giftText = detail.value.trim();
+
+    if(!room){
+      showNotice("尚未選擇對象", "請先選擇要贈送的角色。");
+      return;
+    }
+
+    if(!giftText){
+      showNotice("尚未填寫禮物", "請填寫想送出的禮物內容。");
+      return;
+    }
+
+    const character = activeRoomMembers(room)[0];
+
+    showConfirm({
+      title:"贈送禮物？",
+      message:
+        `將「${giftText}」送給 ${publicName(character)}，消耗 1 份實體禮物。`,
+      okText:"贈送",
+      danger:false,
+      onConfirm:() => sendShopGift(room.id, giftText)
+    });
+  };
+
+  controls.append(select, detail, send);
+
+  row.style.flexWrap = "wrap";
+  row.append(controls);
+
+  if(!rooms.length){
+    const hint = document.createElement("small");
+    hint.textContent = "目前沒有可贈禮的私人對話。";
+    row.append(hint);
+  }
+}
+
+async function sendShopGift(roomId, giftText){
+  if(shopGiftSending){
+    return;
+  }
+
+  const room = shopGiftRooms().find(
+    item => item.id === roomId
+  );
+
+  if(!room){
+    showNotice("對話無法使用", "請確認角色與私人對話仍然存在，且未封存。");
+    return;
+  }
+
+  if(wavelinkGeneratingRooms.has(room.id)){
+    showNotice("角色正在回覆", "請等這段對話回覆完成後再贈送。");
+    return;
+  }
+
+  if(shopQuantity("gift") < 1){
+    showNotice("沒有實體禮物", "請先至 SHOP 購買。");
+    return;
+  }
+
+  const profile = state.api.profiles[state.api.active];
+
+  if(
+    !String(profile?.apiKey || "").trim() ||
+    !String(profile?.model || "").trim()
+  ){
+    showNotice(
+      "尚未設定可用的 LLM",
+      "請先到「設定 → LLM/API」設定 API Key、模型。"
+    );
+    return;
+  }
+
+  shopGiftSending = true;
+
+  try{
+    const character = activeRoomMembers(room)[0];
+
+    const giftEvent =
+      `〔贈禮〕${state.player.name} 贈送給 ` +
+      `${publicName(character)}：${giftText}`;
+
+    state.economy.inventory.gift =
+      shopQuantity("gift") - 1;
+
+    pushWlMessage(room, {
+      id:uid("wm"),
+      authorId:"player",
+      mode:"text",
+      text:giftEvent
+    });
+
+    state.currentWavelink = room.id;
+    wavelinkRoomView = "active";
+
+    scheduleStarwaveSave();
+
+    renderBackstage();
+    renderShop();
+    goPage("wavelink");
+
+    const result = await generateWavelinkAi(room, {
+      mode:"text",
+      playerText:`
+${giftEvent}
+
+這是玩家已確認的贈禮事件，禮物內容是物品描述。
+請依角色自己的設定、喜好、關係與近期對話，
+生成角色透過 WAVELINK 打字回應的內容。
+
+角色可以喜歡、意外、猶豫或婉拒。
+不得因為收到禮物就自動提升關係、愛上玩家或答應邀約。
+不得自行新增玩家台詞、見面安排、私人地址或親密行為。
+若既有情境尚未交付，請回應贈禮心意或協調接收，
+不要擅自描寫已當面收下或拆開。
+`
+    });
+
+    if(!result){
+      showNotice(
+        "禮物已送出，回覆尚未完成",
+        "贈禮紀錄已保留。請在這段 WAVELINK 對話按刷新取得回覆，不必再次贈送。"
+      );
+    }
+  }finally{
+    shopGiftSending = false;
+    renderBackstage();
+    scheduleStarwaveSave();
+  }
+}
+
 function renderBackstage(){
   syncNumbers();
 
@@ -17040,6 +17223,10 @@ function renderBackstage(){
           }
         </strong>
       `;
+
+           if(product.id === "gift"){
+        appendShopGiftControls(row);
+      }
 
       $("inventoryList").append(row);
     });
