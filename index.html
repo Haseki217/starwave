@@ -16920,6 +16920,14 @@ function renderShop(){
 }
 
 function purchaseProduct(product){
+  if(
+    product.type === "durable" &&
+    shopQuantity(product.id) > 0
+  ){
+    toast("這項商品已經購入");
+    return;
+  }
+
   if(state.economy.mode === "off"){
     showNotice(
       "經濟模式已關閉",
@@ -17159,6 +17167,10 @@ async function sendShopGift(roomId, giftText){
     renderBackstage();
     renderShop();
     goPage("wavelink");
+
+    if(window.innerWidth <= 720){
+      $("wlLayout").classList.add("mobile-chat-open");
+    }
 
     const result = await generateWavelinkAi(room, {
       mode:"text",
