@@ -18155,6 +18155,12 @@ $("confirmRoleImport").onclick =
           );
       }
 
+            const character =
+        createImportedCharacter(
+          raw,
+          generated
+        );
+
 
       if(pendingRoleCardImage){
         character.publicImage =
