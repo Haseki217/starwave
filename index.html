@@ -6214,8 +6214,7 @@ body[data-theme="halloween"] .live-stage{
     </div>
 
     <div class="note" style="margin-bottom:10px">
-      支援 JSON、TXT 與直接貼上角色卡文字。
-      PNG 角色卡目前不支援。
+支援 PNG、JSON、TXT 與直接貼上角色卡文字。
 <br><br>
       匯入角色卡將會由 AI 自動生成頻道內容，可在設定中關閉。
     </div>
@@ -6227,7 +6226,7 @@ body[data-theme="halloween"] .live-stage{
       <input
         id="roleCardFile"
         type="file"
-        accept=".json,.txt,application/json,text/plain"
+       accept=".png,.json,.txt,image/png,application/json,text/plain"
       >
 
     </div>
@@ -17400,34 +17399,347 @@ function renderBackstage(){
   renderBlockedAccounts();
 }
 
+let pendingRoleCardImage = "";
+let roleCardReadId = 0;
+
 $("importCharacterCard").onclick = () => {
+  roleCardReadId++;
+  pendingRoleCardImage = "";
   $("roleCardFile").value = "";
   $("roleCardPaste").value = "";
-
+  $("confirmRoleImport").disabled = false;
   $("importRoleOverlay").hidden = false;
 };
 
 $("cancelRoleImport").onclick = () => {
+  roleCardReadId++;
+  pendingRoleCardImage = "";
   $("importRoleOverlay").hidden = true;
 };
 
-$("roleCardFile").onchange = async event => {
-  const file = event.target.files?.[0];
+async function readRoleCardPng(file){
+  const bytes =
+    new Uint8Array(await file.arrayBuffer());
 
-  if(!file){
-    return;
-  }
+  const signature =
+    [137,80,78,71,13,10,26,10];
 
-  try{
-    $("roleCardPaste").value =
-      await file.text();
-  }catch{
-    showNotice(
-      "無法讀取角色卡",
-      "目前支援 JSON 與 TXT 文字角色卡。"
+  if(
+    !signature.every(
+      (value,index) =>
+        bytes[index] === value
+    )
+  ){
+    throw new Error(
+      "這不是有效的 PNG 檔案。"
     );
   }
-};
+
+  const view =
+    new DataView(
+      bytes.buffer,
+      bytes.byteOffset,
+      bytes.byteLength
+    );
+
+  const entries = {};
+
+  for(
+    let offset = 8;
+    offset + 12 <= bytes.length;
+  ){
+    const length =
+      view.getUint32(offset);
+
+    const end =
+      offset + 8 + length;
+
+    if(end + 4 > bytes.length){
+      throw new Error(
+        "PNG 檔案內容不完整。"
+      );
+    }
+
+    const type =
+      String.fromCharCode(
+        ...bytes.subarray(
+          offset + 4,
+          offset + 8
+        )
+      );
+
+    if(
+      ["tEXt","zTXt","iTXt"]
+        .includes(type)
+    ){
+      const chunk =
+        bytes.subarray(
+          offset + 8,
+          end
+        );
+
+      const separator =
+        chunk.indexOf(0);
+
+      if(separator >= 0){
+        const key =
+          new TextDecoder()
+            .decode(
+              chunk.subarray(
+                0,
+                separator
+              )
+            );
+
+        if(
+          key === "ccv3" ||
+          key === "chara"
+        ){
+          entries[key] = {
+            type,
+            content:
+              chunk.subarray(
+                separator + 1
+              )
+          };
+        }
+      }
+    }
+
+    offset = end + 4;
+
+    if(type === "IEND"){
+      break;
+    }
+  }
+
+  for(
+    const key
+    of ["ccv3","chara"]
+  ){
+    const entry =
+      entries[key];
+
+    if(!entry){
+      continue;
+    }
+
+    try{
+      let value =
+        entry.content;
+
+      if(entry.type === "zTXt"){
+        if(value[0] !== 0){
+          throw new Error();
+        }
+
+        value =
+          new Uint8Array(
+            await new Response(
+              new Blob([
+                value.subarray(1)
+              ])
+                .stream()
+                .pipeThrough(
+                  new DecompressionStream(
+                    "deflate"
+                  )
+                )
+            ).arrayBuffer()
+          );
+      }else if(
+        entry.type === "iTXt"
+      ){
+        const flag =
+          value[0];
+
+        if(
+          value[1] !== 0 ||
+          ![0,1].includes(flag)
+        ){
+          throw new Error();
+        }
+
+        let start = 2;
+
+        for(let i = 0; i < 2; i++){
+          const end =
+            value.indexOf(
+              0,
+              start
+            );
+
+          if(end < 0){
+            throw new Error();
+          }
+
+          start = end + 1;
+        }
+
+        value =
+          value.subarray(start);
+
+        if(flag === 1){
+          value =
+            new Uint8Array(
+              await new Response(
+                new Blob([value])
+                  .stream()
+                  .pipeThrough(
+                    new DecompressionStream(
+                      "deflate"
+                    )
+                  )
+              ).arrayBuffer()
+            );
+        }
+      }
+
+      const encoded =
+        new TextDecoder()
+          .decode(value)
+          .trim();
+
+      const data =
+        Uint8Array.from(
+          atob(encoded),
+          char =>
+            char.charCodeAt(0)
+        );
+
+      const raw =
+        new TextDecoder(
+          "utf-8",
+          {fatal:true}
+        ).decode(data);
+
+      const parsed =
+        JSON.parse(raw);
+
+      const root =
+        parsed?.data ||
+        parsed?.character ||
+        parsed;
+
+      const name =
+        root?.name ||
+        root?.char_name ||
+        root?.characterName ||
+        root?.character_name ||
+        parsed?.name;
+
+      if(
+        typeof name !== "string" ||
+        !name.trim()
+      ){
+        throw new Error();
+      }
+
+      return raw;
+    }catch{
+      throw new Error(
+        "PNG 內的角色卡資料無法解析。"
+      );
+    }
+  }
+
+  throw new Error(
+    "這張 PNG 沒有內嵌角色卡資料（ccv3／chara）。請選擇原始角色卡檔案。"
+  );
+}
+
+$("roleCardFile").onchange =
+  async event => {
+    const file =
+      event.target.files?.[0];
+
+    if(!file){
+      return;
+    }
+
+    const readId =
+      ++roleCardReadId;
+
+    const button =
+      $("confirmRoleImport");
+
+    button.disabled = true;
+    pendingRoleCardImage = "";
+    $("roleCardPaste").value = "";
+
+    try{
+      const isPng =
+        file.type === "image/png" ||
+        /\.png$/i.test(file.name);
+
+      const raw =
+        isPng
+          ? await readRoleCardPng(file)
+          : await file.text();
+
+      let image = "";
+
+      if(isPng){
+        image =
+          await new Promise(
+            (resolve,reject) => {
+              const reader =
+                new FileReader();
+
+              reader.onload =
+                () => resolve(
+                  String(
+                    reader.result || ""
+                  )
+                );
+
+              reader.onerror =
+                () => reject(
+                  new Error(
+                    "無法讀取 PNG 圖片。"
+                  )
+                );
+
+              reader.readAsDataURL(
+                file
+              );
+            }
+          );
+      }
+
+      if(
+        readId !==
+        roleCardReadId
+      ){
+        return;
+      }
+
+      $("roleCardPaste").value =
+        raw;
+
+      pendingRoleCardImage =
+        image;
+    }catch(error){
+      if(
+        readId ===
+        roleCardReadId
+      ){
+        showNotice(
+          "無法讀取角色卡",
+          error?.message ||
+          "請檢查檔案後重試。"
+        );
+      }
+    }finally{
+      if(
+        readId ===
+        roleCardReadId
+      ){
+        button.disabled =
+          false;
+      }
+    }
+  };
 
 function findImportedName(raw,parsed=null){
   if(parsed){
@@ -17844,11 +18156,12 @@ $("confirmRoleImport").onclick =
       }
 
 
-      const character =
-        createImportedCharacter(
-          raw,
-          generated
-        );
+      if(pendingRoleCardImage){
+        character.publicImage =
+          pendingRoleCardImage;
+
+        pendingRoleCardImage = "";
+      }
 
 
       $("importRoleOverlay").hidden =
