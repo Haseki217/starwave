@@ -18045,9 +18045,16 @@ async function generateImportedCharacterProfile(
     })
     .filter(Boolean);
 
+  const fallback =
+    readableText(root.creator_notes) ||
+    readableText(root.first_mes) ||
+    readableText(root.mes_example);
+
   return sections.length
     ? sections.join("\n\n")
-    : raw;
+    : fallback
+      ? `【角色設定】\n${fallback}`
+      : "【角色設定】\n這張卡沒有提供可讀的角色設定，請自行補充。";
 }
 
 function createImportedCharacter(
