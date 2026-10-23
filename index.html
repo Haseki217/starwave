@@ -5868,6 +5868,15 @@ body[data-theme="halloween"] .live-stage{
 
         </div>
 
+                <div id="syncConflict" class="note" hidden>
+          這台裝置與雲端的進度不同，請選擇要保留的版本。
+          <div class="sync-buttons">
+            <button id="syncKeepCloud" class="primary">使用雲端進度</button>
+            <button id="syncKeepLocal" class="secondary">上傳本機進度</button>
+            <button id="syncCancelChoice" class="secondary">稍後決定</button>
+          </div>
+        </div>
+
       </div>
 
     </div>
@@ -6591,7 +6600,9 @@ body[data-theme="halloween"] .live-stage{
 
 <div id="toast" class="toast"></div>
 <script src="./utils/indexeddb.js"></script>
-  
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="./sync-config.js"></script>
+<script src="./utils/sync.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 const $$ = selector => [...document.querySelectorAll(selector)];
@@ -7160,6 +7171,7 @@ function scheduleStarwaveSave(){
     async () => {
       try{
         await saveStarwaveState(state);
+        starwaveSync.schedule();
       }catch(error){
         console.error(
           "STARWAVE IndexedDB save failed:",
@@ -24928,70 +24940,9 @@ if(
 }
 
 function renderSyncSettings(){
-  $("syncProviderStatus").textContent =
-    state.sync.provider
-      ? `${state.sync.provider}${state.sync.account ? ` · ${state.sync.account}` : ""}`
-      : "尚未連結";
-
-  $("syncLastTime").textContent =
-    state.sync.lastSync ||
-    "--";
-
-  $("disconnectSync").disabled =
-    !state.sync.provider;
+  starwaveSync.render();
 }
 
-$("connectGoogle").onclick = () => {
-  showNotice(
-    "Google 同步尚未連線",
-    "Google 帳號登入與跨裝置同步目前尚未完成連線。"
-  );
-};
-
-$("connectGithub").onclick = () => {
-  showNotice(
-    "GitHub 同步尚未連線",
-    "GitHub 帳號同步目前尚未完成連線。"
-  );
-};
-
-$("syncNow").onclick = () => {
-  if(!state.sync.provider){
-    showNotice(
-      "尚未連結同步帳號",
-      "請先使用 Google 或 GitHub 連結跨裝置同步。"
-    );
-    return;
-  }
-
-  showNotice(
-    "同步服務尚未開放",
-    "跨裝置同步連線尚未完成。"
-  );
-};
-
-$("disconnectSync").onclick = () => {
-  if(!state.sync.provider){
-    return;
-  }
-
-  showConfirm({
-    title:"中斷跨裝置同步？",
-    message:
-      "中斷後只會解除同步帳號連結，本機現有 STARWAVE 資料不會被刪除。",
-    okText:"中斷連結",
-
-    onConfirm(){
-      state.sync.provider = null;
-      state.sync.account = "";
-      state.sync.lastSync = "";
-
-      renderSyncSettings();
-
-      toast("同步連結已中斷");
-    }
-  });
-};
 
 function createBackup(){
   const backup =
@@ -25698,6 +25649,7 @@ async function init(){
   fullRender();
 
   scheduleStarwaveSave();
+  await starwaveSync.init();
 }
 
 init();
