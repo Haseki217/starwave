@@ -200,6 +200,7 @@ const starwaveSync = (() => {
 
   async function syncNow(manual=false){
     if(!authorized()){
+      renderSyncSettings();
       if(manual) showNotice("尚未連結 Google Drive","請先按「使用 Google 連結」。");
       return;
     }
@@ -234,7 +235,8 @@ const starwaveSync = (() => {
       }
       if(manual) toast("STARWAVE 進度已同步");
     }catch(error){
-      failure = "同步失敗";
+      failure = error.message?.includes("授權已到期")
+        ? "Google 授權已到期，請重新連結" : "同步失敗";
       if(manual) showNotice("同步失敗",error.message || "請檢查網路並重試。");
       else console.error("STARWAVE sync failed:",error);
     }finally{
@@ -281,6 +283,7 @@ const starwaveSync = (() => {
             state.sync.revision = 0;
             state.sync.lastSync = "";
           }
+          state.sync.account = user.account;
           failure = "";
           await syncNow(true);
         }catch(error){
