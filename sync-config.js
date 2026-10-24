@@ -1,5 +1,4 @@
-// 這裡只能放 Supabase Project URL 與 publishable key。
+// Google OAuth 網頁用戶端 ID（不是密碼，可公開在前端）。
 window.STARWAVE_SYNC_CONFIG = {
-  url: "",
-  publishableKey: ""
+  googleClientId: ""
 };
