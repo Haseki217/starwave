@@ -3868,7 +3868,15 @@ body[data-theme="halloween"] .live-stage{
 </div>
 
     </div>
-
+    <div id="liveAwayPrompt" class="note" hidden style="margin-bottom:10px">
+      <strong>直播暫停在這裡</strong>
+      <p id="liveAwayPromptText"></p>
+      <div class="mini-actions">
+        <button id="liveAwayBreak" class="secondary">休息後繼續</button>
+        <button id="liveAwayDisconnect" class="secondary">斷線後繼續</button>
+        <button id="liveAwayEnd" class="danger">結束直播</button>
+      </div>
+    </div>
   <div
   id="liveSettingsDrawer"
   class="live-config"
@@ -6975,7 +6983,8 @@ const state = {
   },
 
   timeSettings:{
-  useRealTime:false
+  useRealTime:false,
+  lastRoleLiveTick:0
 },
 
   
@@ -7061,6 +7070,8 @@ const state = {
 live:{
   started:false,
   turn:0,
+  lastActivityAt:0,
+  awayContext:"",
   sceneId:"brightRoom",
   sceneOpacity:80,
   customScenes:[],
@@ -8303,6 +8314,9 @@ $("realTimeSwitch").onclick = () => {
 
   state.timeSettings.useRealTime =
     !realTimeEnabled();
+  state.timeSettings.lastRoleLiveTick = Date.now();
+  if(state.live.started) state.live.lastActivityAt = Date.now();
+  renderLiveAwayPrompt();
 
   if(
     realTimeEnabled() &&
@@ -9514,6 +9528,9 @@ $("preLiveShopItems")
 renderBackstage();
 
 state.live.started = true;
+state.live.lastActivityAt = Date.now();
+state.live.awayContext = "";
+renderLiveAwayPrompt();
 state.live.turn = 0;
 state.live.date =
   currentRpDate();
@@ -10033,6 +10050,10 @@ ${JSON.stringify(previousStory)}
 【近期聊天室】
 ${JSON.stringify(previousChat)}
 
+【離席後接續】
+${state.live.awayContext || "無"}
+若有離席，觀眾和連動成員可以合理反應；不可替玩家編造離席期間的台詞或行動。
+
 【玩家這一回合輸入】
 ${playerText}
 
@@ -10369,6 +10390,10 @@ async function generatePlayerLiveTurn(
     return;
   }
 
+  if(!reroll && liveAwayPending()){
+    renderLiveAwayPrompt();
+    return;
+  }
   const undoRecord =
     captureLiveUndoSnapshot(text);
 
@@ -10446,7 +10471,8 @@ async function generatePlayerLiveTurn(
       );
 
     /* 玩家本回合 */
-
+    state.live.lastActivityAt = Date.now();
+    state.live.awayContext = "";
     state.live.turn++;
 
     state.live.lastText =
@@ -10899,6 +10925,9 @@ $("endLive").onclick = () => {
       });
 
     state.live.started = false;
+state.live.lastActivityAt = 0;
+state.live.awayContext = "";
+renderLiveAwayPrompt();
 state.player.viewers = 0;
 state.live.turnLogs = [];
 state.live.lastText = "";
@@ -12301,6 +12330,59 @@ function stopAutonomousRoleLive(
   }
 }
 
+
+function advanceRoleLiveRealTime(){
+  if(!realTimeEnabled() || !starwavePersistenceReady) return;
+  const now = Date.now(), interval = 30*60*1000;
+  const last = Number(state.timeSettings.lastRoleLiveTick) || now;
+  const elapsed = Math.min(48,Math.floor(Math.max(0,now-last)/interval));
+  if(!elapsed) return;
+  state.timeSettings.lastRoleLiveTick = now-((now-last)%interval);
+  for(let i=0;i<elapsed;i++) advanceRoleLiveLifecycle();
+  scheduleStarwaveSave();
+}
+
+function liveAwayPending(){
+  return realTimeEnabled() && state.live.started &&
+    Number(state.live.lastActivityAt)>0 &&
+    Date.now()-state.live.lastActivityAt >= 3*60*1000;
+}
+
+function renderLiveAwayPrompt(){
+  const pending = liveAwayPending();
+  $("liveAwayPrompt").hidden = !pending;
+  if(pending){
+    const minutes = Math.floor((Date.now()-state.live.lastActivityAt)/60000);
+    $("liveAwayPromptText").textContent =
+      `距離上次直播互動約 ${minutes} 分鐘。請選擇如何接續，觀眾反應會在下一個回合出現。`;
+  }
+}
+
+function chooseLiveAway(kind){
+  if(!liveAwayPending()) return;
+  const minutes = Math.floor((Date.now()-state.live.lastActivityAt)/60000);
+  state.live.awayContext = kind === "disconnect"
+    ? `玩家約 ${minutes} 分鐘沒有直播互動，選擇視為意外斷線後接續。觀眾可能困惑或離開。`
+    : `玩家約 ${minutes} 分鐘沒有直播互動，選擇視為休息後接續。觀眾可能詢問去向或離開。`;
+  state.live.lastActivityAt = Date.now();
+  renderLiveAwayPrompt();
+  scheduleStarwaveSave();
+}
+$("liveAwayBreak").onclick = () => chooseLiveAway("break");
+$("liveAwayDisconnect").onclick = () => chooseLiveAway("disconnect");
+$("liveAwayEnd").onclick = () => $("endLive").click();
+setInterval(() => {
+  if(document.visibilityState === "visible"){
+    advanceRoleLiveRealTime();
+    renderLiveAwayPrompt();
+  }
+},60000);
+document.addEventListener("visibilitychange",() => {
+  if(document.visibilityState === "visible"){
+    advanceRoleLiveRealTime();
+    renderLiveAwayPrompt();
+  }
+});
 
 function advanceRoleLiveLifecycle(){
 
@@ -22389,7 +22471,7 @@ function countRpTurn(summary){
   state.memorySettings.counter++;
 
   advanceRoleLiveMetrics();
-  advanceRoleLiveLifecycle();
+  if(!realTimeEnabled()) advanceRoleLiveLifecycle();
 
   if(
     state.memorySettings.counter >=
@@ -25667,6 +25749,12 @@ async function init(){
 
   scheduleStarwaveSave();
   await starwaveSync.init();
+  if(realTimeEnabled()){
+    state.timeSettings.lastRoleLiveTick ||= Date.now();
+    if(state.live.started) state.live.lastActivityAt ||= Date.now();
+    advanceRoleLiveRealTime();
+    renderLiveAwayPrompt();
+  }
 }
 
 init();
