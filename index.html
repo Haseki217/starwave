@@ -3726,6 +3726,12 @@ body[data-theme="halloween"] .live-stage{
   </div>
   <div id="homeRoleLiveHistory" class="stream-grid"></div>
 
+  <div class="section-head" style="margin-top:24px">
+    <h2>我的直播回放</h2>
+    <small>全部回放可在 Creator Backstage 查看</small>
+  </div>
+  <div id="homePlayerLiveHistory" class="stream-grid"></div>
+
 </section>
 
 <section class="page" data-view="live">
@@ -4119,7 +4125,7 @@ body[data-theme="halloween"] .live-stage{
     <section class="backstage-panel">
 
       <div class="section-head">
-        <h3>近期直播</h3>
+        <h3>我的直播回放</h3>
       </div>
 
       <div id="playerHistory"></div>
@@ -6227,6 +6233,28 @@ body[data-theme="halloween"] .live-stage{
 
   </div>
 
+</div>
+
+<div id="playerReplayOverlay" class="role-live-overlay" hidden>
+  <div class="role-live-modal">
+    <div class="role-live-head">
+      <div class="role-live-owner">
+        <div id="playerReplayAvatar" class="role-live-avatar"></div>
+        <div>
+          <div id="playerReplayTitle" style="font-weight:700"></div>
+          <small id="playerReplayMeta"></small>
+        </div>
+      </div>
+      <button id="closePlayerReplay" class="secondary">關閉</button>
+    </div>
+    <div id="playerReplayStage" class="role-live-stage">
+      <span class="live-tag">重播</span>
+      <span id="playerReplayPeak" class="viewer-tag"></span>
+      <div id="playerReplayStory" class="role-live-story"></div>
+    </div>
+    <div class="section-head" style="margin-top:12px"><h3>直播聊天室</h3></div>
+    <div id="playerReplayChat" class="role-live-chat"></div>
+  </div>
 </div>
 
 <div
@@ -8818,6 +8846,60 @@ function renderRoleLiveHistoryGrid(container, characters){
   );
 }
 
+function renderPlayerLiveHistoryGrid(){
+  const grid = $("homePlayerLiveHistory");
+  grid.innerHTML = "";
+  const history = (state.player.liveHistory || []).slice(0,6);
+  if(!history.length){
+    grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1">目前還沒有已結束的直播。</div>';
+    return;
+  }
+  history.forEach(item => grid.append(createStreamCard({
+    title:item.title,
+    channel:item.channel || state.player.channel,
+    name:item.name || state.player.name,
+    viewers:item.peak,
+    image:state.player.publicImage,
+    scene:sceneById(item.sceneId)?.image,
+    replay:true,
+    detail:item.time || "",
+    click:() => openPlayerLiveReplay(item)
+  })));
+}
+
+function openPlayerLiveReplay(item){
+  if(!(state.player.liveHistory || []).includes(item)) return;
+  setImageBox($("playerReplayAvatar"),state.player.publicImage,initials(item.name || state.player.name));
+  $("playerReplayTitle").textContent = sanitizePublicText(item.title);
+  $("playerReplayMeta").textContent =
+    `${item.channel || state.player.channel} · ${item.time || ""} · ${Number(item.turns || 0)} 回合`;
+  $("playerReplayPeak").textContent = `Peak ${fmt(item.peak)}`;
+  $("playerReplayStage").style.backgroundImage =
+    `url("${sceneById(item.sceneId)?.image || ""}")`;
+  $("playerReplayStory").textContent = Array.isArray(item.stageEntries)
+    ? (item.stageEntries.length
+        ? item.stageEntries.map(sanitizePublicText).join("\n\n")
+        : "這場直播沒有劇情內容。")
+    : "這是舊版留下的直播摘要，當時沒有保存劇情與聊天室，無法還原。";
+  const chat = $("playerReplayChat");
+  chat.innerHTML = "";
+  (item.chat || []).forEach(line => {
+    const row = document.createElement("div");
+    row.className = "role-live-chat-line" + (line.donation ? " donation" : "");
+    const author = document.createElement("strong");
+    author.textContent = line.author || publicAuthor(line.authorId,line.author);
+    const body = document.createElement("div");
+    body.textContent = sanitizePublicText(line.text || "");
+    row.append(author,body);
+    chat.append(row);
+  });
+  if(!chat.children.length) chat.textContent = "這場直播沒有聊天室紀錄。";
+  $("playerReplayOverlay").hidden = false;
+}
+$("closePlayerReplay").onclick = () => {
+  $("playerReplayOverlay").hidden = true;
+};
+
 function renderExplore(){
   pruneRoleLiveHistory();
   const grid = $("homeStreamGrid");
@@ -8867,6 +8949,7 @@ function renderExplore(){
     });
   }
   renderRoleLiveHistoryGrid($("homeRoleLiveHistory"),state.characters);
+  renderPlayerLiveHistoryGrid();
 }
 
 function liveBlockButton(accountId,displayName){
@@ -10985,9 +11068,17 @@ $("endLive").onclick = () => {
         });
 
       state.player.liveHistory.unshift({
+        id:uid("playerReplay"),
         title:state.player.title,
+        name:state.player.name,
+        channel:state.player.channel,
+        category:state.player.category,
         time:new Date().toLocaleString("zh-TW"),
-        peak:state.player.peak
+        peak:state.player.peak,
+        turns:state.live.turn,
+        sceneId:state.live.sceneId,
+        stageEntries:deepClone(state.live.stageEntries),
+        chat:deepClone(state.live.chat)
       });
 
     state.live.started = false;
@@ -17582,23 +17673,46 @@ async function sendShopGift(roomId, giftText){
 function renderBackstage(){
   syncNumbers();
 
-  $("playerHistory").innerHTML =
-    state.player.liveHistory.length
-      ? state.player.liveHistory
-          .map(item => `
-            <div class="history-row">
-
-              <span>${esc(item.title)}</span>
-
-              <small>
-                ${esc(item.time)}
-                · Peak ${fmt(item.peak)}
-              </small>
-
-            </div>
-          `)
-          .join("")
-      : `<div class="note">目前沒有已完成直播紀錄。</div>`;
+  const historyList = $("playerHistory");
+  historyList.innerHTML = "";
+  if(!state.player.liveHistory.length){
+    historyList.innerHTML = '<div class="note">目前沒有已完成直播紀錄。</div>';
+  }
+  state.player.liveHistory.forEach(item => {
+    const row = document.createElement("div");
+    row.className = "history-row";
+    const info = document.createElement("div");
+    const title = document.createElement("strong");
+    title.textContent = sanitizePublicText(item.title);
+    const meta = document.createElement("small");
+    meta.style.display = "block";
+    meta.textContent = `${item.time || ""} · Peak ${fmt(item.peak)}`;
+    info.append(title,meta);
+    const actions = document.createElement("div");
+    actions.className = "mini-actions";
+    const watch = document.createElement("button");
+    watch.className = "secondary";
+    watch.textContent = "觀看回放";
+    watch.onclick = () => openPlayerLiveReplay(item);
+    const remove = document.createElement("button");
+    remove.className = "danger";
+    remove.textContent = "刪除";
+    remove.onclick = () => showConfirm({
+      title:"永久刪除這場直播回放？",
+      message:`確定刪除「${sanitizePublicText(item.title)}」嗎？這場直播的劇情與聊天室紀錄都會刪除，刪除後無法在 STARWAVE 內復原。`,
+      okText:"永久刪除",
+      onConfirm(){
+        state.player.liveHistory = state.player.liveHistory.filter(entry => entry !== item);
+        $("playerReplayOverlay").hidden = true;
+        renderBackstage();
+        renderExplore();
+        scheduleStarwaveSave();
+      }
+    });
+    actions.append(watch,remove);
+    row.append(info,actions);
+    historyList.append(row);
+  });
 
   $("inventoryList").innerHTML = "";
 
@@ -25383,7 +25497,7 @@ async event => {
   state.player.subscribers = 0;
   state.player.members = 0;
   state.player.memberAccounts = [];
-  state.player.liveHistory = [];
+  /* 已完成的玩家直播回放只由玩家逐場刪除。 */
 
 
   /* 目前直播內容
@@ -25606,6 +25720,7 @@ character.liveOfflineTurns =
 
   $("roleLiveOverlay").hidden =
     true;
+  $("playerReplayOverlay").hidden = true;
 
   $("voiceCallOverlay").hidden =
     true;
@@ -25641,8 +25756,7 @@ character.liveOfflineTurns =
 `這會把目前的遊玩世界清回乾淨狀態。
 
 會清除：
-・直播劇情與聊天室
-・直播歷史
+・目前直播劇情與聊天室
 ・觀看／訂閱／會員進度
 ・論壇與 SNS
 ・WAVELINK 訊息
@@ -25652,6 +25766,7 @@ character.liveOfflineTurns =
 ・測試中的封鎖紀錄
 
 會保留：
+・已結束的玩家直播回放（需逐場自行刪除）
 ・API Profile 與 API Key
 ・主播資料與圖片
 ・角色卡與角色圖片
