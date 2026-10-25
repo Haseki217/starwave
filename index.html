@@ -9984,7 +9984,7 @@ function isVeryCloseCreatorRelation(summary){
 
 function liveCreatorVisitors(hostId,title,collabIds=[]){
   const special = isSpecialLiveTitle(title);
-  const callIn = /凸待|來電|call.in/i.test(String(title || ""));
+  const callIn = /凸待|來電|上麥|開放來賓|等人(?:一起)?唱歌|等人合唱|等.*來合唱|邀.*(?:唱歌|合唱)|一起合唱|call.?in/i.test(String(title || ""));
   const candidates = state.characters
     .filter(character => character.id !== hostId && !collabIds.includes(character.id))
     .map(character => {
@@ -11708,7 +11708,7 @@ stageText 中角色說出的台詞與語音，
 
 【短暫來電】
 ${JSON.stringify(creators.filter(item => visitors.voiceGuestIds.includes(item.id)))}
-只有直播適合凸待，且名單非空時，才可選一名角色在 guestVisit 裡短暫加入語音聊一兩句。
+只有直播標題明確開放凸待、來電、上麥或邀人合唱，而且上面名單非空時，才可選一名角色在 guestVisit 裡短暫加入語音聊一兩句。一般唱歌、純聊天、遊戲及其他普通直播只能有聊天室留言，guestVisit 必須為 null。
 這是短暫串門，不是正式雙人連動，不新增另一個直播視角；不要把來電寫成 WAVELINK 私訊。
 guestVisit 不出現時填 null。stageText 不要重複 guestVisit 的逐字內容。
 短暫來電的角色這回合不要再以聊天室留言出現。
@@ -12511,17 +12511,17 @@ async function generatePeerLifeAi(a,b){
   const plan = peerPlanFor(a.id,b.id);
   peerLifeGenerating = true;
   try{
-    const prompt = `你在模擬兩名創作者各自的私人生活與私人 WAVELINK 對話。玩家沒有加入這段對話。
+    const prompt = `你在模擬兩名創作者各自的私人生活與往來。玩家沒有參與，也不會看到他們如何私下決定連動。
 【角色 A】${JSON.stringify({id:a.id,public:publicCharacterContext(a),card:a.card})}
 【角色 B】${JSON.stringify({id:b.id,public:publicCharacterContext(b),card:b.card})}
 兩張角色卡分別是各自的內在設定；角色只能知道自己卡上的秘密，以及對方曾在對話中說出的內容。
 【各自對對方的關係認知】
 ${JSON.stringify({[a.id]:peerRelationshipFor(a.id,b.id),[b.id]:peerRelationshipFor(b.id,a.id)})}
-【兩人近期私人 WAVELINK】
+【兩人近期私下互動】
 ${JSON.stringify(previous.slice(-10))}
 【兩人共同經歷過的事件】
 ${JSON.stringify(life.events.filter(event => event.characterIds?.includes(a.id) && event.characterIds?.includes(b.id)).slice(0,8))}
-【現有連動邀約】
+【兩人先前的連動構想】
 ${JSON.stringify(plan)}
 【最近公開直播】
 ${JSON.stringify([a,b].map(character => ({
@@ -12529,16 +12529,16 @@ ${JSON.stringify([a,b].map(character => ({
   title:character.liveHistory?.[0]?.title || "",
   recentStory:(character.liveHistory?.[0]?.liveStory || []).slice(-2).map(x=>x.text)
 })))}
-讓角色自然進行一次有前後文的私下往來；可以是日常聊天、分享自己的生活、合作、摩擦、和解或邀約，不必每次都連動。
-不得替玩家說話、行動，不得讓私人對話直接成為公開社群內容。
+讓角色自然進行一次有前後文的私下往來；可以是日常聊天、分享自己的生活、合作、摩擦或和解，不必每次都連動。messages 是簡短的私下互動片段，不限定為 WAVELINK 訊息。
+不得替玩家說話、行動，不得讓私人互動直接成為公開社群內容。
 relationshipUpdates 只有相處方式、信任、敵意或合作真的變化時才輸出；可以變好、變壞或不變。summary 是各角色對對方的完整目前認知，保留重要既有事實，不能寫成數值加成。
-plan 只有這次真的談到連動邀約時才輸出。acceptedIds 僅能包含在訊息裡明確同意的參與者；未全員同意維持 pending，拒絕則 declined。普通聊天、遊戲、唱歌不需要 SHOP 道具。
+plan 只有兩名角色自然談成或正在考慮連動時才輸出；兩人都願意可在同一次背景事件中直接 ready，無須逐一走 WAVELINK 邀約流程，也不會要求玩家參與或得知。acceptedIds 只能包含確實願意參加的角色；若尚未談妥則 pending，拒絕則 declined。普通聊天、遊戲、唱歌不需要 SHOP 道具。
 輸出有效 JSON：
-{"messages":[{"authorId":"${a.id}","text":"私人訊息"}],
+{"messages":[{"authorId":"${a.id}","text":"私下互動片段"}],
 "relationshipUpdates":[{"characterId":"${a.id}","summary":"目前關係摘要"}],
 "plan":null,
 "eventSummary":"私人事件的一句摘要"}
-plan 格式為 {"status":"pending 或 ready 或 declined","initiatorId":"角色 id","acceptedIds":["角色 id"],"topic":"連動內容"}。無邀約請填 null。`;
+plan 格式為 {"status":"pending 或 ready 或 declined","initiatorId":"角色 id","acceptedIds":["角色 id"],"topic":"連動內容"}。沒有連動安排請填 null。`;
     const result = await generateWithApi({
       profileIndex:state.api.active,
       prompt,
@@ -12555,7 +12555,7 @@ plan 格式為 {"status":"pending 或 ready 或 declined","initiatorId":"角色 
         text:String(item?.text || "").trim().slice(0,1000)
       }))
       .filter(item => allowed.has(item.authorId) && item.text);
-    if(!messages.length) return false;
+    if(!messages.length && !data.plan) return false;
     life.conversations[key] = [...previous,...messages].slice(-24);
     (Array.isArray(data.relationshipUpdates) ? data.relationshipUpdates : [])
       .forEach(update => {
@@ -12574,8 +12574,7 @@ plan 格式為 {"status":"pending 或 ready 或 declined","initiatorId":"角色 
         const acceptedIds = [...new Set([
           ...priorAccepted,
           ...(Array.isArray(change.acceptedIds) ? change.acceptedIds : [])
-        ])].filter(id => allowed.has(id) &&
-          (priorAccepted.includes(id) || messages.some(m => m.authorId === id)));
+        ])].filter(id => allowed.has(id));
         const next = {
           key,
           participantIds:[a.id,b.id],
@@ -12593,7 +12592,7 @@ plan 格式為 {"status":"pending 或 ready 或 declined","initiatorId":"角色 
     life.events.unshift({
       id:uid("peer"),
       characterIds:[a.id,b.id],
-      summary:String(data.eventSummary || messages.at(-1).text).trim().slice(0,400),
+      summary:String(data.eventSummary || messages.at(-1)?.text || `兩人商量了${String(data.plan?.topic || "近期安排")}`).trim().slice(0,400),
       at:Date.now()
     });
     life.events = life.events.slice(0,80);
@@ -13029,7 +13028,7 @@ function advanceRoleLiveLifecycle(tickAt=Date.now()){
         );
 
 
-    /* 角色先在自己的私人 WAVELINK 說好，才進行雙視角連動。 */
+    /* 角色在背景自行談妥連動，玩家只看見開播後的雙視角。 */
     const readyPlan = peerLifeState().plans.find(plan =>
       plan.status === "ready" &&
       maxLive - liveCount >= 2 &&
