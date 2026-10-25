@@ -167,6 +167,7 @@ const starwaveSync = (() => {
           : "";
       });
     }
+    invalidateRpGenerations();
     mergeSavedState(state,remoteState);
     if(state.currentWavelink && !getRoom(state.currentWavelink)){
       state.currentWavelink = state.wavelinkRooms[0]?.id || null;
