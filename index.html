@@ -11127,7 +11127,9 @@ async function openRoleLiveReplay(characterId,recordId){
       liveTurn:0,
       lastViewerAction:"",
       viewers:0,
-      peak:record.peak || 0
+      peak:record.peak || 0,
+      liveReplayElapsedMinutes:Math.max(0,Math.floor((record.endedAt-record.startedAt)/120000)),
+      liveReplayElapsedTurns:Math.max(0,Math.floor((record.endedRpTurn-record.startedRpTurn)/2))
     };
     if(await generateRoleLiveNext(playback,true)){
       record.liveStory = deepClone(playback.liveStory);
@@ -11145,6 +11147,15 @@ function buildRoleLiveAiPrompt(
   character,
   first=false
 ){
+  const elapsedMinutes = Number.isFinite(character.liveReplayElapsedMinutes)
+    ? character.liveReplayElapsedMinutes
+    : Math.max(0,Math.floor((Date.now() - Number(character.liveStartedAt || Date.now())) / 60000));
+  const elapsedTurns = Number.isFinite(character.liveReplayElapsedTurns)
+    ? character.liveReplayElapsedTurns
+    : Math.max(0,Number(state.timeSettings.rpTurnCount || 0) - Number(character.liveStartedTurn || 0));
+  const elapsedLabel = realTimeEnabled()
+    ? `約 ${elapsedMinutes} 分鐘`
+    : `約 ${elapsedTurns} 個 RP 回合`;
 
   const role = {
     ...publicCharacterContext(
@@ -11408,7 +11419,10 @@ Lorebook 是公開背景與世界設定資料，
 標題：${role.liveTitle}
 目前觀看：${character.viewers || 0}
 目前回合：${character.liveTurn || 0}
-是否為首次產生直播內容：${first ? "是" : "否"}
+已開播：${elapsedLabel}
+是否為本場首次儲存內容：${first ? "是" : "否"}
+
+若本場已開播一段時間，即使這是首次儲存內容，也要直接從直播當下的中途場景開始。不要重新描寫開播、開場招呼或假設玩家已看過前半場；不必補寫先前整段直播。可以用一兩句自然語境讓觀眾聽懂當下話題，不得替玩家編造先前的行動或發言。
 
 【玩家的公開創作者資料】
 ${JSON.stringify(player)}
@@ -12312,6 +12326,7 @@ function startAutonomousRoleLive(
   character.live =
     true;
   character.liveStartedAt = Number(options.startedAt) || Date.now();
+  character.liveStartedTurn = Number(state.timeSettings.rpTurnCount || 0);
   character.liveHistory ||= [];
 
   character.viewers =
@@ -12395,6 +12410,7 @@ function stopAutonomousRoleLive(
     id:uid("roleReplay"),
     title:character.liveTitle || "正在直播",
     startedAt:character.liveStartedAt || endedAt,
+    startedRpTurn:Number(character.liveStartedTurn || 0),
     endedAt,
     endedRpTurn:Number(state.timeSettings.rpTurnCount || 0),
     peak:Number(character.peak || 0),
@@ -12404,6 +12420,7 @@ function stopAutonomousRoleLive(
     liveChat:deepClone(character.liveChat || [])
   });
   character.liveStartedAt = 0;
+  character.liveStartedTurn = 0;
   character.live =
     false;
 
@@ -25523,6 +25540,7 @@ character.liveOfflineTurns =
       [];
     character.liveHistory = [];
     character.liveStartedAt = 0;
+    character.liveStartedTurn = 0;
 
     character.liveChat =
       [];
