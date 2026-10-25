@@ -25497,7 +25497,7 @@ async event => {
   state.player.subscribers = 0;
   state.player.members = 0;
   state.player.memberAccounts = [];
-  /* 已完成的玩家直播回放只由玩家逐場刪除。 */
+  state.player.liveHistory = [];
 
 
   /* 目前直播內容
@@ -25757,6 +25757,7 @@ character.liveOfflineTurns =
 
 會清除：
 ・目前直播劇情與聊天室
+・玩家與角色的直播歷史
 ・觀看／訂閱／會員進度
 ・論壇與 SNS
 ・WAVELINK 訊息
@@ -25766,7 +25767,6 @@ character.liveOfflineTurns =
 ・測試中的封鎖紀錄
 
 會保留：
-・已結束的玩家直播回放（需逐場自行刪除）
 ・API Profile 與 API Key
 ・主播資料與圖片
 ・角色卡與角色圖片
