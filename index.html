@@ -3721,16 +3721,10 @@ body[data-theme="halloween"] .live-stage{
   <div id="homeStreamGrid" class="stream-grid"></div>
 
   <div class="section-head" style="margin-top:24px">
-    <h2>近期角色直播</h2>
-    <small>直播回放</small>
+    <h2>歷史直播</h2>
+    <small>LIVE ARCHIVE</small>
   </div>
-  <div id="homeRoleLiveHistory" class="stream-grid"></div>
-
-  <div class="section-head" style="margin-top:24px">
-    <h2>我的直播回放</h2>
-    <small>全部回放可在 Creator Backstage 查看</small>
-  </div>
-  <div id="homePlayerLiveHistory" class="stream-grid"></div>
+  <div id="homeLiveHistory" class="stream-grid"></div>
 
 </section>
 
@@ -8855,25 +8849,40 @@ function renderRoleLiveHistoryGrid(container, characters){
   );
 }
 
-function renderPlayerLiveHistoryGrid(){
-  const grid = $("homePlayerLiveHistory");
+function renderExploreHistory(){
+  const grid = $("homeLiveHistory");
   grid.innerHTML = "";
-  const history = (state.player.liveHistory || []).slice(0,6);
-  if(!history.length){
-    grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1">目前還沒有已結束的直播。</div>';
+  const records = [
+    ...state.characters.flatMap(character =>
+      (character.liveHistory || []).map(record => ({
+        endedAt:Number(record.endedAt || 0),
+        card:() => createStreamCard({
+          title:record.title, channel:character.channel,
+          name:publicName(character), viewers:record.peak,
+          image:character.publicImage,
+          scene:sceneById(record.sceneId)?.image || sceneForCharacter(character)?.image,
+          replay:true, detail:roleLiveHistoryLabel(record),
+          click:() => openRoleLiveReplay(character.id,record.id)
+        })
+      }))
+    ),
+    ...(state.player.liveHistory || []).map(item => ({
+      endedAt:Number(item.endedAt || Date.parse(item.time) || 0),
+      card:() => createStreamCard({
+        title:item.title, channel:item.channel || state.player.channel,
+        name:item.name || state.player.name, viewers:item.peak,
+        image:state.player.publicImage,
+        scene:sceneById(item.sceneId)?.image,
+        replay:true, detail:item.time || "",
+        click:() => openPlayerLiveReplay(item)
+      })
+    }))
+  ].sort((a,b) => b.endedAt - a.endedAt);
+  if(!records.length){
+    grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1">目前沒有歷史直播。</div>';
     return;
   }
-  history.forEach(item => grid.append(createStreamCard({
-    title:item.title,
-    channel:item.channel || state.player.channel,
-    name:item.name || state.player.name,
-    viewers:item.peak,
-    image:state.player.publicImage,
-    scene:sceneById(item.sceneId)?.image,
-    replay:true,
-    detail:item.time || "",
-    click:() => openPlayerLiveReplay(item)
-  })));
+  records.forEach(item => grid.append(item.card()));
 }
 
 function openPlayerLiveReplay(item){
@@ -8957,8 +8966,7 @@ function renderExplore(){
       grid.append(createStreamCard(row));
     });
   }
-  renderRoleLiveHistoryGrid($("homeRoleLiveHistory"),state.characters);
-  renderPlayerLiveHistoryGrid();
+  renderExploreHistory();
 }
 
 function liveBlockButton(accountId,displayName){
@@ -11142,6 +11150,7 @@ $("endLive").onclick = () => {
         channel:state.player.channel,
         category:state.player.category,
         time:new Date().toLocaleString("zh-TW"),
+        endedAt:Date.now(),
         peak:state.player.peak,
         turns:state.live.turn,
         sceneId:state.live.sceneId,
