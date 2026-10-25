@@ -6649,7 +6649,7 @@ body[data-theme="halloween"] .live-stage{
 <script src="./utils/indexeddb.js"></script>
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="./sync-config.js?v=google-drive-1"></script>
-<script src="./utils/sync.js?v=google-drive-1"></script>
+<script src="./utils/sync.js?v=google-drive-2"></script>
 <script>
 const $ = id => document.getElementById(id);
 const $$ = selector => [...document.querySelectorAll(selector)];
@@ -7033,6 +7033,14 @@ const state = {
   },
 
   fanAccounts:[],
+  peerLife:{
+    relationships:{},
+    conversations:{},
+    plans:[],
+    events:[],
+    lastGeneratedAt:0,
+    lastGeneratedTurn:0
+  },
 
   sync:{
     provider:null,
@@ -9963,8 +9971,52 @@ function activePlayerLiveShopContext(){
 }
 
 
+function isSpecialLiveTitle(title){
+  return /生日|生誕|週年|周年|紀念直播|出道紀念|birthday|anniversary/i
+    .test(String(title || ""));
+}
+
+function isVeryCloseCreatorRelation(summary){
+  const text = String(summary || "");
+  if(/疏遠|不信任|討厭|敵對|厭惡|感情破裂/.test(text)) return false;
+  return /摯友|知己|戀人|伴侶|交往中|非常親近|十分親近|非常要好|很要好|最好的朋友|深厚的友情/.test(text);
+}
+
+function liveCreatorVisitors(hostId,title,collabIds=[],voiceContext=""){
+  const special = isSpecialLiveTitle(title);
+  const callInTitle = /凸待|來電|上麥|開放來賓|等人(?:一起)?唱歌|等人合唱|等.*來合唱|邀.*(?:唱歌|合唱)|一起合唱|call.?in/i;
+  const callIn = callInTitle.test(String(title || "")) ||
+    /(?:開始|開放|正在|進行|等候).{0,24}(?:凸待|來電|上麥|合唱|一起唱歌)|(?:等人|邀請).{0,12}(?:唱歌|合唱)/i.test(String(voiceContext || ""));
+  const candidates = state.characters
+    .filter(character => character.id !== hostId && !collabIds.includes(character.id))
+    .map(character => {
+      const relation = hostId === "player"
+        ? character.relationship
+        : peerRelationshipFor(character.id,hostId) || peerRelationshipFor(hostId,character.id);
+      return {character,close:isVeryCloseCreatorRelation(relation)};
+    });
+  const none = {commenterIds:[],voiceGuestIds:[]};
+  if(!candidates.length) return none;
+  const chance = special ? .55 : candidates.some(item => item.close) ? .30 : callIn ? .22 : .12;
+  if(Math.random() >= chance) return none;
+  const count = special
+    ? 1 + (Math.random() < .55 ? 1 : 0) + (Math.random() < .25 ? 1 : 0)
+    : 1 + (Math.random() < .15 ? 1 : 0);
+  const available = candidates
+    .map(item => ({...item,priority:Math.random() * (item.close ? 3 : 1)}))
+    .sort((a,b) => b.priority - a.priority)
+    .slice(0,count)
+    .map(item => item.character);
+  return {
+    commenterIds:available.map(character => character.id),
+    voiceGuestIds:hostId === "player" || !callIn ? [] :
+      available.filter(character => !character.live).slice(0,1).map(character => character.id)
+  };
+}
+
 function buildPlayerLiveAiPrompt(
-  playerText
+  playerText,
+  visitors={commenterIds:[]}
 ){
   const previousStory =
     state.live.stageEntries
@@ -10118,11 +10170,15 @@ ${JSON.stringify(activeShopItems)}
 
 只能根據公開資料與公開直播內容生成。
 
-【可在聊天室出現的 STARWAVE 創作者】
+【其他創作者公開資料】
 ${JSON.stringify(creators)}
 
-如果留言 kind 為 "creator"：
-authorId 必須完全使用上面清單中存在的角色 id。
+【本回合可能來聊天室打招呼的創作者】
+${JSON.stringify(creators.filter(item => visitors.commenterIds.includes(item.id)))}
+
+一般直播可以只有粉絲聊天，創作者不必每次出現。
+如有創作者留言，kind 使用 "creator"，authorId 只能從本回合可能來打招呼的清單選擇；每位最多一則。
+連動成員正在語音中，不應另以聊天室留言冒充進場。
 不得自己創造角色 id。
 
 【已出現過的一般觀眾帳號】
@@ -10543,6 +10599,7 @@ async function generatePlayerLiveTurn(
     renderLiveAwayPrompt();
     return;
   }
+  const visitors = liveCreatorVisitors("player",state.player.title,state.live.collabIds);
   const undoRecord =
     captureLiveUndoSnapshot(text);
 
@@ -10564,7 +10621,8 @@ async function generatePlayerLiveTurn(
 
         prompt:
           buildPlayerLiveAiPrompt(
-            text
+            text,
+            visitors
           ),
 
         systemInstruction:
@@ -10671,6 +10729,7 @@ async function generatePlayerLiveTurn(
         ? data.comments
         : [];
 
+    const visitingCreatorIds = new Set();
     comments.forEach(comment => {
 
       const commentText =
@@ -10695,10 +10754,12 @@ async function generatePlayerLiveTurn(
             )
           );
 
-        if(!character){
+        if(!character || !visitors.commenterIds.includes(character.id) ||
+          visitingCreatorIds.has(character.id)){
           return;
         }
 
+        visitingCreatorIds.add(character.id);
         state.live.chat.push({
           id:uid("chat"),
           authorId:character.id,
@@ -11067,6 +11128,9 @@ $("endLive").onclick = () => {
             );
         });
 
+      rememberPeerCollab(state.live.collabIds,
+        `和其他創作者一起參與玩家直播「${state.player.title || "連動直播"}」。`);
+
       state.player.liveHistory.unshift({
         id:uid("playerReplay"),
         title:state.player.title,
@@ -11236,7 +11300,8 @@ async function openRoleLiveReplay(characterId,recordId){
 
 function buildRoleLiveAiPrompt(
   character,
-  first=false
+  first=false,
+  visitors={commenterIds:[],voiceGuestIds:[]}
 ){
   const elapsedMinutes = Number.isFinite(character.liveReplayElapsedMinutes)
     ? character.liveReplayElapsedMinutes
@@ -11520,11 +11585,13 @@ ${JSON.stringify(player)}
 
 玩家若出現在聊天室，只能知道以上公開資訊。
 
-【其他可公開出現在聊天室的創作者】
+【其他創作者公開資料】
 ${JSON.stringify(creators)}
 
-如果留言 kind 為 "creator"：
-authorId 必須完全使用上面清單存在的 id。
+【本回合可能來聊天室打招呼的創作者】
+${JSON.stringify(creators.filter(item => visitors.commenterIds.includes(item.id)))}
+創作者留言可有可無；如有，authorId 僅能使用本回合名單中的 id，每位最多一則。
+已有語音連線的連動成員不用另外以聊天室留言冒充進場。
 不得自行創造角色 id。
 
 【近期直播內容】
@@ -11560,6 +11627,11 @@ ${JSON.stringify(playerLiveShopItems)}
 - 不得稱為系統加成或 SHOP 道具。
 - 不得因此直接改變角色視角的 viewerDelta。
 - 不得因連動企劃用品改變角色的連動意願或同意狀態。
+
+【本場主播對連動成員的私人關係認知】
+${JSON.stringify(Object.fromEntries(collabIds.filter(id => id !== "player")
+  .map(id => [id,peerRelationshipFor(character.id,id)]).filter(([,summary]) => summary)))}
+這只用來決定自然互動與語氣，不得把私下往來或關係摘要直接公開。
 
 【連動房間近期私下訊息】
 ${JSON.stringify(privateCoordination)}
@@ -11636,6 +11708,14 @@ stageText 中角色說出的台詞與語音，
 如果這是首次內容，而且目前觀看為 0，
 可將 viewerDelta 視為合理的初始觀看人數並給予正數。
 
+【短暫來電】
+${JSON.stringify(creators.filter(item => visitors.voiceGuestIds.includes(item.id)))}
+只有直播標題或正在進行的內容明確開放凸待、來電、上麥或邀人合唱，而且上面名單非空時，才可選一名角色在 guestVisit 裡短暫加入語音聊一兩句。一般唱歌、純聊天、遊戲及其他普通直播只能有聊天室留言，guestVisit 必須為 null。
+這是短暫串門，不是正式雙人連動，不新增另一個直播視角；不要把來電寫成 WAVELINK 私訊。
+guestVisit 不出現時填 null。stageText 不要重複 guestVisit 的逐字內容。
+短暫來電的角色這回合不要再以聊天室留言出現。
+任何時候都不可替玩家補台詞或行動。
+
 【comments】
 產生 1～6 則自然直播聊天室留言。
 
@@ -11647,7 +11727,7 @@ kind 只能是：
 fan 的 authorId 填空字串。
 
 creator 的 authorId
-只能使用上面的其他創作者 id。
+只能使用本回合可能來聊天室打招呼的創作者 id。
 
 【已出現過的一般觀眾帳號】
 ${JSON.stringify(knownFans)}
@@ -11686,6 +11766,7 @@ amount 必須為 0。
 {
   "stageText": "直播敘事",
   "viewerDelta": 0,
+  "guestVisit": null,
   "comments": [
     {
       "kind": "fan",
@@ -11742,6 +11823,13 @@ async function generateRoleLiveNext(
   }
 
 
+  const voiceContext = [
+    character.content || "",
+    ...(character.liveStory || []).slice(-2)
+      .map(segment => /(?:開始|開放|正在|進行|等候).{0,24}(?:凸待|來電|上麥|合唱|一起唱歌)/.test(segment.text || "") ? segment.text : "")
+  ].join(" ");
+  const visitors = liveCreatorVisitors(character.id,character.liveTitle,
+    character.liveCollabIds || [],voiceContext);
   const button =
     $("refreshRoleLive");
 
@@ -11772,7 +11860,8 @@ async function generateRoleLiveNext(
         prompt:
           buildRoleLiveAiPrompt(
             character,
-            first
+            first,
+            visitors
           ),
 
         systemInstruction:
@@ -11836,13 +11925,28 @@ async function generateRoleLiveNext(
       ) + 1;
 
 
-    character.liveStory.push({
-      id:
-        uid("segment"),
+    const guest = getCharacter(String(data?.guestVisit?.authorId || ""));
+    const guestText = sanitizePublicText(String(data?.guestVisit?.text || "").trim()).slice(0,400);
+    const hasGuest = guest && guestText && visitors.voiceGuestIds.includes(guest.id) &&
+      !guest.live && !(character.liveCollabIds || []).includes(guest.id);
+    const storyText = hasGuest
+      ? `${stageText}\n🎙 ${publicName(guest)}：${guestText}`
+      : stageText;
 
-      text:
-        stageText
+    character.liveStory.push({
+      id:uid("segment"),
+      text:storyText
     });
+    if(hasGuest){
+      const life = peerLifeState();
+      life.events.unshift({
+        id:uid("peer"),
+        characterIds:[character.id,guest.id],
+        summary:`${publicName(guest)} 曾在 ${publicName(character)} 的直播短暫來電。`,
+        at:Date.now()
+      });
+      life.events = life.events.slice(0,80);
+    }
 
 
     character.liveStory =
@@ -11879,6 +11983,7 @@ async function generateRoleLiveNext(
         : [];
 
 
+    const visitingCreatorIds = new Set();
     comments.forEach(comment => {
 
       const commentText =
@@ -11907,15 +12012,16 @@ async function generateRoleLiveNext(
           );
 
 
-        if(
-          !creator ||
-          creator.id ===
-            character.id
-        ){
+        if(!creator || creator.id === character.id ||
+          !visitors.commenterIds.includes(creator.id) ||
+          (hasGuest && creator.id === guest.id) ||
+          visitingCreatorIds.has(creator.id)){
+
           return;
         }
 
 
+        visitingCreatorIds.add(creator.id);
         character.liveChat.push({
 
           id:
@@ -12374,6 +12480,186 @@ $("closeRoleLive").onclick = () => {
   currentRoleLiveReplay = null;
 };
 
+let peerLifeGenerating = false;
+let peerLifeEpoch = 0;
+
+function peerLifeState(){
+  state.peerLife ||= {};
+  state.peerLife.relationships ||= {};
+  state.peerLife.conversations ||= {};
+  state.peerLife.plans ||= [];
+  state.peerLife.events ||= [];
+  return state.peerLife;
+}
+
+function peerPairKey(a,b){
+  return [a,b].sort().join("|");
+}
+
+function peerRelationshipFor(a,b){
+  const relation = peerLifeState().relationships[peerPairKey(a,b)];
+  return String(relation?.byId?.[a] || "");
+}
+
+function peerPlanFor(a,b){
+  return peerLifeState().plans.find(plan =>
+    plan.key === peerPairKey(a,b)
+  ) || null;
+}
+
+async function generatePeerLifeAi(a,b){
+  if(peerLifeGenerating || !a || !b || a.id === b.id) return false;
+  const profile = state.api.profiles[state.api.active];
+  if(!String(profile?.apiKey || "").trim() ||
+     !String(profile?.model || "").trim()) return false;
+  const life = peerLifeState();
+  const key = peerPairKey(a.id,b.id);
+  const epoch = peerLifeEpoch;
+  const previous = life.conversations[key] || [];
+  const plan = peerPlanFor(a.id,b.id);
+  peerLifeGenerating = true;
+  try{
+    const prompt = `你在模擬兩名創作者各自的私人生活與往來。玩家沒有參與，也不會看到他們如何私下決定連動。
+【角色 A】${JSON.stringify({id:a.id,public:publicCharacterContext(a),card:a.card})}
+【角色 B】${JSON.stringify({id:b.id,public:publicCharacterContext(b),card:b.card})}
+兩張角色卡分別是各自的內在設定；角色只能知道自己卡上的秘密，以及對方曾在對話中說出的內容。
+【各自對對方的關係認知】
+${JSON.stringify({[a.id]:peerRelationshipFor(a.id,b.id),[b.id]:peerRelationshipFor(b.id,a.id)})}
+【兩人近期私下互動】
+${JSON.stringify(previous.slice(-10))}
+【兩人共同經歷過的事件】
+${JSON.stringify(life.events.filter(event => event.characterIds?.includes(a.id) && event.characterIds?.includes(b.id)).slice(0,8))}
+【兩人先前的連動構想】
+${JSON.stringify(plan)}
+【最近公開直播】
+${JSON.stringify([a,b].map(character => ({
+  id:character.id,
+  title:character.liveHistory?.[0]?.title || "",
+  recentStory:(character.liveHistory?.[0]?.liveStory || []).slice(-2).map(x=>x.text)
+})))}
+讓角色自然進行一次有前後文的私下往來；可以是日常聊天、分享自己的生活、合作、摩擦或和解，不必每次都連動。messages 是簡短的私下互動片段，不限定為 WAVELINK 訊息。
+不得替玩家說話、行動，不得讓私人互動直接成為公開社群內容。
+relationshipUpdates 只有相處方式、信任、敵意或合作真的變化時才輸出；可以變好、變壞或不變。summary 是各角色對對方的完整目前認知，保留重要既有事實，不能寫成數值加成。
+plan 只有兩名角色自然談成或正在考慮連動時才輸出；兩人都願意可在同一次背景事件中直接 ready，無須逐一走 WAVELINK 邀約流程，也不會要求玩家參與或得知。acceptedIds 只能包含確實願意參加的角色；若尚未談妥則 pending，拒絕則 declined。普通聊天、遊戲、唱歌不需要 SHOP 道具。
+輸出有效 JSON：
+{"messages":[{"authorId":"${a.id}","text":"私下互動片段"}],
+"relationshipUpdates":[{"characterId":"${a.id}","summary":"目前關係摘要"}],
+"plan":null,
+"eventSummary":"私人事件的一句摘要"}
+plan 格式為 {"status":"pending 或 ready 或 declined","initiatorId":"角色 id","acceptedIds":["角色 id"],"topic":"連動內容"}。沒有連動安排請填 null。`;
+    const result = await generateWithApi({
+      profileIndex:state.api.active,
+      prompt,
+      systemInstruction:"你是 STARWAVE 的私人角色互動引擎。嚴守兩名角色與玩家的資訊差，只輸出指定 JSON。",
+      json:true
+    });
+    if(epoch !== peerLifeEpoch || !getCharacter(a.id) || !getCharacter(b.id)) return false;
+    const data = parseStarwaveLlmJson(result.text);
+    const allowed = new Set([a.id,b.id]);
+    const messages = (Array.isArray(data.messages) ? data.messages : [])
+      .slice(0,6)
+      .map(item => ({
+        authorId:String(item?.authorId || ""),
+        text:String(item?.text || "").trim().slice(0,1000)
+      }))
+      .filter(item => allowed.has(item.authorId) && item.text);
+    if(!messages.length && !data.plan) return false;
+    life.conversations[key] = [...previous,...messages].slice(-24);
+    (Array.isArray(data.relationshipUpdates) ? data.relationshipUpdates : [])
+      .forEach(update => {
+        const id = String(update?.characterId || "");
+        const summary = String(update?.summary || "").trim().slice(0,600);
+        if(!allowed.has(id) || !summary) return;
+        const relation = life.relationships[key] ||= {byId:{}};
+        relation.byId[id] = summary;
+        relation.updatedAt = Date.now();
+      });
+    const change = data.plan;
+    if(change && typeof change === "object"){
+      const status = String(change.status || "");
+      if(["pending","ready","declined"].includes(status)){
+        const priorAccepted = plan?.status === "pending" ? plan.acceptedIds || [] : [];
+        const acceptedIds = [...new Set([
+          ...priorAccepted,
+          ...(Array.isArray(change.acceptedIds) ? change.acceptedIds : [])
+        ])].filter(id => allowed.has(id));
+        const next = {
+          key,
+          participantIds:[a.id,b.id],
+          initiatorId:allowed.has(change.initiatorId) ? change.initiatorId : a.id,
+          acceptedIds:status === "declined" ? [] : acceptedIds,
+          status:status === "declined" ? "declined" :
+            [a.id,b.id].every(id => acceptedIds.includes(id)) ? "ready" : "pending",
+          topic:String(change.topic || plan?.topic || "聊天連動").trim().slice(0,100),
+          updatedAt:Date.now()
+        };
+        life.plans = life.plans.filter(item => item.key !== key);
+        life.plans.push(next);
+      }
+    }
+    life.events.unshift({
+      id:uid("peer"),
+      characterIds:[a.id,b.id],
+      summary:String(data.eventSummary || messages.at(-1)?.text || `兩人商量了${String(data.plan?.topic || "近期安排")}`).trim().slice(0,400),
+      at:Date.now()
+    });
+    life.events = life.events.slice(0,80);
+    scheduleStarwaveSave();
+    return true;
+  }catch(error){
+    console.error("STARWAVE peer life generation failed:",error);
+    return false;
+  }finally{
+    peerLifeGenerating = false;
+  }
+}
+
+function rememberPeerCollab(ids,summary){
+  const members = [...new Set(ids)].filter(id => getCharacter(id));
+  if(members.length < 2) return;
+  const life = peerLifeState();
+  for(let i=0;i<members.length;i++){
+    for(let j=i+1;j<members.length;j++){
+      life.events.unshift({
+        id:uid("peer"),
+        characterIds:[members[i],members[j]],
+        summary:String(summary || "曾一起連動直播").slice(0,400),
+        at:Date.now()
+      });
+    }
+  }
+  life.events = life.events.slice(0,80);
+  maybeAdvancePeerLife(members.slice(0,2));
+  scheduleStarwaveSave();
+}
+
+function maybeAdvancePeerLife(priorityIds=[]){
+  if(peerLifeGenerating || state.characters.length < 2) return;
+  const profile = state.api.profiles[state.api.active];
+  if(!String(profile?.apiKey || "").trim() || !String(profile?.model || "").trim()) return;
+  const life = peerLifeState();
+  const turn = Number(state.timeSettings.rpTurnCount || 0);
+  if(!priorityIds.length){
+    if(realTimeEnabled()){
+      if(Date.now() - Number(life.lastGeneratedAt || 0) < 2*60*60*1000) return;
+    }else if(turn - Number(life.lastGeneratedTurn || 0) < 4){
+      return;
+    }
+  }
+  let pair = priorityIds.map(getCharacter).filter(Boolean);
+  if(pair.length !== 2){
+    const pending = life.plans.find(plan =>
+      plan.status === "pending" &&
+      plan.participantIds.every(id => getCharacter(id))
+    );
+    pair = pending ? pending.participantIds.map(getCharacter) :
+      [...state.characters].sort(() => Math.random() - .5).slice(0,2);
+  }
+  life.lastGeneratedAt = Date.now();
+  life.lastGeneratedTurn = turn;
+  generatePeerLifeAi(pair[0],pair[1]);
+}
+
 function roleLiveDurationTurns(){
   return (
     4 +
@@ -12471,6 +12757,8 @@ function startAutonomousRoleLive(
         ]
       : [];
 
+  character.liveOriginalCollabIds = [...character.liveCollabIds];
+
   character.liveCollabRoomId =
     String(
       options.collabRoomId || ""
@@ -12489,10 +12777,10 @@ function stopAutonomousRoleLive(
 ){
   const formerCollabIds =
     Array.isArray(
-      character.liveCollabIds
+      character.liveOriginalCollabIds || character.liveCollabIds
     )
       ? [
-          ...character.liveCollabIds
+          ...(character.liveOriginalCollabIds || character.liveCollabIds)
         ]
       : [];
 
@@ -12529,6 +12817,7 @@ function stopAutonomousRoleLive(
 
   character.liveCollabIds =
     [];
+  character.liveOriginalCollabIds = [];
 
   character.liveCollabRoomId =
     "";
@@ -12747,50 +13036,30 @@ function advanceRoleLiveLifecycle(tickAt=Date.now()){
         );
 
 
-    /*
-      有兩個空位且至少兩名角色可開播時，
-      有 20% 機率開始雙視角角色連動。
-    */
-
-    if(
+    /* 角色在背景自行談妥連動，玩家只看見開播後的雙視角。 */
+    const readyPlan = peerLifeState().plans.find(plan =>
+      plan.status === "ready" &&
       maxLive - liveCount >= 2 &&
-      candidates.length >= 2 &&
-      Math.random() < .20
-    ){
-      const pair =
-        candidates.splice(0,2);
-
-      const sharedDuration =
-        roleLiveDurationTurns();
-
-      pair.forEach(
-        (character,index) => {
-          const peer =
-            pair[
-              index === 0
-                ? 1
-                : 0
-            ];
-
-          startAutonomousRoleLive(
-            character,
-            {
-              collabIds:[
-                peer.id
-              ],
-              remainingTurns:
-                sharedDuration,
-              startedAt:tickAt,
-              title:
-                `與 ${publicName(peer)} 連動`
-            }
-          );
-        }
-      );
-
+      plan.participantIds.length === 2 &&
+      plan.participantIds.every(id => candidates.some(item => item.id === id))
+    );
+    if(readyPlan){
+      const pair = readyPlan.participantIds.map(getCharacter);
+      const sharedDuration = roleLiveDurationTurns();
+      pair.forEach((character,index) => {
+        const peer = pair[1-index];
+        startAutonomousRoleLive(character,{
+          collabIds:[peer.id],
+          remainingTurns:sharedDuration,
+          startedAt:tickAt,
+          title:`${readyPlan.topic || "雜談"}｜與 ${publicName(peer)} 連動`
+        });
+      });
+      readyPlan.status = "live";
+      candidates.splice(0,candidates.length,
+        ...candidates.filter(item => !readyPlan.participantIds.includes(item.id)));
       liveCount += 2;
     }
-
 
     for(
       const character
@@ -12842,6 +13111,15 @@ function advanceRoleLiveLifecycle(tickAt=Date.now()){
   }
 
 
+  peerLifeState().plans.filter(plan =>
+    plan.status === "live" &&
+    plan.participantIds.every(id => !getCharacter(id)?.live)
+  ).forEach(plan => {
+    plan.status = "completed";
+    rememberPeerCollab(plan.participantIds,
+      `一起完成連動直播「${plan.topic || "連動直播"}」。`);
+  });
+  maybeAdvancePeerLife();
   renderExplore();
   renderSubscriptions();
 
@@ -13161,6 +13439,11 @@ function wavelinkSelfContext(
       character.offlinePendingBy ||
       null,
 
+    peerRelationships:
+      Object.fromEntries(state.characters.filter(other => other.id !== character.id)
+        .map(other => [other.id,peerRelationshipFor(character.id,other.id)])
+        .filter(([,summary]) => summary)),
+
     knownMemories:
       wavelinkKnownMemories(
         character
@@ -13374,7 +13657,7 @@ Lorebook 是背景與世界設定資料，
 
 極重要資訊差規則：
 
-selfCard 與 knownMemories
+selfCard、knownMemories 與 peerRelationships
 是「該 id 角色自己的認知資料」。
 
 某角色只能使用：
@@ -25464,6 +25747,10 @@ async event => {
       }
     }
 
+    if(imported.peerLife && typeof imported.peerLife === "object"){
+      state.peerLife = imported.peerLife;
+    }
+
     if(imported.theme){
       state.theme = imported.theme;
     }
@@ -25513,6 +25800,8 @@ async event => {
   state.live.activeShopItemIds = [];
   state.live.date = "";
   state.live.turnLogs = [];
+  state.live.lastActivityAt = 0;
+  state.live.awayContext = "";
 
 
   /* 公開社群 */
@@ -25525,8 +25814,15 @@ async event => {
      Lorebook 不刪 */
 
   state.memories = [];
+  state.fanAccounts = [];
+  state.peerLife = {
+    relationships:{},conversations:{},plans:[],events:[],
+    lastGeneratedAt:0,lastGeneratedTurn:0
+  };
+  peerLifeEpoch++;
   state.memorySettings.counter = 0;
   state.timeSettings.rpTurnCount = 0;
+  state.timeSettings.lastRoleLiveTick = Date.now();
 
 
   /* WAVELINK
@@ -25551,6 +25847,11 @@ wavelinkRoomView =
   room.messages = [];
 room.unread = 0;
 room.archived = false;
+room.collabPlan = null;
+room.collabLiveActive = false;
+room.collabVoiceActive = false;
+room.voiceActive = false;
+room.voiceStartedAt = null;
 
     }
   );
@@ -25643,6 +25944,7 @@ character.liveOfflineTurns =
 
     character.liveCollabIds =
       [];
+    character.liveOriginalCollabIds = [];
 
     character.liveCollabRoomId =
       "";
@@ -26030,6 +26332,8 @@ async function init(){
     advanceRoleLiveRealTime();
     renderLiveAwayPrompt();
   }
+  triggerAutoContent({onOpen:true,skipLedger:true});
+  maybeAdvancePeerLife();
 }
 
 init();
