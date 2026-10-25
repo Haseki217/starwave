@@ -6649,7 +6649,7 @@ body[data-theme="halloween"] .live-stage{
 <script src="./utils/indexeddb.js"></script>
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="./sync-config.js?v=google-drive-1"></script>
-<script src="./utils/sync.js?v=google-drive-2"></script>
+<script src="./utils/sync.js?v=google-drive-3"></script>
 <script>
 const $ = id => document.getElementById(id);
 const $$ = selector => [...document.querySelectorAll(selector)];
@@ -7972,7 +7972,8 @@ function publicAiFanAccounts(){
 }
 
 function resolveAiFanAccount(
-  raw
+  raw,
+  {persist=true}={}
 ){
   const authorId =
     String(
@@ -8024,7 +8025,7 @@ function resolveAiFanAccount(
     handle:requestedHandle
   };
 
-  state.fanAccounts.push(fan);
+  if(persist) state.fanAccounts.push(fan);
 
   return fan;
 }
@@ -10613,6 +10614,7 @@ async function generatePlayerLiveTurn(
 
   try{
 
+    const generationEpoch = rpGenerationEpoch;
     const result =
       await generateWithApi({
 
@@ -10633,6 +10635,8 @@ async function generatePlayerLiveTurn(
 
         json:true
       });
+
+    if(generationEpoch !== rpGenerationEpoch) return false;
 
     const data =
       parseStarwaveLlmJson(
@@ -11283,6 +11287,7 @@ async function openRoleLiveReplay(characterId,recordId){
       lastViewerAction:"",
       viewers:0,
       peak:record.peak || 0,
+      isReplayGeneration:true,
       liveReplayElapsedMinutes:Math.max(0,Math.floor((record.endedAt-record.startedAt)/120000)),
       liveReplayElapsedTurns:Math.max(0,Math.floor((record.endedRpTurn-record.startedRpTurn)/2))
     };
@@ -11828,8 +11833,10 @@ async function generateRoleLiveNext(
     ...(character.liveStory || []).slice(-2)
       .map(segment => /(?:開始|開放|正在|進行|等候).{0,24}(?:凸待|來電|上麥|合唱|一起唱歌)/.test(segment.text || "") ? segment.text : "")
   ].join(" ");
-  const visitors = liveCreatorVisitors(character.id,character.liveTitle,
-    character.liveCollabIds || [],voiceContext);
+  const visitors = character.isReplayGeneration
+    ? {commenterIds:[],voiceGuestIds:[]}
+    : liveCreatorVisitors(character.id,character.liveTitle,
+        character.liveCollabIds || [],voiceContext);
   const button =
     $("refreshRoleLive");
 
@@ -11851,6 +11858,7 @@ async function generateRoleLiveNext(
 
   try{
 
+    const generationEpoch = rpGenerationEpoch;
     const result =
       await generateWithApi({
 
@@ -11874,6 +11882,8 @@ async function generateRoleLiveNext(
         json:true
       });
 
+
+    if(generationEpoch !== rpGenerationEpoch) return false;
 
     const data =
       parseStarwaveLlmJson(
@@ -12049,7 +12059,8 @@ async function generateRoleLiveNext(
 
         const fan =
         resolveAiFanAccount(
-          comment
+          comment,
+          {persist:!character.isReplayGeneration}
         );
 
 
@@ -12102,7 +12113,8 @@ async function generateRoleLiveNext(
 
       const fan =
         resolveAiFanAccount(
-          data?.donation
+          data?.donation,
+          {persist:!character.isReplayGeneration}
         );
 
 
@@ -12482,6 +12494,11 @@ $("closeRoleLive").onclick = () => {
 
 let peerLifeGenerating = false;
 let peerLifeEpoch = 0;
+let rpGenerationEpoch = 0;
+function invalidateRpGenerations(){
+  rpGenerationEpoch++;
+  peerLifeEpoch++;
+}
 
 function peerLifeState(){
   state.peerLife ||= {};
@@ -14322,6 +14339,7 @@ const isCurrent =
 
   try{
 
+    const generationEpoch = rpGenerationEpoch;
     const result =
       await generateWithApi({
 
@@ -14348,6 +14366,8 @@ const isCurrent =
         json:true
       });
 
+
+    if(generationEpoch !== rpGenerationEpoch) return false;
 
     const data =
       parseStarwaveLlmJson(
@@ -16415,6 +16435,7 @@ async function generateOfflineAi(
 
   try{
 
+    const generationEpoch = rpGenerationEpoch;
     const result =
       await generateWithApi({
 
@@ -16437,6 +16458,8 @@ async function generateOfflineAi(
         json:true
       });
 
+
+    if(generationEpoch !== rpGenerationEpoch) return false;
 
     const data =
       parseStarwaveLlmJson(
@@ -17106,6 +17129,7 @@ async function generateLifeLedgerAi(
       cycle;
 
 
+    const generationEpoch = rpGenerationEpoch;
     const result =
       await generateWithApi({
 
@@ -17126,6 +17150,8 @@ async function generateLifeLedgerAi(
         json:true
       });
 
+
+    if(generationEpoch !== rpGenerationEpoch) return false;
 
     const data =
       parseStarwaveLlmJson(
@@ -21000,6 +21026,7 @@ async function generateForumNow(
 
   try{
 
+    const generationEpoch = rpGenerationEpoch;
     const result =
       await generateWithApi({
 
@@ -21022,6 +21049,8 @@ async function generateForumNow(
         json:true
       });
 
+
+    if(generationEpoch !== rpGenerationEpoch) return false;
 
     const data =
       parseStarwaveLlmJson(
@@ -22387,6 +22416,7 @@ async function generateSnsNow(
 
   try{
 
+    const generationEpoch = rpGenerationEpoch;
     const result =
       await generateWithApi({
 
@@ -22409,6 +22439,8 @@ async function generateSnsNow(
         json:true
       });
 
+
+    if(generationEpoch !== rpGenerationEpoch) return false;
 
     const data =
       parseStarwaveLlmJson(
@@ -25683,10 +25715,12 @@ async event => {
     const imported =
       data.state;
 
-    const apiKeys =
-      state.api.profiles.map(
-        profile => profile.apiKey
-      );
+    invalidateRpGenerations();
+
+    const localApiProfiles = state.api.profiles.map(profile => ({
+      provider:profile.provider,
+      apiKey:profile.apiKey || ""
+    }));
 
     const replaceKeys = [
       "player",
@@ -25741,8 +25775,9 @@ async event => {
             );
 
             state.api.profiles[index].apiKey =
-              apiKeys[index] ||
-              "";
+              localApiProfiles[index]?.provider === profile.provider
+                ? localApiProfiles[index].apiKey
+                : "";
           });
       }
     }
@@ -25776,6 +25811,7 @@ async event => {
 };
 
   function clearRpTestRecords(){
+  invalidateRpGenerations();
 
   /* 玩家直播進度 */
 
@@ -25819,7 +25855,6 @@ async event => {
     relationships:{},conversations:{},plans:[],events:[],
     lastGeneratedAt:0,lastGeneratedTurn:0
   };
-  peerLifeEpoch++;
   state.memorySettings.counter = 0;
   state.timeSettings.rpTurnCount = 0;
   state.timeSettings.lastRoleLiveTick = Date.now();

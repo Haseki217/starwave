@@ -1,4 +1,4 @@
-const CACHE_NAME = "starwave-pwa-v4";
+const CACHE_NAME = "starwave-pwa-v5";
 
 const APP_SHELL = [
   "./",
