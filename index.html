@@ -9982,9 +9982,11 @@ function isVeryCloseCreatorRelation(summary){
   return /摯友|知己|戀人|伴侶|交往中|非常親近|十分親近|非常要好|很要好|最好的朋友|深厚的友情/.test(text);
 }
 
-function liveCreatorVisitors(hostId,title,collabIds=[]){
+function liveCreatorVisitors(hostId,title,collabIds=[],voiceContext=""){
   const special = isSpecialLiveTitle(title);
-  const callIn = /凸待|來電|上麥|開放來賓|等人(?:一起)?唱歌|等人合唱|等.*來合唱|邀.*(?:唱歌|合唱)|一起合唱|call.?in/i.test(String(title || ""));
+  const callInTitle = /凸待|來電|上麥|開放來賓|等人(?:一起)?唱歌|等人合唱|等.*來合唱|邀.*(?:唱歌|合唱)|一起合唱|call.?in/i;
+  const callIn = callInTitle.test(String(title || "")) ||
+    /(?:開始|開放|正在|進行|等候).{0,24}(?:凸待|來電|上麥|合唱|一起唱歌)|(?:等人|邀請).{0,12}(?:唱歌|合唱)/i.test(String(voiceContext || ""));
   const candidates = state.characters
     .filter(character => character.id !== hostId && !collabIds.includes(character.id))
     .map(character => {
@@ -11708,7 +11710,7 @@ stageText 中角色說出的台詞與語音，
 
 【短暫來電】
 ${JSON.stringify(creators.filter(item => visitors.voiceGuestIds.includes(item.id)))}
-只有直播標題明確開放凸待、來電、上麥或邀人合唱，而且上面名單非空時，才可選一名角色在 guestVisit 裡短暫加入語音聊一兩句。一般唱歌、純聊天、遊戲及其他普通直播只能有聊天室留言，guestVisit 必須為 null。
+只有直播標題或正在進行的內容明確開放凸待、來電、上麥或邀人合唱，而且上面名單非空時，才可選一名角色在 guestVisit 裡短暫加入語音聊一兩句。一般唱歌、純聊天、遊戲及其他普通直播只能有聊天室留言，guestVisit 必須為 null。
 這是短暫串門，不是正式雙人連動，不新增另一個直播視角；不要把來電寫成 WAVELINK 私訊。
 guestVisit 不出現時填 null。stageText 不要重複 guestVisit 的逐字內容。
 短暫來電的角色這回合不要再以聊天室留言出現。
@@ -11821,7 +11823,13 @@ async function generateRoleLiveNext(
   }
 
 
-  const visitors = liveCreatorVisitors(character.id,character.liveTitle,character.liveCollabIds || []);
+  const voiceContext = [
+    character.content || "",
+    ...(character.liveStory || []).slice(-2)
+      .map(segment => /(?:開始|開放|正在|進行|等候).{0,24}(?:凸待|來電|上麥|合唱|一起唱歌)/.test(segment.text || "") ? segment.text : "")
+  ].join(" ");
+  const visitors = liveCreatorVisitors(character.id,character.liveTitle,
+    character.liveCollabIds || [],voiceContext);
   const button =
     $("refreshRoleLive");
 
