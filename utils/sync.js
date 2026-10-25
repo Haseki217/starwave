@@ -153,13 +153,18 @@ const starwaveSync = (() => {
 
   async function restoreRemote(payload){
     verify(payload);
-    const keys = state.api.profiles.map(profile => profile.apiKey || "");
+    const localProfiles = state.api.profiles.map(profile => ({
+      provider:profile.provider,
+      apiKey:profile.apiKey || ""
+    }));
     const remoteState = structuredClone(payload.state);
     delete remoteState.sync;
     delete remoteState.ui;
     if(remoteState.api?.profiles){
       remoteState.api.profiles.forEach((profile,index) => {
-        profile.apiKey = keys[index] || "";
+        profile.apiKey = localProfiles[index]?.provider === profile.provider
+          ? localProfiles[index].apiKey
+          : "";
       });
     }
     mergeSavedState(state,remoteState);
