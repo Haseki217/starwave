@@ -6135,6 +6135,8 @@ body[data-theme="halloween"] .live-stage{
 
       <div class="actions" style="margin:0">
 
+        <button id="rememberRoleLive" class="secondary">✦ 記住現在</button>
+
         <button
           id="refreshRoleLive"
           class="primary"
@@ -12312,6 +12314,7 @@ function renderRoleLive(){
     sanitizePublicText(replay ? replay.title : character.liveTitle);
   $("roleLiveStatusTag").textContent = replay ? "重播" : "LIVE";
   $("refreshRoleLive").hidden = Boolean(replay);
+  $("rememberRoleLive").hidden = Boolean(replay);
   $("roleLiveComment").closest(".role-viewer-input").hidden = Boolean(replay);
   $("roleDonationCustom").closest(".donation-panel").hidden = Boolean(replay);
 
@@ -12437,6 +12440,23 @@ function renderRoleLive(){
   $("roleLiveChat").scrollTop =
     $("roleLiveChat").scrollHeight;
 }
+
+$("rememberRoleLive").onclick = () => {
+  if(currentRoleLiveReplay) return;
+  const character = getCharacter(currentRoleLiveId);
+  const latest = character?.liveStory?.at(-1)?.text;
+  if(!character || !latest){
+    toast("目前沒有新的直播內容");
+    return;
+  }
+  addMemory(
+    `${publicName(character)} 的直播：${sanitizePublicText(latest)}`,
+    "public",
+    ["player",character.id]
+  );
+  scheduleStarwaveSave();
+  toast("已加入公開事件記憶");
+};
 
 $("refreshRoleLive").onclick =
   async () => {
