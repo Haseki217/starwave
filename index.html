@@ -22377,6 +22377,7 @@ null
 真正存在的 comment id。
 
 不需要每次都追加留言。
+同一篇貼文請避免由最近留言過的同一帳號在下一次更新時接連發言；可換其他帳號，或略過這篇。
 
 只輸出有效 JSON：
 
@@ -22818,6 +22819,11 @@ async function generateSnsNow(
             return;
           }
 
+
+          const lastNonPlayer = [...(post.comments || [])]
+            .reverse()
+            .find(comment => comment.authorId !== "player");
+          if(lastNonPlayer?.authorId === author.id && authors.length > 1) return;
 
           let parentId =
             null;
