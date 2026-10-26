@@ -11705,6 +11705,7 @@ Lorebook 是公開背景與世界設定資料，
 
 【目前直播】
 標題：${role.liveTitle}
+本場唯一主題：${sanitizePublicText(character.liveFocus || role.liveTitle)}
 目前觀看：${character.viewers || 0}
 目前回合：${character.liveTurn || 0}
 已開播：${elapsedLabel}
@@ -11820,6 +11821,7 @@ stageText 中角色說出的台詞與語音，
 
 【stageText】
 生成這一段直播真正發生的內容。
+本場只圍繞上面的唯一主題與標題進行；公開資料中的其他直播類型只是頻道可能做的內容，不代表這場同時要做。不要在同一場突然切換雜談、ASMR、遊戲、唱歌等不同企劃，除非當場標題本來就是該主題。
 
 可以包含：
 - 主播正在做什麼
@@ -12890,12 +12892,33 @@ function roleLiveDurationTurns(){
 }
 
 
-function roleLiveAutoTitle(character){
-  const topics = sanitizePublicText(String(character.content || ""))
-    .split(/[、，,／/|]/)
+function roleLiveTopics(character){
+  return sanitizePublicText(String(character.content || ""))
+    .split(/[、，,／/|｜]/)
     .map(topic => topic.trim())
     .filter(topic => topic && topic !== "待設定");
-  const topic = topics.length ? randomItem(topics) : "雜談";
+}
+
+function roleLiveSingleTopic(character,hint=""){
+  const topics = roleLiveTopics(character);
+  const value = String(hint);
+  const category = value.match(/^【([^】]+)】/)?.[1];
+  if(category && !/[、，,／/|｜]/.test(category)) return category;
+  const matches = topics.filter(topic => value.includes(topic));
+  if(matches.length === 1) return matches[0];
+  const namedTopic = value.match(/^(雜談|聊天|ASMR|遊戲|唱歌|歌回|料理|戶外)(?=[｜|\s]|$)/i)?.[1];
+  return namedTopic || randomItem(topics) || "雜談";
+}
+
+function roleLiveTitleIsMixed(character,title){
+  const value = String(title || "");
+  const bracket = value.match(/^【([^】]+)】/)?.[1] || "";
+  const genreList = /(?:雜談|聊天|ASMR|遊戲|唱歌|歌回|料理|戶外)\s*[、，,／/|｜]\s*(?:雜談|聊天|ASMR|遊戲|唱歌|歌回|料理|戶外)/i;
+  return roleLiveTopics(character).filter(topic => value.includes(topic)).length > 1 ||
+    /[、，,／/|｜]/.test(bracket) || genreList.test(value);
+}
+
+function roleLiveAutoTitle(character,topic=roleLiveSingleTopic(character)){
   return `【${topic}】直播中`;
 }
 
@@ -12923,10 +12946,12 @@ async function enrichRoleLiveTitle(character, startedAt, topic){
       character.liveStartedAt !== startedAt ||
       !state.characters.includes(character)) return;
     const title = sanitizePublicText(String(parseStarwaveLlmJson(result.text).title || "").trim());
-    if(!title) return;
-    character.liveTitle = title.startsWith("【")
-      ? title.slice(0,80)
-      : `【${topic}】${title}`.slice(0,80);
+    if(!title || roleLiveTitleIsMixed(character,title)) return;
+    const category = title.match(/^【([^】]+)】/);
+    if(category && category[1] !== topic) return;
+    const detail = (category ? title.slice(category[0].length) : title).trim();
+    if(!detail || detail === "直播中") return;
+    character.liveTitle = `【${topic}】${detail}`.slice(0,80);
     renderExplore();
     renderSubscriptions();
     if(currentRoleLiveId === character.id) renderRoleLive();
@@ -12951,8 +12976,14 @@ function startAutonomousRoleLive(
   character.plannedLiveAt = 0;
   character.plannedLiveTurn = 0;
   character.plannedLiveTitle = "";
+  character.plannedLiveAnnouncement = "";
   character.liveStartedTurn = Number(state.timeSettings.rpTurnCount || 0);
-  const topic = String(options.title || character.content || "");
+  const hasCollab = Array.isArray(options.collabIds) && options.collabIds.length > 0;
+  const topic = hasCollab
+    ? String(options.title || "連動").split("｜")[0].trim()
+    : roleLiveSingleTopic(character,options.announcement || options.title || "");
+  const mixedTitle = !hasCollab && roleLiveTitleIsMixed(character,options.title);
+  character.liveFocus = topic;
   const sceneChoices = /遊戲|PvP|ゲーム/i.test(topic)
     ? ["gaming","studio","brightRoom"]
     : /ASMR|睡|夜|雜談/i.test(topic)
@@ -12980,17 +13011,12 @@ function startAutonomousRoleLive(
     0;
   character.liveEndsAt = character.liveStartedAt + character.liveRemainingTurns * 30*60*1000;
 
-  character.liveTitle =
-    sanitizePublicText(
-      options.title ||
-      roleLiveAutoTitle(
-        character
-      )
-    );
+  character.liveTitle = mixedTitle
+    ? roleLiveAutoTitle(character,topic)
+    : sanitizePublicText(options.title || roleLiveAutoTitle(character,topic));
 
-  if(!options.title){
-    const liveTopic = character.liveTitle.match(/^【(.+?)】/)?.[1] || "雜談";
-    void enrichRoleLiveTitle(character,character.liveStartedAt,liveTopic);
+  if(!options.title || mixedTitle){
+    void enrichRoleLiveTitle(character,character.liveStartedAt,topic);
   }
 
   character.liveStory =
@@ -13415,7 +13441,11 @@ function advanceRoleLiveLifecycle(tickAt=Date.now()){
       ){
         startAutonomousRoleLive(
           character,
-          {startedAt:tickAt,title:character.plannedLiveTitle || undefined}
+          {
+            startedAt:tickAt,
+            title:character.plannedLiveTitle || undefined,
+            announcement:character.plannedLiveAnnouncement || ""
+          }
         );
 
         liveCount++;
@@ -22571,7 +22601,7 @@ ${state.community.soft ? "ON" : "OFF"}
 
 每篇可以帶 0～4 則留言。
 角色創作者若在貼文中明確預告近期會開播（例如「今晚開雜談」），
-輸出 plannedLive:true 與相符的 liveTitle，之後系統會安排開播。
+輸出 plannedLive:true 與相符的 liveTitle，之後系統會安排開播。liveTitle 只能是一場直播的一個主題和具體內容，不能把角色的所有直播類型並列。
 普通感想、猜測、否定開播或粉絲發文一律 plannedLive:false。
 
 likes 與 reposts
@@ -23003,8 +23033,9 @@ async function generateSnsNow(
             plannedCharacter.plannedLiveAt = Date.now() + 60*60*1000;
             plannedCharacter.plannedLiveTurn = Number(state.timeSettings.rpTurnCount || 0) + 2;
             plannedCharacter.plannedLiveTitle =
-              sanitizePublicText(String(rawPost.liveTitle || "").trim()) ||
-              "雜談｜直播中";
+              sanitizePublicText(String(rawPost.liveTitle || "").trim());
+            plannedCharacter.plannedLiveAnnouncement =
+              sanitizePublicText(String(rawPost.text || "").trim()).slice(0,250);
           }
 
           changed++;
@@ -26775,6 +26806,16 @@ async function init(){
       state.theme = theme;
     }
   }catch{}
+
+  state.characters.forEach(character => {
+    if(!character.live) return;
+    const topic = roleLiveSingleTopic(character,character.liveTitle);
+    character.liveFocus = topic;
+    if(roleLiveTitleIsMixed(character,character.liveTitle)){
+      character.liveTitle = roleLiveAutoTitle(character,topic);
+      void enrichRoleLiveTitle(character,character.liveStartedAt,topic);
+    }
+  });
 
   starwavePersistenceReady = true;
 
