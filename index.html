@@ -6132,7 +6132,7 @@ body[data-theme="halloween"] .live-stage{
           id="refreshRoleLive"
           class="primary"
         >
-          重整直播內容／下一段
+          繼續直播內容／下一段
         </button>
 
         <button
@@ -12738,26 +12738,14 @@ function roleLiveDurationTurns(){
 }
 
 
-function roleLiveAutoTitle(
-  character
-){
-  const content =
-    sanitizePublicText(
-      String(
-        character.content || ""
-      ).trim()
-    );
-
-  if(
-    content &&
-    content !== "待設定"
-  ){
-    return `${content}｜直播中`;
-  }
-
-  return "正在直播";
+function roleLiveAutoTitle(character){
+  const topics = sanitizePublicText(String(character.content || ""))
+    .split(/[、，,／/|]/)
+    .map(topic => topic.trim())
+    .filter(topic => topic && topic !== "待設定");
+  const topic = topics.length ? randomItem(topics) : "雜談";
+  return `${topic}｜直播中`;
 }
-
 
 function startAutonomousRoleLive(
   character,
@@ -12775,6 +12763,13 @@ function startAutonomousRoleLive(
   character.plannedLiveTurn = 0;
   character.plannedLiveTitle = "";
   character.liveStartedTurn = Number(state.timeSettings.rpTurnCount || 0);
+  const topic = String(options.title || character.content || "");
+  const sceneChoices = /遊戲|PvP|ゲーム/i.test(topic)
+    ? ["gaming","studio","brightRoom"]
+    : /ASMR|睡|夜|雜談/i.test(topic)
+      ? ["nightRoom","living","studio","brightRoom"]
+      : builtInScenes.map(scene => scene.id);
+  character.sceneId = randomItem(sceneChoices);
   character.liveHistory ||= [];
 
   character.viewers =
