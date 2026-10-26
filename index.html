@@ -11335,6 +11335,7 @@ let roleReplayGenerating = false;
 let selectedDonationAmount = 100;
 
 async function openRoleLive(id){
+  if(realTimeEnabled()) advanceRoleLiveRealTime();
 
   currentRoleLiveReplay = null;
   currentRoleLiveId =
@@ -11371,14 +11372,11 @@ async function openRoleLive(id){
     false;
 
 
-  if(
-    !character.liveStory.length
-  ){
-
-    await generateRoleLiveNext(
-      character,
-      true
-    );
+  const first = !character.liveStory.length;
+  const lastContentAt = Number(character.liveLastGeneratedAt) ||
+    Number(character.liveStartedAt) || Date.now();
+  if(first || (realTimeEnabled() && Date.now() - lastContentAt >= 5*60*1000)){
+    await generateRoleLiveNext(character,first);
   }
 }
 
@@ -11436,6 +11434,9 @@ function buildRoleLiveAiPrompt(
   const elapsedLabel = realTimeEnabled()
     ? `約 ${elapsedMinutes} 分鐘`
     : `約 ${elapsedTurns} 個 RP 回合`;
+  const lastContentAt = Number(character.liveLastGeneratedAt) ||
+    Number(character.liveStartedAt) || Date.now();
+  const sinceLastContentMinutes = Math.max(0,Math.floor((Date.now()-lastContentAt)/60000));
 
   const role = {
     ...publicCharacterContext(
@@ -11701,9 +11702,11 @@ Lorebook 是公開背景與世界設定資料，
 目前觀看：${character.viewers || 0}
 目前回合：${character.liveTurn || 0}
 已開播：${elapsedLabel}
+距離上次生成的直播內容：${realTimeEnabled() ? `約 ${sinceLastContentMinutes} 分鐘` : "依 RP 回合推進"}
 是否為本場首次儲存內容：${first ? "是" : "否"}
 
 若本場已開播一段時間，即使這是首次儲存內容，也要直接從直播當下的中途場景開始。不要重新描寫開播、開場招呼或假設玩家已看過前半場；不必補寫先前整段直播。可以用一兩句自然語境讓觀眾聽懂當下話題，不得替玩家編造先前的行動或發言。
+如果距離上段內容已過數分鐘，請讓直播自然推進到現在：簡短交代這段時間主題如何發展，重點描寫此刻正在發生的事，不要原地重複上一段、逐分鐘補寫，也不要替玩家虛構行動或台詞。
 
 【玩家的公開創作者資料】
 ${JSON.stringify(player)}
@@ -11822,7 +11825,7 @@ stageText 中角色說出的台詞與語音，
 這裡的主播不是玩家，所以可以主動替角色主播說話、行動與做一般直播決定。
 
 使用自然小說式敘事。
-一般約 1～3 段。
+一般約 1～3 段。每段描述一個連貫的動作或話題；不同段落之間必須換行並空一行（JSON 字串使用 \\n\\n），不要把所有敘事擠成一大段。
 不要只寫一句「主播繼續直播」。
 
 【viewerDelta】
@@ -11912,6 +11915,22 @@ amount 必須為 0。
 `;
 }
 
+
+function formatRoleLiveStoryText(text){
+  const story = sanitizePublicText(String(text || "").trim())
+    .replace(/\r\n?/g,"\n");
+  if(story.includes("\n")){
+    return story.replace(/[ \t]*\n+[ \t]*/g,"\n\n");
+  }
+  if(story.length < 60) return story;
+  const sentences = story.match(/[^。！？]+[。！？][」』]?|[^。！？]+$/gu) || [];
+  if(sentences.length < 3) return story;
+  const middle = Math.ceil(sentences.length / 2);
+  return [
+    sentences.slice(0,middle).join("").trim(),
+    sentences.slice(middle).join("").trim()
+  ].join("\n\n");
+}
 
 async function generateRoleLiveNext(
   character,
@@ -12014,12 +12033,7 @@ async function generateRoleLiveNext(
       );
 
 
-    const stageText =
-      sanitizePublicText(
-        String(
-          data.stageText || ""
-        ).trim()
-      );
+    const stageText = formatRoleLiveStoryText(data.stageText);
 
 
     if(!stageText){
@@ -12070,6 +12084,7 @@ async function generateRoleLiveNext(
       id:uid("segment"),
       text:storyText
     });
+    if(!character.isReplayGeneration) character.liveLastGeneratedAt = Date.now();
     if(hasGuest){
       const life = peerLifeState();
       life.events.unshift({
@@ -12973,6 +12988,7 @@ function startAutonomousRoleLive(
 
   character.liveStory =
     [];
+  character.liveLastGeneratedAt = 0;
 
   character.liveChat =
     [];
@@ -13038,6 +13054,7 @@ function stopAutonomousRoleLive(
     liveChat:deepClone(character.liveChat || [])
   });
   character.liveStartedAt = 0;
+  character.liveLastGeneratedAt = 0;
   character.liveStartedTurn = 0;
   character.liveEndsAt = 0;
   character.live =
@@ -26350,6 +26367,7 @@ character.liveOfflineTurns =
 
     character.liveStory =
       [];
+    character.liveLastGeneratedAt = 0;
     character.liveHistory = [];
     character.liveStartedAt = 0;
     character.liveStartedTurn = 0;
