@@ -12866,6 +12866,7 @@ function startAutonomousRoleLive(
 
   character.liveOfflineTurns =
     0;
+  character.liveEndsAt = character.liveStartedAt + character.liveRemainingTurns * 30*60*1000;
 
   character.liveTitle =
     sanitizePublicText(
@@ -12948,6 +12949,7 @@ function stopAutonomousRoleLive(
   });
   character.liveStartedAt = 0;
   character.liveStartedTurn = 0;
+  character.liveEndsAt = 0;
   character.live =
     false;
 
@@ -13012,7 +13014,21 @@ function advanceRoleLiveRealTime(){
   const now = Date.now(), interval = 30*60*1000;
   const last = Number(state.timeSettings.lastRoleLiveTick) || now;
   const elapsed = Math.min(48,Math.floor(Math.max(0,now-last)/interval));
-  if(!elapsed) return;
+  if(!elapsed){
+    let ended = false;
+    state.characters.filter(character => character.live && !character.liveManagedByPlayer)
+      .forEach(character => {
+        const endsAt = Number(character.liveEndsAt) ||
+          (Number(character.liveStartedAt) > 0
+            ? Number(character.liveStartedAt) + 3*60*60*1000 : 0);
+        if(endsAt && now >= endsAt){
+          stopAutonomousRoleLive(character,endsAt);
+          ended = true;
+        }
+      });
+    if(ended){renderExplore();renderSubscriptions();scheduleStarwaveSave();}
+    return;
+  }
   state.timeSettings.lastRoleLiveTick = now-((now-last)%interval);
   for(let i=0;i<elapsed;i++) advanceRoleLiveLifecycle(last+(i+1)*interval);
   scheduleStarwaveSave();
@@ -13086,6 +13102,15 @@ function advanceRoleLiveLifecycle(tickAt=Date.now()){
         !character.liveManagedByPlayer
     )
     .forEach(character => {
+
+      const endsAt = Number(character.liveEndsAt) ||
+        (realTimeEnabled() && Number(character.liveStartedAt) > 0
+          ? Number(character.liveStartedAt) + 3*60*60*1000 : 0);
+      if(realTimeEnabled() && endsAt && tickAt >= endsAt){
+        justEnded.add(character.id);
+        stopAutonomousRoleLive(character,endsAt);
+        return;
+      }
 
       let remaining =
         Number(
