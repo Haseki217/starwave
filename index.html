@@ -4254,7 +4254,7 @@ body[data-theme="halloween"] .live-stage{
           </button>
 
           <button id="refreshWl" class="secondary">
-            刷新
+            重整
           </button>
 
         </div>
@@ -4298,7 +4298,7 @@ body[data-theme="halloween"] .live-stage{
       </div>
 
       <button id="refreshForum" class="secondary">
-        刷新最新 2 則
+        更新最新 2 則
       </button>
 
     </header>
@@ -4377,7 +4377,7 @@ body[data-theme="halloween"] .live-stage{
           id="refreshSns"
           class="secondary"
         >
-          刷新最新 2 則
+          更新最新 2 則
         </button>
 
       </div>
@@ -5594,16 +5594,16 @@ body[data-theme="halloween"] .live-stage{
     <div class="settings-section">
 
       <div class="note">
-        「生活帳本刷新＝關閉」只會停止 AI 產生日常生活收支。
+        「生活帳本重整＝關閉」只會停止 AI 產生日常生活收支。
         只要經濟模式沒有關閉，SHOP 購買、直播打賞、
         收到打賞與主動繳費等玩家明確操作仍會正常執行並記帳。
       </div>
 
       <div class="note" style="margin-top:8px">
-  啟用自動刷新後，只要該功能需要 AI 生成新內容，就會發出模型請求並消耗 Token。
-  開啟的自動刷新項目越多，整體 Token 用量可能越高。
-  若在意 API 用量或成本，建議改用手動刷新，
-  或關閉目前不需要的自動刷新項目。
+  啟用自動重整後，只要該功能需要 AI 生成新內容，就會發出模型請求並消耗 Token。
+  開啟的自動重整項目越多，整體 Token 用量可能越高。
+  若在意 API 用量或成本，建議改用手動重整，
+  或關閉目前不需要的自動重整項目。
 </div>
 
       <div class="quick-refresh">
@@ -5638,8 +5638,8 @@ body[data-theme="halloween"] .live-stage{
             class="refreshSelect"
             data-refresh-feature="forum"
           >
-            <option value="auto">自動刷新</option>
-            <option value="manual" selected>手動刷新</option>
+            <option value="auto">自動重整</option>
+            <option value="manual" selected>手動重整</option>
             <option value="off">關閉</option>
           </select>
         </div>
@@ -5651,8 +5651,8 @@ body[data-theme="halloween"] .live-stage{
             class="refreshSelect"
             data-refresh-feature="sns"
           >
-            <option value="auto">自動刷新</option>
-            <option value="manual" selected>手動刷新</option>
+            <option value="auto">自動重整</option>
+            <option value="manual" selected>手動重整</option>
             <option value="off">關閉</option>
           </select>
         </div>
@@ -5664,8 +5664,8 @@ body[data-theme="halloween"] .live-stage{
             class="refreshSelect"
             data-refresh-feature="wavelink"
           >
-            <option value="auto">自動刷新</option>
-            <option value="manual" selected>手動刷新</option>
+            <option value="auto">自動重整</option>
+            <option value="manual" selected>手動重整</option>
             <option value="off">關閉</option>
           </select>
         </div>
@@ -5677,8 +5677,8 @@ body[data-theme="halloween"] .live-stage{
             class="refreshSelect"
             data-refresh-feature="ledger"
           >
-            <option value="auto">自動刷新</option>
-            <option value="manual" selected>手動刷新</option>
+            <option value="auto">自動重整</option>
+            <option value="manual" selected>手動重整</option>
             <option value="off">關閉</option>
           </select>
         </div>
@@ -6132,7 +6132,7 @@ body[data-theme="halloween"] .live-stage{
           id="refreshRoleLive"
           class="primary"
         >
-          刷新直播內容／下一段
+          重整直播內容／下一段
         </button>
 
         <button
@@ -12254,7 +12254,7 @@ async function generateRoleLiveNext(
     showNotice(
       "角色直播生成失敗",
       error?.message ||
-      "LLM 沒有成功產生角色直播內容，可以再次刷新。"
+      "LLM 沒有成功產生角色直播內容，可以再次重整。"
     );
 
 
@@ -15401,7 +15401,7 @@ $("refreshWl").onclick =
     if(!members.length){
 
       showNotice(
-        "無法刷新",
+        "無法重整",
         "這個對話中的角色目前已不在訂閱角色中。"
       );
 
@@ -16374,7 +16374,7 @@ relationshipUpdate
 目前經濟模式：
 ${state.economy.mode}
 
-生活帳本刷新方式：
+生活帳本重整方式：
 ${state.refresh.ledger}
 
 目前錢包餘額：
@@ -17039,7 +17039,7 @@ ${JSON.stringify(inventory)}
 - 不得憑空生成中獎、遺產、巨額贈與等收入。
 - 正數代表收入，負數代表支出。
 - 普通生活支出金額應符合新臺幣的合理範圍。
-- 每次刷新原則上必須生成一筆 transaction。
+- 每次重整原則上必須生成一筆 transaction。
 - 優先補記近期故事中明確發生、
   而且近期收支尚未記錄的消費或收入。
 - 玩家已明確輸入金額時，
@@ -17521,10 +17521,10 @@ function renderLedger(){
       "目前為輕量模式。只記錄直播與平台相關的明確金錢變動，不模擬房租、水電、飲食、交通等日常生活開銷。";
   }else if(state.refresh.ledger === "off"){
     $("ledgerEconomyNotice").textContent =
-      "完整生活經濟已啟用，但日常生活收支刷新目前關閉。玩家主動進行的 SHOP、打賞與繳費仍會正常記錄。";
+      "完整生活經濟已啟用，但日常生活收支重整目前關閉。玩家主動進行的 SHOP、打賞與繳費仍會正常記錄。";
   }else{
     $("ledgerEconomyNotice").textContent =
-      `完整生活經濟已啟用。生活收支目前為「${state.refresh.ledger === "auto" ? "自動刷新" : "手動刷新"}」。`;
+      `完整生活經濟已啟用。生活收支目前為「${state.refresh.ledger === "auto" ? "自動重整" : "手動重整"}」。`;
   }
 
   $("refreshLedger").hidden =
@@ -18020,7 +18020,7 @@ async function sendShopGift(roomId, giftText){
     if(!result){
       showNotice(
         "禮物已送出，回覆尚未完成",
-        "贈禮紀錄已保留。請在這段 WAVELINK 對話按刷新取得回覆，不必再次贈送。"
+        "贈禮紀錄已保留。請在這段 WAVELINK 對話按重整取得回覆，不必再次贈送。"
       );
     }
   }finally{
@@ -21422,7 +21422,7 @@ $("refreshForum").onclick =
       "off"
     ){
       toast(
-        "論壇刷新目前已關閉"
+        "論壇重整目前已關閉"
       );
 
       return;
@@ -22869,7 +22869,7 @@ $("refreshSns").onclick =
       "off"
     ){
       toast(
-        "SNS 刷新目前已關閉"
+        "SNS 重整目前已關閉"
       );
 
       return;
