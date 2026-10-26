@@ -3201,6 +3201,13 @@ textarea::placeholder{
   margin:7px 0;
 }
 
+.donation-presets button[aria-pressed="true"]{
+  border-color:var(--blue);
+  background:var(--softA);
+  color:var(--blue);
+  box-shadow:inset 0 0 0 1px var(--blue);
+}
+
 .confirm-modal,
 .memory-edit-modal,
 .lore-edit-modal,
@@ -12472,14 +12479,25 @@ $("sendRoleLiveComment").onclick = () => {
   void generateRoleLiveNext(character);
 };
 
+function updateDonationPresetSelection(){
+  $$("[data-donation-amount]").forEach(button => {
+    button.setAttribute("aria-pressed",
+      String(Number(button.dataset.donationAmount) === selectedDonationAmount));
+  });
+}
+
 $$("[data-donation-amount]").forEach(button => {
   button.onclick = () => {
-    selectedDonationAmount =
-      Number(button.dataset.donationAmount);
-
+    selectedDonationAmount = Number(button.dataset.donationAmount);
     $("roleDonationCustom").value = "";
+    updateDonationPresetSelection();
   };
 });
+$("roleDonationCustom").addEventListener("input", () => {
+  selectedDonationAmount = 0;
+  updateDonationPresetSelection();
+});
+updateDonationPresetSelection();
 
 $("sendRoleDonation").onclick = () => {
   const character =
@@ -12504,6 +12522,11 @@ $("sendRoleDonation").onclick = () => {
     custom > 0
       ? custom
       : selectedDonationAmount;
+
+  if(!Number.isFinite(amount) || amount <= 0){
+    showNotice("尚未選擇打賞金額","請選擇 50、100、500，或輸入自訂金額。");
+    return;
+  }
 
   if(state.economy.wallet < amount){
     showInsufficientFunds(amount);
