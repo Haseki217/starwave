@@ -22066,6 +22066,14 @@ function buildSnsAiPrompt(
         };
 
 
+  const recentPlayerStreams =
+    (state.player.liveHistory || [])
+      .slice(0,3)
+      .map(item => ({
+        title:sanitizePublicText(item.title || ""),
+        endedAt:realTimeEnabled() ? (item.time || "") : "已結束"
+      }));
+
   const publicMemories =
     state.memories
       .filter(
@@ -22108,6 +22116,9 @@ function buildSnsAiPrompt(
 
           id:
             post.id,
+
+          createdAt:
+            realTimeEnabled() ? (post.createdAt || "") : "",
 
           author:
             publicAuthor(
@@ -22172,8 +22183,11 @@ SNS 是較即時、簡短、
 【玩家公開資料】
 ${JSON.stringify(playerPublic)}
 
-【玩家目前直播】
-${JSON.stringify(playerLive)}
+【目前時間與玩家直播狀態】
+${JSON.stringify({now:currentRpDateTime() || "目前 RP 回合",playerLive})}
+
+【近期已結束的公開直播】
+${JSON.stringify(recentPlayerStreams)}
 
 【角色創作者公開資料】
 ${JSON.stringify(creators)}
@@ -22198,6 +22212,11 @@ ${JSON.stringify(recentForum)}
 
 【近期 SNS】
 ${JSON.stringify(recentSns)}
+
+新增的貼文與留言都發生在現在，不是回填到舊貼文發表當時。
+請區分舊貼文中的預告與現在已結束的直播：
+若近期已結束的公開直播對應該預告，新增留言只能寫成已看完、錯過或事後討論，
+不可再期待該場直播即將開始。未提供未來開播資訊時，不要擅自宣稱即將開播。
 
 【已存在的可用帳號】
 ${JSON.stringify(authors)}
