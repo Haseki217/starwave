@@ -7173,7 +7173,9 @@ refresh:{
 
   memorySettings:{
     interval:10,
-    counter:0
+    counter:0,
+    recentTurns:[],
+    pendingBatches:[]
   },
 
   memories:[],
@@ -10456,7 +10458,9 @@ function captureLiveUndoSnapshot(inputText){
       },
 
       memorySettings:{
-        counter:state.memorySettings.counter
+        counter:state.memorySettings.counter,
+        recentTurns:state.memorySettings.recentTurns || [],
+        pendingBatches:state.memorySettings.pendingBatches || []
       },
 
       memories:state.memories,
@@ -10532,8 +10536,10 @@ function restoreLiveUndoSnapshot(record){
       snap.economy.transactions
     );
 
-  state.memorySettings.counter =
-    snap.memorySettings.counter;
+  autoMemoryVersion++;
+  state.memorySettings.counter = snap.memorySettings.counter;
+  state.memorySettings.recentTurns = deepClone(snap.memorySettings.recentTurns || []);
+  state.memorySettings.pendingBatches = deepClone(snap.memorySettings.pendingBatches || []);
 
   state.memories =
     deepClone(snap.memories);
@@ -10951,7 +10957,7 @@ async function generatePlayerLiveTurn(
 
     countRpTurn(
       eventSummary ||
-      `玩家直播「${state.player.title}」有新的進展。`
+      `玩家直播「${state.player.title}」：${stageText.slice(0,300)}`
     );
 
     triggerAutoContent();
@@ -12300,9 +12306,8 @@ async function generateRoleLiveNext(
     }
 
 
-    character.lastViewerAction =
-      "";
-
+    const playerAction = character.isReplayGeneration ? "" : character.lastViewerAction;
+    character.lastViewerAction = "";
 
     renderExplore();
     renderSubscriptions();
@@ -12318,7 +12323,9 @@ async function generateRoleLiveNext(
 
 
     scheduleStarwaveSave();
-
+    if(playerAction){
+      countRpTurn(`角色直播「${character.liveTitle}」：玩家${playerAction}。主播接續：${storyText.slice(0,240)}`);
+    }
 
     toast(
       first
@@ -15579,10 +15586,7 @@ $("sendWl").onclick =
     }
 
 
-    countRpTurn(
-      generated.eventSummary ||
-      "WAVELINK 有新的私人互動。"
-    );
+    countRpTurn(`WAVELINK：${generated.eventSummary || "有新的私人互動。"} 玩家說：${text}`);
 
 
     triggerAutoContent({
@@ -16181,10 +16185,7 @@ $("sendVoice").onclick =
       renderWavelinkRooms();
 
 
-      countRpTurn(
-        generated.eventSummary ||
-        "WAVELINK 語音通話有新的私人互動。"
-      );
+      countRpTurn(`WAVELINK 語音：${generated.eventSummary || "有新的私人互動。"} 玩家說：${text}`);
 
 
       triggerAutoContent({
@@ -16988,12 +16989,7 @@ $("sendOffline").onclick =
     }
 
 
-    countRpTurn(
-      `線下：${
-        generated.eventSummary ||
-        `玩家與 ${character.name} 有新的私人線下互動。`
-      }`
-    );
+    countRpTurn(`線下與 ${character.name}：${generated.eventSummary || "有新的互動。"} 玩家：${text}`);
 
 
     triggerAutoContent({
@@ -20919,6 +20915,7 @@ $("sendForumReply").onclick = () => {
 
   renderForumThread();
   renderForum();
+  countRpTurn(`論壇回覆「${post.title.slice(0,120)}」：${text}`);
   void respondToPublicInteraction("forum",post,text,replyParentId);
 };
 
@@ -21957,6 +21954,7 @@ mainSend.textContent = "↑";
       });
 
       renderSns();
+      countRpTurn(`SNS 回覆「${post.text.slice(0,120)}」：${value}`);
       void respondToPublicInteraction("sns",post,value);
     };
 
@@ -22212,6 +22210,7 @@ send.textContent = "↑";
         snsReplyTargets[post.id] = null;
 
         renderSns();
+        countRpTurn(`SNS 留言回覆：${value}`);
         void respondToPublicInteraction("sns",post,value,comment.id);
       };
 
@@ -22258,6 +22257,7 @@ $("sendSns").onclick = () => {
   $("snsInput").value = "";
 
   renderSns();
+  countRpTurn(`SNS 發文：${text}`);
   void respondToPublicInteraction("sns",state.snsPosts[0],text);
 };
 
@@ -23424,9 +23424,55 @@ $("saveManualMemory").onclick = () => {
   $("manualMemoryBox").classList.remove("open");
 };
 
+let autoMemoryGenerating = false;
+let autoMemoryVersion = 0;
+
+async function processPendingAutoMemories(){
+  if(autoMemoryGenerating) return;
+  const settings = state.memorySettings;
+  settings.pendingBatches ||= [];
+  if(!settings.pendingBatches.length) return;
+  const profile = state.api.profiles[state.api.active];
+  if(!String(profile?.apiKey || "").trim() || !String(profile?.model || "").trim()) return;
+
+  autoMemoryGenerating = true;
+  const version = autoMemoryVersion;
+  const generationEpoch = rpGenerationEpoch;
+  try{
+    while(settings.pendingBatches.length && version === autoMemoryVersion){
+      const turns = settings.pendingBatches[0];
+      const result = await generateWithApi({
+        profileIndex:state.api.active,
+        prompt:`以下是玩家最近 ${turns.length} 個 RP 回合，依發生順序排列，可能跨直播、角色直播留言、WAVELINK、語音、線下、SNS 和論壇：
+${JSON.stringify(turns)}
+請整理已發生、值得日後記住的事件或關係變化，寫成一則簡短的私人事件記憶。綜合這幾回合，不要只摘最後一回合或逐句轉貼；不要編造沒有提供的結果、感情或玩家行動。
+如果全是例行閒聊、沒有值得記錄的變化，summary 填空字串。
+使用台灣繁體中文。只輸出有效 JSON：{"summary":"摘要或空字串"}`,
+        systemInstruction:"你是 STARWAVE 的私人事件記憶整理助手。只根據提供的 RP 回合摘要整理，不得添加未發生的事件。輸出有效 JSON。",
+        json:true
+      });
+      if(version !== autoMemoryVersion || generationEpoch !== rpGenerationEpoch) return;
+      const summary = String(parseStarwaveLlmJson(result.text).summary || "").trim();
+      if(summary) addMemory(`自動整理：${summary}`,"private",["player"]);
+      settings.pendingBatches.shift();
+      scheduleStarwaveSave();
+    }
+  }catch(error){
+    console.error("STARWAVE automatic memory summary failed:",error);
+  }finally{
+    autoMemoryGenerating = false;
+  }
+}
+
 function countRpTurn(summary){
   state.timeSettings.rpTurnCount = Number(state.timeSettings.rpTurnCount || 0) + 1;
-  state.memorySettings.counter++;
+  const settings = state.memorySettings;
+  settings.counter = Number(settings.counter || 0) + 1;
+  settings.recentTurns ||= [];
+  settings.pendingBatches ||= [];
+  const interval = Math.max(1,Number(settings.interval) || 10);
+  settings.recentTurns.push(String(summary || "").trim().slice(0,500));
+  settings.recentTurns = settings.recentTurns.slice(-interval);
 
   if(!realTimeEnabled()){
     advanceRoleLiveMetrics();
@@ -23434,21 +23480,13 @@ function countRpTurn(summary){
   }
   pruneRoleLiveHistory();
 
-  if(
-    state.memorySettings.counter >=
-    state.memorySettings.interval
-  ){
-    if(
-      /關係|線下|邀約|重大|直播事件/.test(summary)
-    ){
-      addMemory(
-        `自動整理：${summary}`,
-        "private"
-      );
-    }
-
-    state.memorySettings.counter = 0;
+  if(settings.counter >= interval){
+    settings.pendingBatches.push(settings.recentTurns.slice());
+    settings.recentTurns = [];
+    settings.counter = 0;
   }
+  void processPendingAutoMemories();
+  scheduleStarwaveSave();
 }
 
 function normalizeLoreTriggerText(
@@ -26232,7 +26270,10 @@ async event => {
     relationships:{},conversations:{},plans:[],events:[],
     lastGeneratedAt:0,lastGeneratedTurn:0
   };
+  autoMemoryVersion++;
   state.memorySettings.counter = 0;
+  state.memorySettings.recentTurns = [];
+  state.memorySettings.pendingBatches = [];
   state.timeSettings.rpTurnCount = 0;
   state.timeSettings.lastRoleLiveTick = Date.now();
   state.timeSettings.lastRoleViewerTick = Date.now();
