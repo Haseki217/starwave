@@ -4710,8 +4710,13 @@ body[data-theme="halloween"] .live-stage{
           </div>
 
           <div class="field">
-            <label>年齡</label>
+            <label>年齡（VTuber 為公開設定）</label>
             <input id="charAge" type="number">
+          </div>
+
+          <div class="field" id="charPerformerAgeField" hidden>
+            <label>真人年齡（私人，僅供 VTuber 行為判斷）</label>
+            <input id="charPerformerAge" type="number" min="0" max="120">
           </div>
 
           <div class="field">
@@ -10274,6 +10279,7 @@ ${JSON.stringify(knownFans)}
 
 【本場連動角色】
 ${JSON.stringify(collabs)}
+每名角色須遵守其 liveActivityLimits：不可飲酒者不安排酒雜或飲酒，不可駕駛者不安排自行開車或騎車，不可吸菸者不安排吸菸；不得公開推測限制背後的真人年齡。
 
 【本次命中的公開 Lorebook 條目】
 ${JSON.stringify(lorebookEntries)}
@@ -11819,6 +11825,10 @@ stageText 中角色說出的台詞與語音，
 
 只能根據本提示中的公開資料與已公開直播內容生成。
 
+【角色行為與年齡規則】
+${characterAgeGuidance(character,"live")}
+連動角色也必須遵守各自公開資料中的 liveActivityLimits；不要從行為限制推測或公開真人年齡。
+
 【stageText】
 生成這一段直播真正發生的內容。
 請以本場標題與直播方向為主。聊天時唱歌、玩遊戲時聊天等自然搭配可以發生；公開資料中列出的所有直播類型不代表這場都要逐項演一遍，也不要突然切換成無關的大型企劃。
@@ -12744,6 +12754,9 @@ async function generatePeerLifeAi(a,b){
     const prompt = `你在模擬兩名創作者各自的私人生活與往來。玩家沒有參與，也不會看到他們如何私下決定連動。
 【角色 A】${JSON.stringify({id:a.id,public:publicCharacterContext(a),card:a.card})}
 【角色 B】${JSON.stringify({id:b.id,public:publicCharacterContext(b),card:b.card})}
+【實際年齡行為規則】
+角色 A：${characterAgeGuidance(a,"offline")}
+角色 B：${characterAgeGuidance(b,"offline")}
 兩張角色卡分別是各自的內在設定；角色只能知道自己卡上的秘密，以及對方曾在對話中說出的內容。
 【各自對對方的關係認知】
 ${JSON.stringify({[a.id]:peerRelationshipFor(a.id,b.id),[b.id]:peerRelationshipFor(b.id,a.id)})}
@@ -12892,18 +12905,20 @@ function roleLiveDurationTurns(){
 }
 
 
-function roleLiveTopics(character){
+function roleLiveTopics(character,availableOnly=true){
   return sanitizePublicText(String(character.content || ""))
     .split(/[、，,／/|｜]/)
     .map(topic => topic.trim())
-    .filter(topic => topic && topic !== "待設定");
+    .filter(topic => topic && topic !== "待設定" &&
+      (!availableOnly || !roleLiveForbiddenTopic(character,topic)));
 }
 
 function roleLiveSingleTopic(character,hint=""){
   const topics = roleLiveTopics(character);
   const value = String(hint);
   const category = value.match(/^【([^】]+)】/)?.[1];
-  if(category && !/[、，,／/|｜]/.test(category)) return category;
+  if(category && !/[、，,／/|｜]/.test(category) &&
+     !roleLiveForbiddenTopic(character,category)) return category;
   const matches = topics.filter(topic => value.includes(topic));
   if(matches.length === 1) return matches[0];
   const namedTopic = value.match(/^(雜談|聊天|ASMR|遊戲|唱歌|歌回|料理|戶外)(?=[｜|\s]|$)/i)?.[1];
@@ -12912,7 +12927,8 @@ function roleLiveSingleTopic(character,hint=""){
 
 function roleLiveTitleIsMixed(character,title){
   const value = String(title || "").trim();
-  const topics = roleLiveTopics(character);
+  const topics = roleLiveTopics(character,false);
+  if(roleLiveForbiddenTopic(character,value)) return true;
   const bracket = value.match(/^【([^】]+)】/)?.[1] || "";
   const detail = value.replace(/^【[^】]+】/,"")
     .replace(/(?:[｜|]\s*)?(?:直播中|開台中)$/,"").trim();
@@ -12946,7 +12962,8 @@ async function enrichRoleLiveTitle(character, startedAt, topic){
 當場主題：${topic}
 創作者公開資料：${JSON.stringify(publicCharacterContext(character))}
 近期公開 SNS：${JSON.stringify(recentPosts)}
-標題格式為「【${topic}】具體的直播內容」，例如「【雜談】聊聊休假去了哪裡」。
+標題格式為「【主題】具體的直播內容」。純聊天常稱「雜談」，邊唱歌邊聊天可稱「歌雜」，邊喝酒邊聊天可稱「酒雜」，也可以自然寫成「聊天」。
+本場主方向：${topic}。酒雜／飲酒是否允許：${characterActivityLimits(character).liveMayDrink ? "可以依角色設定安排" : "不可安排"}。
 請依公開資料構思符合這場直播的內容；聊天與唱歌等自然搭配可以寫進具體標題，但不要把頻道列出的全部類型原樣串成清單，也不要虛構已發生的私人事件。
 只輸出 JSON：{"title":"【主題】具體內容"}。`,
       maxTokens:200,
@@ -12958,7 +12975,14 @@ async function enrichRoleLiveTitle(character, startedAt, topic){
     const title = sanitizePublicText(String(parseStarwaveLlmJson(result.text).title || "").trim());
     if(!title || roleLiveTitleIsMixed(character,title)) return;
     const category = title.match(/^【([^】]+)】/);
-    if(category && category[1] !== topic && !category[1].includes(topic)) return;
+    const compatibleCategory = category && (
+      category[1] === topic ||
+      category[1].includes(topic) ||
+      (category[1] === "歌雜" && /雜談|聊天|唱歌|歌回/.test(topic)) ||
+      (category[1] === "酒雜" && /雜談|聊天|酒雜|喝酒/.test(topic) &&
+        characterActivityLimits(character).liveMayDrink)
+    );
+    if(category && !compatibleCategory) return;
     const detail = (category ? title.slice(category[0].length) : title).trim();
     if(!detail || detail === "直播中") return;
     character.liveTitle = `【${category ? category[1] : topic}】${detail}`.slice(0,80);
@@ -13983,6 +14007,7 @@ ${JSON.stringify(publicMembers)}
 
 【各角色自己的私人角色設定】
 ${JSON.stringify(selfContexts)}
+各角色須依自己的實際年齡行事：${JSON.stringify(members.map(member => ({id:member.id,rules:characterAgeGuidance(member,"offline")})))}。VTuber 的公開設定年齡不能取代真人年齡；不得替未達法定年齡者安排飲酒、駕車或吸菸。
 
 【本次命中的 Lorebook 條目】
 ${JSON.stringify(lorebookEntries)}
@@ -16581,6 +16606,10 @@ Lorebook 是背景、世界與角色設定資料，
 本次只會提供與這名角色連結，
 並由目前故事關鍵詞命中的條目。
 
+【角色實際年齡與線下行為】
+${characterAgeGuidance(character,"offline")}
+VTuber 在線下以真人年齡判斷；即使公開設定未成年，只要真人年齡確定已成年，線下可依情境飲酒。年齡不明時不要自行假定成年。
+
 【最近線下故事】
 ${JSON.stringify(recentStory)}
 
@@ -19084,6 +19113,7 @@ const publicActivityName =
     id,
     name,
     age:root.age ?? "",
+    performerAge:root.performerAge ?? root.realAge ?? "",
     card:
       formatImportedCharacterCard(raw),
     streamerName:publicActivityName,
@@ -19948,6 +19978,8 @@ $("charPublicDescribe").disabled =
   $("charName").value = character.name;
   $("charStreamerName").value = character.streamerName;
   $("charAge").value = character.age;
+  $("charPerformerAge").value = character.performerAge || "";
+  $("charPerformerAgeField").hidden = character.streamerType !== "vtuber";
   $("charChannel").value = character.channel;
   $("charLiveId").value = character.liveId;
   $("charSnsId").value = character.snsId;
@@ -19977,6 +20009,10 @@ $("charPublicDescribe").disabled =
   renderCharacterMemories();
   renderCharacterLorebookLinks();
 }
+
+$("charStreamerType").onchange = () => {
+  $("charPerformerAgeField").hidden = $("charStreamerType").value !== "vtuber";
+};
 
   function refreshCharacterImageUI(
   character
@@ -20231,6 +20267,60 @@ function extractCharacterCardAppearance(
 }
 
 
+function characterAgeNumber(value){
+  const raw = String(value ?? "").trim();
+  if(!/^\d{1,3}(?:歲)?$/.test(raw)) return null;
+  const age = Number(raw.replace("歲",""));
+  return age >= 0 && age <= 120 ? age : null;
+}
+
+function characterActivityLimits(character){
+  const publicAge = characterAgeNumber(character.age);
+  const actualAge = character.streamerType === "vtuber"
+    ? characterAgeNumber(character.performerAge)
+    : publicAge;
+  return {
+    liveMayDrink:actualAge !== null && actualAge >= 18 &&
+      (character.streamerType !== "vtuber" || publicAge === null || publicAge >= 18),
+    offlineMayDrink:actualAge !== null && actualAge >= 18,
+    mayDrive:actualAge !== null && actualAge >= 18,
+    mayRideHeavyMotorcycle:actualAge !== null && actualAge >= 20,
+    liveMaySmoke:actualAge !== null && actualAge >= 20 &&
+      (character.streamerType !== "vtuber" || publicAge === null || publicAge >= 20),
+    offlineMaySmoke:actualAge !== null && actualAge >= 20
+  };
+}
+
+function characterAgeGuidance(character,scope="live"){
+  const limits = characterActivityLimits(character);
+  const onLive = scope === "live";
+  return [
+    (onLive ? limits.liveMayDrink : limits.offlineMayDrink)
+      ? "飲酒須符合場景與角色設定。" : "不得讓此角色飲酒、酒雜或品酒。",
+    limits.mayDrive
+      ? "駕駛汽車或普通機車須有相應駕照，不得擅自假設已有駕照。"
+      : "不得讓此角色自行開車或騎普通機車。",
+    limits.mayRideHeavyMotorcycle ? "" : "不得讓此角色騎大型重型機車。",
+    "任何年齡都不得安排酒後駕車或無照駕駛。",
+    (onLive ? limits.liveMaySmoke : limits.offlineMaySmoke)
+      ? "" : "不得讓此角色吸菸。",
+    onLive ? "不得公開推測、透露 VTuber 真人年齡或以真人年齡解釋以上限制。" : ""
+  ].filter(Boolean).join(" ");
+}
+
+function roleLiveAlcoholTopic(text){
+  return /酒雜|喝酒|飲酒|品酒|小酌|微醺|啤酒|葡萄酒|紅酒|白酒|清酒|燒酒|威士忌|調酒|烈酒|雞尾酒|酒精直播/i.test(String(text || ""));
+}
+
+function roleLiveForbiddenTopic(character,text){
+  const value = String(text || "");
+  const limits = characterActivityLimits(character);
+  return (!limits.liveMayDrink && roleLiveAlcoholTopic(value)) ||
+    (!limits.mayDrive && /開車|駕車|騎車|機車兜風|自駕/i.test(value)) ||
+    (!limits.liveMaySmoke && /吸菸|抽菸|電子煙/i.test(value)) ||
+    (roleLiveAlcoholTopic(value) && /開車|駕車|騎車|自駕/i.test(value));
+}
+
 function publicCharacterContext(
   character
 ){
@@ -20257,6 +20347,15 @@ function publicCharacterContext(
 
     streamerType:
       character.streamerType || "real",
+
+    liveActivityLimits:(() => {
+      const limits = characterActivityLimits(character);
+      return {
+        canDrink:limits.liveMayDrink,
+        canDrive:limits.mayDrive,
+        canSmoke:limits.liveMaySmoke
+      };
+    })(),
 
     content:
       character.content || "",
@@ -20463,6 +20562,7 @@ $("saveChannelCharacter").onclick = () => {
 
   character.age =
     $("charAge").value;
+  character.performerAge = $("charPerformerAge").value;
 
   character.channel =
     $("charChannel").value.trim() ||
@@ -20517,6 +20617,7 @@ $("addBlankChannel").onclick = () => {
     id,
     name:"新角色",
     age:"",
+    performerAge:"",
     card:"",
     streamerName:"新主播",
     channel:"新頻道",
@@ -22613,7 +22714,7 @@ ${state.community.soft ? "ON" : "OFF"}
 
 每篇可以帶 0～4 則留言。
 角色創作者若在貼文中明確預告近期會開播（例如「今晚開雜談」），
-輸出 plannedLive:true 與相符的 liveTitle，之後系統會安排開播。liveTitle 要寫成一場具體直播；可以自然結合聊天與唱歌，不要直接貼上頻道所有直播類型的清單。
+輸出 plannedLive:true 與相符的 liveTitle，之後系統會安排開播。liveTitle 要寫成一場具體直播；可以自然結合聊天與唱歌，不要直接貼上頻道所有直播類型的清單。角色公開資料中的 liveActivityLimits 若禁止飲酒，就不能預告酒雜或喝酒；也不要公開推測 VTuber 真人年齡。
 普通感想、猜測、否定開播或粉絲發文一律 plannedLive:false。
 
 likes 與 reposts
