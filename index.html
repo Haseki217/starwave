@@ -6132,7 +6132,7 @@ body[data-theme="halloween"] .live-stage{
           id="refreshRoleLive"
           class="primary"
         >
-          重整直播內容／下一段
+          繼續直播內容／下一段
         </button>
 
         <button
@@ -12738,26 +12738,51 @@ function roleLiveDurationTurns(){
 }
 
 
-function roleLiveAutoTitle(
-  character
-){
-  const content =
-    sanitizePublicText(
-      String(
-        character.content || ""
-      ).trim()
-    );
-
-  if(
-    content &&
-    content !== "待設定"
-  ){
-    return `${content}｜直播中`;
-  }
-
-  return "正在直播";
+function roleLiveAutoTitle(character){
+  const topics = sanitizePublicText(String(character.content || ""))
+    .split(/[、，,／/|]/)
+    .map(topic => topic.trim())
+    .filter(topic => topic && topic !== "待設定");
+  const topic = topics.length ? randomItem(topics) : "雜談";
+  return `【${topic}】直播中`;
 }
 
+async function enrichRoleLiveTitle(character, startedAt, topic){
+  const profile = state.api.profiles[state.api.active];
+  if(!String(profile?.apiKey || "").trim() || !String(profile?.model || "").trim()) return;
+  const epoch = rpGenerationEpoch;
+  try{
+    const recentPosts = state.snsPosts
+      .filter(post => post.authorId === character.id)
+      .slice(0,3)
+      .map(post => sanitizePublicText(post.text));
+    const result = await generateWithApi({
+      prompt:`替正在開播的創作者取一個自然、具體的直播標題。
+當場主題：${topic}
+創作者公開資料：${JSON.stringify(publicCharacterContext(character))}
+近期公開 SNS：${JSON.stringify(recentPosts)}
+標題格式為「【${topic}】具體的直播內容」，例如「【雜談】聊聊休假去了哪裡」。
+請依公開資料構思符合當場主題的內容，不要把所有頻道類型串在一起，不要虛構已發生的私人事件。
+只輸出 JSON：{"title":"【主題】具體內容"}。`,
+      maxTokens:200,
+      json:true
+    });
+    if(epoch !== rpGenerationEpoch || !character.live ||
+      character.liveStartedAt !== startedAt ||
+      !state.characters.includes(character)) return;
+    const title = sanitizePublicText(String(parseStarwaveLlmJson(result.text).title || "").trim());
+    if(!title) return;
+    character.liveTitle = title.startsWith("【")
+      ? title.slice(0,80)
+      : `【${topic}】${title}`.slice(0,80);
+    renderExplore();
+    renderSubscriptions();
+    if(currentRoleLiveId === character.id) renderRoleLive();
+    scheduleStarwaveSave();
+  }catch(error){
+    console.error("STARWAVE role live title generation failed:",error);
+  }
+}
 
 function startAutonomousRoleLive(
   character,
@@ -12775,6 +12800,13 @@ function startAutonomousRoleLive(
   character.plannedLiveTurn = 0;
   character.plannedLiveTitle = "";
   character.liveStartedTurn = Number(state.timeSettings.rpTurnCount || 0);
+  const topic = String(options.title || character.content || "");
+  const sceneChoices = /遊戲|PvP|ゲーム/i.test(topic)
+    ? ["gaming","studio","brightRoom"]
+    : /ASMR|睡|夜|雜談/i.test(topic)
+      ? ["nightRoom","living","studio","brightRoom"]
+      : builtInScenes.map(scene => scene.id);
+  character.sceneId = randomItem(sceneChoices);
   character.liveHistory ||= [];
 
   character.viewers =
@@ -12802,6 +12834,11 @@ function startAutonomousRoleLive(
         character
       )
     );
+
+  if(!options.title){
+    const liveTopic = character.liveTitle.match(/^【(.+?)】/)?.[1] || "雜談";
+    void enrichRoleLiveTitle(character,character.liveStartedAt,liveTopic);
+  }
 
   character.liveStory =
     [];
