@@ -12893,7 +12893,7 @@ function advanceRoleLiveRealTime(){
 function liveAwayPending(){
   return realTimeEnabled() && state.live.started &&
     Number(state.live.lastActivityAt)>0 &&
-    Date.now()-state.live.lastActivityAt >= 3*60*1000;
+    Date.now()-state.live.lastActivityAt >= 15*60*1000;
 }
 
 function renderLiveAwayPrompt(){
