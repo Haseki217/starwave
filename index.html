@@ -11705,7 +11705,7 @@ Lorebook 是公開背景與世界設定資料，
 
 【目前直播】
 標題：${role.liveTitle}
-本場唯一主題：${sanitizePublicText(character.liveFocus || role.liveTitle)}
+本場直播方向：${sanitizePublicText(character.liveFocus || role.liveTitle)}
 目前觀看：${character.viewers || 0}
 目前回合：${character.liveTurn || 0}
 已開播：${elapsedLabel}
@@ -11821,7 +11821,7 @@ stageText 中角色說出的台詞與語音，
 
 【stageText】
 生成這一段直播真正發生的內容。
-本場只圍繞上面的唯一主題與標題進行；公開資料中的其他直播類型只是頻道可能做的內容，不代表這場同時要做。不要在同一場突然切換雜談、ASMR、遊戲、唱歌等不同企劃，除非當場標題本來就是該主題。
+請以本場標題與直播方向為主。聊天時唱歌、玩遊戲時聊天等自然搭配可以發生；公開資料中列出的所有直播類型不代表這場都要逐項演一遍，也不要突然切換成無關的大型企劃。
 
 可以包含：
 - 主播正在做什麼
@@ -12911,11 +12911,21 @@ function roleLiveSingleTopic(character,hint=""){
 }
 
 function roleLiveTitleIsMixed(character,title){
-  const value = String(title || "");
+  const value = String(title || "").trim();
+  const topics = roleLiveTopics(character);
   const bracket = value.match(/^【([^】]+)】/)?.[1] || "";
-  const genreList = /(?:雜談|聊天|ASMR|遊戲|唱歌|歌回|料理|戶外)\s*[、，,／/|｜]\s*(?:雜談|聊天|ASMR|遊戲|唱歌|歌回|料理|戶外)/i;
-  return roleLiveTopics(character).filter(topic => value.includes(topic)).length > 1 ||
-    /[、，,／/|｜]/.test(bracket) || genreList.test(value);
+  const detail = value.replace(/^【[^】]+】/,"")
+    .replace(/(?:[｜|]\s*)?(?:直播中|開台中)$/,"").trim();
+  const isCatalog = part => {
+    const entries = part.split(/[、，,／/|｜]/).map(item => item.trim()).filter(Boolean);
+    const naturalPair = entries.length === 2 &&
+      entries.some(item => /雜談|聊天/.test(item));
+    return entries.length >= 2 &&
+      entries.slice(0,Math.min(3,entries.length)).every(item => topics.includes(item)) &&
+      !naturalPair &&
+      (entries.length >= 3 || /直播中|開台中/.test(value));
+  };
+  return isCatalog(bracket) || isCatalog(detail);
 }
 
 function roleLiveAutoTitle(character,topic=roleLiveSingleTopic(character)){
@@ -12937,7 +12947,7 @@ async function enrichRoleLiveTitle(character, startedAt, topic){
 創作者公開資料：${JSON.stringify(publicCharacterContext(character))}
 近期公開 SNS：${JSON.stringify(recentPosts)}
 標題格式為「【${topic}】具體的直播內容」，例如「【雜談】聊聊休假去了哪裡」。
-請依公開資料構思符合當場主題的內容，不要把所有頻道類型串在一起，不要虛構已發生的私人事件。
+請依公開資料構思符合這場直播的內容；聊天與唱歌等自然搭配可以寫進具體標題，但不要把頻道列出的全部類型原樣串成清單，也不要虛構已發生的私人事件。
 只輸出 JSON：{"title":"【主題】具體內容"}。`,
       maxTokens:200,
       json:true
@@ -12948,10 +12958,11 @@ async function enrichRoleLiveTitle(character, startedAt, topic){
     const title = sanitizePublicText(String(parseStarwaveLlmJson(result.text).title || "").trim());
     if(!title || roleLiveTitleIsMixed(character,title)) return;
     const category = title.match(/^【([^】]+)】/);
-    if(category && category[1] !== topic) return;
+    if(category && category[1] !== topic && !category[1].includes(topic)) return;
     const detail = (category ? title.slice(category[0].length) : title).trim();
     if(!detail || detail === "直播中") return;
-    character.liveTitle = `【${topic}】${detail}`.slice(0,80);
+    character.liveTitle = `【${category ? category[1] : topic}】${detail}`.slice(0,80);
+    character.liveFocus = category ? category[1] : topic;
     renderExplore();
     renderSubscriptions();
     if(currentRoleLiveId === character.id) renderRoleLive();
@@ -12983,7 +12994,8 @@ function startAutonomousRoleLive(
     ? String(options.title || "連動").split("｜")[0].trim()
     : roleLiveSingleTopic(character,options.announcement || options.title || "");
   const mixedTitle = !hasCollab && roleLiveTitleIsMixed(character,options.title);
-  character.liveFocus = topic;
+  const titleCategory = String(options.title || "").match(/^【([^】]+)】/)?.[1];
+  character.liveFocus = titleCategory && !mixedTitle ? titleCategory : topic;
   const sceneChoices = /遊戲|PvP|ゲーム/i.test(topic)
     ? ["gaming","studio","brightRoom"]
     : /ASMR|睡|夜|雜談/i.test(topic)
@@ -22601,7 +22613,7 @@ ${state.community.soft ? "ON" : "OFF"}
 
 每篇可以帶 0～4 則留言。
 角色創作者若在貼文中明確預告近期會開播（例如「今晚開雜談」），
-輸出 plannedLive:true 與相符的 liveTitle，之後系統會安排開播。liveTitle 只能是一場直播的一個主題和具體內容，不能把角色的所有直播類型並列。
+輸出 plannedLive:true 與相符的 liveTitle，之後系統會安排開播。liveTitle 要寫成一場具體直播；可以自然結合聊天與唱歌，不要直接貼上頻道所有直播類型的清單。
 普通感想、猜測、否定開播或粉絲發文一律 plannedLive:false。
 
 likes 與 reposts
@@ -26810,8 +26822,10 @@ async function init(){
   state.characters.forEach(character => {
     if(!character.live) return;
     const topic = roleLiveSingleTopic(character,character.liveTitle);
-    character.liveFocus = topic;
-    if(roleLiveTitleIsMixed(character,character.liveTitle)){
+    const catalog = roleLiveTitleIsMixed(character,character.liveTitle);
+    const category = String(character.liveTitle || "").match(/^【([^】]+)】/)?.[1];
+    character.liveFocus = category && !catalog ? category : topic;
+    if(catalog){
       character.liveTitle = roleLiveAutoTitle(character,topic);
       void enrichRoleLiveTitle(character,character.liveStartedAt,topic);
     }
