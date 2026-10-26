@@ -20630,6 +20630,7 @@ async function respondToPublicInteraction(kind, post, playerText, parentId=null)
 黑粉強度：${state.community.blackfan}%；柔和社群：${state.community.soft ? "ON" : "OFF"}。
 只使用公開資訊，不使用角色卡、私人關係、WAVELINK、線下故事或私人記憶。
 由有理由看到內容的角色或粉絲回應，語氣自然，不必每次都是角色本人；不要替玩家發言。
+避免讓同一帳號連續回應玩家；同次生成的回應應由不同帳號發出。
 輸出有效 JSON：{"replies":[{"authorId":"既有帳號 id，若是新粉絲則留空","fanName":"新粉絲名稱或空字串","fanHandle":"@新粉絲ID或空字串","text":"回應文字"}]}。生成 1～2 則。`,
       json:true
     });
@@ -20639,10 +20640,15 @@ async function respondToPublicInteraction(kind, post, playerText, parentId=null)
       : state.forumPosts.includes(post);
     if(!stillExists) return;
     const data = parseStarwaveLlmJson(result.text);
-    (Array.isArray(data.replies) ? data.replies : []).slice(0,2).forEach(raw => {
+    const recentReplies = kind === "sns" ? post.comments : post.replies;
+    const lastResponder = [...(recentReplies || [])].reverse().find(item => item.authorId !== "player");
+    const usedAuthors = new Set();
+    (Array.isArray(data.replies) ? data.replies : []).slice(0,3).forEach(raw => {
       const author = resolveForumAiAuthor(raw,authors);
       const text = sanitizePublicText(String(raw?.text || "").trim());
-      if(!author || !text) return;
+      if(!author || !text || usedAuthors.has(author.id)) return;
+      if(author.id === lastResponder?.authorId && authors.length > 1) return;
+      usedAuthors.add(author.id);
       if(kind === "sns"){
         post.comments.push({id:uid("comment"),parentId:parentId && post.comments.some(item => item.id === parentId) ? parentId : null,authorId:author.id,author:author.name,handle:author.handle,time:currentRpTimeShort(),text,likes:0,likedByPlayer:false});
       }else{
