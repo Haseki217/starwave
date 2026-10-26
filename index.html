@@ -1022,6 +1022,11 @@ textarea::placeholder{
 .live-story-input{
   margin-bottom:.22rem;
   opacity:.88;
+  color:var(--live-player-text,#9be1ff);
+}
+
+.live-story-ai{
+  color:var(--live-ai-text,#ffffff);
 }
 
 .stage-story-entry + .stage-story-entry{
@@ -4119,7 +4124,7 @@ body[data-theme="halloween"] .live-stage{
     <section class="backstage-panel">
 
       <div class="section-head">
-        <h3>我的直播回放</h3>
+        <h3>我的歷史直播</h3>
       </div>
 
       <div id="playerHistory"></div>
@@ -5433,6 +5438,18 @@ body[data-theme="halloween"] .live-stage{
       ></div>
 
     </div>
+
+      <div class="settings-section">
+        <div class="section-head"><h3>直播文字顏色</h3></div>
+        <div class="setting-row">
+          <div><strong>我的文字</strong><small>直播畫面中自己送出的文字顏色。</small></div>
+          <input id="livePlayerTextColor" type="color" value="#9be1ff" aria-label="我的直播文字顏色">
+        </div>
+        <div class="setting-row">
+          <div><strong>AI 生成文字</strong><small>直播畫面中接續劇情的文字顏色。</small></div>
+          <input id="liveAiTextColor" type="color" value="#ffffff" aria-label="AI 生成直播文字顏色">
+        </div>
+      </div>
 
   </div>
 
@@ -7003,6 +7020,7 @@ const state = {
   },
 
   theme:"morning",
+  liveTextColors:{player:"#9be1ff",ai:"#ffffff"},
 
   community:{
     blackfan:0,
@@ -8209,6 +8227,27 @@ function applyTheme(theme){
   renderThemePreviews();
 }
 
+function applyLiveTextColors(){
+  const colors = state.liveTextColors || {};
+  const valid = value => /^#[0-9a-fA-F]{6}$/.test(value || "");
+  const player = valid(colors.player) ? colors.player : "#9be1ff";
+  const ai = valid(colors.ai) ? colors.ai : "#ffffff";
+  $("livePlayerTextColor").value = player;
+  $("liveAiTextColor").value = ai;
+  document.documentElement.style.setProperty("--live-player-text",player);
+  document.documentElement.style.setProperty("--live-ai-text",ai);
+}
+
+["player","ai"].forEach(kind => {
+  const input = $(kind === "player" ? "livePlayerTextColor" : "liveAiTextColor");
+  input.addEventListener("input", () => {
+    state.liveTextColors ||= {};
+    state.liveTextColors[kind] = input.value;
+    applyLiveTextColors();
+    scheduleStarwaveSave();
+  });
+});
+
 function renderThemePreviews(){
   const themes = [
     {
@@ -8888,11 +8927,20 @@ function openPlayerLiveReplay(item){
   $("playerReplayPeak").textContent = `Peak ${fmt(item.peak)}`;
   $("playerReplayStage").style.backgroundImage =
     `url("${sceneById(item.sceneId)?.image || ""}")`;
-  $("playerReplayStory").textContent = Array.isArray(item.stageEntries)
-    ? (item.stageEntries.length
-        ? item.stageEntries.map(sanitizePublicText).join("\n\n")
-        : "這場直播沒有劇情內容。")
-    : "這是舊版留下的直播摘要，當時沒有保存劇情與聊天室，無法還原。";
+  const replayStory = $("playerReplayStory");
+  replayStory.innerHTML = "";
+  if(Array.isArray(item.stageEntries) && item.stageEntries.length){
+    for(let i=0;i<item.stageEntries.length;i++){
+      const entry = document.createElement("div");
+      entry.className = i % 2 === 0 ? "live-story-input" : "live-story-ai";
+      entry.textContent = sanitizePublicText(item.stageEntries[i]);
+      replayStory.append(entry);
+    }
+  }else{
+    replayStory.textContent = Array.isArray(item.stageEntries)
+      ? "這場直播沒有劇情內容。"
+      : "這是舊版留下的直播摘要，當時沒有保存劇情與聊天室，無法還原。";
+  }
   const chat = $("playerReplayChat");
   chat.innerHTML = "";
   (item.chat || []).forEach(line => {
@@ -18004,13 +18052,13 @@ function renderBackstage(){
     actions.className = "mini-actions";
     const watch = document.createElement("button");
     watch.className = "secondary";
-    watch.textContent = "觀看回放";
+    watch.textContent = "觀看重播";
     watch.onclick = () => openPlayerLiveReplay(item);
     const remove = document.createElement("button");
     remove.className = "danger";
     remove.textContent = "刪除";
     remove.onclick = () => showConfirm({
-      title:"永久刪除這場直播回放？",
+      title:"永久刪除這場直播紀錄？",
       message:`確定刪除「${sanitizePublicText(item.title)}」嗎？這場直播的劇情與聊天室紀錄都會刪除，刪除後無法在 STARWAVE 內復原。`,
       okText:"永久刪除",
       onConfirm(){
@@ -26283,6 +26331,7 @@ function fullRender(){
   syncRefreshSelects();
 
   renderThemePreviews();
+  applyLiveTextColors();
   renderApiProfiles();
   renderSyncSettings();
   renderScenePicker();
