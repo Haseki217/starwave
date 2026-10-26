@@ -7039,6 +7039,7 @@ const state = {
   timeSettings:{
   useRealTime:false,
   lastRoleLiveTick:0,
+  lastRoleViewerTick:0,
   rpTurnCount:0
 },
 
@@ -8408,6 +8409,7 @@ $("realTimeSwitch").onclick = () => {
   state.timeSettings.useRealTime =
     !realTimeEnabled();
   state.timeSettings.lastRoleLiveTick = Date.now();
+  state.timeSettings.lastRoleViewerTick = Date.now();
   if(state.live.started) state.live.lastActivityAt = Date.now();
   renderLiveAwayPrompt();
 
@@ -12937,11 +12939,11 @@ function startAutonomousRoleLive(
   character.sceneId = randomItem(sceneChoices);
   character.liveHistory ||= [];
 
-  character.viewers =
-    0;
+  character.viewers = realTimeEnabled()
+    ? Math.floor(20 + Math.random() * 80)
+    : 0;
 
-  character.peak =
-    0;
+  character.peak = character.viewers;
 
   character.liveTurn =
     0;
@@ -13097,6 +13099,18 @@ function stopAutonomousRoleLive(
 }
 
 
+function advanceRoleLiveViewerRealTime(now=Date.now()){
+  if(!realTimeEnabled() || !starwavePersistenceReady) return;
+  const minute = 60*1000;
+  const last = Number(state.timeSettings.lastRoleViewerTick) || now;
+  const elapsed = Math.min(30,Math.floor(Math.max(0,now-last)/minute));
+  if(!elapsed) return;
+  state.timeSettings.lastRoleViewerTick = now-((now-last)%minute);
+  if(!state.characters.some(character => character.live)) return;
+  advanceRoleLiveMetrics(elapsed,last,now);
+  scheduleStarwaveSave();
+}
+
 function advanceRoleLiveRealTime(){
   if(!realTimeEnabled() || !starwavePersistenceReady) return;
   const now = Date.now(), interval = 30*60*1000;
@@ -13115,10 +13129,12 @@ function advanceRoleLiveRealTime(){
         }
       });
     if(ended){renderExplore();renderSubscriptions();scheduleStarwaveSave();}
+    advanceRoleLiveViewerRealTime(now);
     return;
   }
   state.timeSettings.lastRoleLiveTick = now-((now-last)%interval);
   for(let i=0;i<elapsed;i++) advanceRoleLiveLifecycle(last+(i+1)*interval);
+  advanceRoleLiveViewerRealTime(now);
   scheduleStarwaveSave();
 }
 
@@ -13399,50 +13415,37 @@ function advanceRoleLiveLifecycle(tickAt=Date.now()){
   scheduleStarwaveSave();
 }
   
-function advanceRoleLiveMetrics(){
+function advanceRoleLiveMetrics(steps=1,since=0,now=Date.now()){
   state.characters
     .filter(character => character.live)
     .forEach(character => {
-      const scale =
-        Math.max(
-          2,
-          Math.round(character.viewers * .009)
-        );
+      const startedAt = Number(character.liveStartedAt) || since;
+      const count = since
+        ? Math.min(steps,Math.max(0,Math.ceil((now-Math.max(since,startedAt))/60000)))
+        : 1;
 
-      const delta =
-        randomItem([
-          -scale,
-          -Math.round(scale/2),
-          0,
-          0,
-          Math.round(scale/2),
-          scale
-        ]);
-
-      character.viewers =
-        Math.max(
-          0,
-          character.viewers + delta
-        );
-
-      character.peak =
-        Math.max(
-          character.peak || 0,
-          character.viewers
-        );
+      for(let i=0;i<count;i++){
+        if(since && character.viewers <= 0){
+          character.viewers = Math.floor(20 + Math.random() * 80);
+        }else{
+          const scale = Math.max(2,Math.round(character.viewers * .009));
+          const half = Math.max(1,Math.round(scale/2));
+          const delta = since
+            ? randomItem([-scale,-half,half,scale])
+            : randomItem([-scale,-half,0,0,half,scale]);
+          character.viewers = Math.max(0,character.viewers + delta);
+        }
+        character.peak = Math.max(character.peak || 0,character.viewers);
+      }
     });
 
   renderExplore();
   renderSubscriptions();
 
-  if(
-    currentRoleLiveId &&
-    !$("roleLiveOverlay").hidden
-  ){
+  if(currentRoleLiveId && !$("roleLiveOverlay").hidden){
     renderRoleLive();
   }
 }
-
 function looksLikeMeetingInvite(text){
   return /見面|碰面|約出去|私下見|一起出去|約你|出來吃|出來喝|咖啡|吃飯/.test(text);
 }
@@ -23408,8 +23411,10 @@ function countRpTurn(summary){
   state.timeSettings.rpTurnCount = Number(state.timeSettings.rpTurnCount || 0) + 1;
   state.memorySettings.counter++;
 
-  advanceRoleLiveMetrics();
-  if(!realTimeEnabled()) advanceRoleLiveLifecycle();
+  if(!realTimeEnabled()){
+    advanceRoleLiveMetrics();
+    advanceRoleLiveLifecycle();
+  }
   pruneRoleLiveHistory();
 
   if(
@@ -26213,6 +26218,7 @@ async event => {
   state.memorySettings.counter = 0;
   state.timeSettings.rpTurnCount = 0;
   state.timeSettings.lastRoleLiveTick = Date.now();
+  state.timeSettings.lastRoleViewerTick = Date.now();
 
 
   /* WAVELINK
@@ -26719,6 +26725,7 @@ async function init(){
   await starwaveSync.init();
   if(realTimeEnabled()){
     state.timeSettings.lastRoleLiveTick ||= Date.now();
+    state.timeSettings.lastRoleViewerTick ||= Date.now();
     if(state.live.started) state.live.lastActivityAt ||= Date.now();
     advanceRoleLiveRealTime();
     renderLiveAwayPrompt();
