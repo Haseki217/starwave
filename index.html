@@ -11894,6 +11894,9 @@ async function generateRoleLiveNext(
   const oldButtonText =
     button.textContent;
 
+  if(button.disabled) return false;
+  $("sendRoleLiveComment").disabled = true;
+  $("sendRoleDonation").disabled = true;
 
   button.disabled =
     true;
@@ -12268,6 +12271,8 @@ async function generateRoleLiveNext(
 
     button.textContent =
       oldButtonText;
+    $("sendRoleLiveComment").disabled = false;
+    $("sendRoleDonation").disabled = false;
   }
 }
 
@@ -12464,9 +12469,10 @@ $("sendRoleLiveComment").onclick = () => {
   $("roleLiveComment").value = "";
 
   renderRoleLive();
+  void generateRoleLiveNext(character);
 };
 
-$$("[data-donation-amount]").forEach(button => {
+$("[data-donation-amount]").forEach(button => {
   button.onclick = () => {
     selectedDonationAmount =
       Number(button.dataset.donationAmount);
@@ -12535,6 +12541,7 @@ $("sendRoleDonation").onclick = () => {
   syncNumbers();
   renderLedger();
   renderRoleLive();
+  void generateRoleLiveNext(character);
 };
 
 $("closeRoleLive").onclick = () => {
