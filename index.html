@@ -12771,6 +12771,9 @@ function startAutonomousRoleLive(
   character.live =
     true;
   character.liveStartedAt = Number(options.startedAt) || Date.now();
+  character.plannedLiveAt = 0;
+  character.plannedLiveTurn = 0;
+  character.plannedLiveTitle = "";
   character.liveStartedTurn = Number(state.timeSettings.rpTurnCount || 0);
   character.liveHistory ||= [];
 
@@ -13098,10 +13101,13 @@ function advanceRoleLiveLifecycle(tickAt=Date.now()){
               character.id
             )
         )
-        .sort(
-          () =>
-            Math.random() - .5
-        );
+        .sort((a,b) => {
+          const due = character => character.plannedLiveAt &&
+            (realTimeEnabled()
+              ? tickAt >= character.plannedLiveAt
+              : state.timeSettings.rpTurnCount >= character.plannedLiveTurn);
+          return Number(due(b)) - Number(due(a)) || Math.random() - .5;
+        });
 
 
     /* 角色在背景自行談妥連動，玩家只看見開播後的雙視角。 */
@@ -13164,13 +13170,22 @@ function advanceRoleLiveLifecycle(tickAt=Date.now()){
         );
 
 
+      if(character.plannedLiveAt &&
+        !(realTimeEnabled()
+          ? tickAt >= character.plannedLiveAt
+          : state.timeSettings.rpTurnCount >= character.plannedLiveTurn)) continue;
+
       if(
+        (character.plannedLiveAt &&
+          (realTimeEnabled()
+            ? tickAt >= character.plannedLiveAt
+            : state.timeSettings.rpTurnCount >= character.plannedLiveTurn)) ||
         offlineTurns >= 10 ||
         Math.random() < chance
       ){
         startAutonomousRoleLive(
           character,
-          {startedAt:tickAt}
+          {startedAt:tickAt,title:character.plannedLiveTitle || undefined}
         );
 
         liveCount++;
@@ -22342,6 +22357,9 @@ ${state.community.soft ? "ON" : "OFF"}
 最多生成 ${count} 篇。
 
 每篇可以帶 0～4 則留言。
+角色創作者若在貼文中明確預告近期會開播（例如「今晚開雜談」），
+輸出 plannedLive:true 與相符的 liveTitle，之後系統會安排開播。
+普通感想、猜測、否定開播或粉絲發文一律 plannedLive:false。
 
 likes 與 reposts
 請給合理非負整數，
@@ -22388,6 +22406,8 @@ null
       "fanName":"新粉絲顯示名稱",
       "fanHandle":"@new_fan",
       "text":"貼文內容",
+      "plannedLive":false,
+      "liveTitle":"",
       "likes":12,
       "reposts":1,
       "comments":[
@@ -22764,6 +22784,15 @@ async function generateSnsNow(
               builtComments
           });
 
+
+          const plannedCharacter = getCharacter(author.id);
+          if(plannedCharacter && rawPost.plannedLive === true && !plannedCharacter.live){
+            plannedCharacter.plannedLiveAt = Date.now() + 60*60*1000;
+            plannedCharacter.plannedLiveTurn = Number(state.timeSettings.rpTurnCount || 0) + 2;
+            plannedCharacter.plannedLiveTitle =
+              sanitizePublicText(String(rawPost.liveTitle || "").trim()) ||
+              "雜談｜直播中";
+          }
 
           changed++;
         }
