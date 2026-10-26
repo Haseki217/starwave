@@ -11264,19 +11264,67 @@ $("resizeLive").onclick = () => {
   }
 };
 
-$("rememberLive").onclick = () => {
-  if(!state.live.lastText){
+async function summarizeLiveMemory(title, turns){
+  const profile = state.api.profiles[state.api.active];
+  if(!profile || !String(profile.apiKey || "").trim() ||
+     !String(profile.model || "").trim()){
+    showNotice(
+      "尚未設定可用的 LLM",
+      "請先到「設定 → LLM/API」設定 API Key、模型，並切換到要使用的 API Profile。"
+    );
+    return "";
+  }
+
+  const result = await generateWithApi({
+    profileIndex:state.api.active,
+    prompt:`請根據以下最近 ${turns.length} 個直播 RP 回合，整理一則事件記憶的大綱。
+直播標題：${sanitizePublicText(title || "")}
+回合內容：${JSON.stringify(turns)}
+只記錄實際發生的重要行動、互動與進展；依時間順序概括，不要逐句轉貼、只摘最後一句、捏造未發生的事或預測後續。
+這是公開直播記憶，只能使用以上公開內容。請用台灣繁體中文寫成一段簡短、可供日後回想的摘要。
+只輸出有效 JSON：{"summary":"摘要"}`,
+    systemInstruction:"你是 STARWAVE 的公開直播事件記憶整理助手。只根據提供的直播內容概括已發生的事，輸出有效 JSON。",
+    json:true
+  });
+  const summary = sanitizePublicText(
+    String(parseStarwaveLlmJson(result.text).summary || "").trim()
+  );
+  if(!summary) throw new Error("AI 沒有產生事件摘要，尚未新增記憶。");
+  return summary;
+}
+
+$("rememberLive").onclick = async () => {
+  const entries = state.live.stageEntries || [];
+  const turns = [];
+  for(let i=Math.max(0,entries.length - 10);i<entries.length;i+=2){
+    turns.push({
+      player:sanitizePublicText(entries[i] || ""),
+      story:sanitizePublicText(entries[i + 1] || "")
+    });
+  }
+  if(!turns.length){
     toast("目前沒有新的直播內容");
     return;
   }
 
-  addMemory(
-    `直播事件：${state.live.lastText}`,
-    "public",
-    ["player"]
-  );
-
-  toast("已加入事件記憶");
+  const button = $("rememberLive");
+  button.disabled = true;
+  const epoch = rpGenerationEpoch;
+  const latest = entries.at(-1);
+  toast("正在整理最近 5 個直播回合……");
+  try{
+    const summary = await summarizeLiveMemory(state.player.title,turns);
+    if(!summary || epoch !== rpGenerationEpoch ||
+       !state.live.started || state.live.stageEntries.at(-1) !== latest) return;
+    addMemory(`直播事件：${summary}`,"public",["player"]);
+    scheduleStarwaveSave();
+    toast("已加入公開事件記憶");
+  }catch(error){
+    console.error("STARWAVE live memory summary failed:",error);
+    showNotice("整理直播記憶失敗",error?.message || "請稍後再試，尚未新增記憶。");
+  }finally{
+    button.disabled = false;
+  }
 };
 
 let currentRoleLiveId = "";
@@ -12441,21 +12489,41 @@ function renderRoleLive(){
     $("roleLiveChat").scrollHeight;
 }
 
-$("rememberRoleLive").onclick = () => {
+$("rememberRoleLive").onclick = async () => {
   if(currentRoleLiveReplay) return;
   const character = getCharacter(currentRoleLiveId);
-  const latest = character?.liveStory?.at(-1)?.text;
-  if(!character || !latest){
+  const segments = (character?.liveStory || []).slice(-5);
+  if(!character || !segments.length){
     toast("目前沒有新的直播內容");
     return;
   }
-  addMemory(
-    `${publicName(character)} 的直播：${sanitizePublicText(latest)}`,
-    "public",
-    ["player",character.id]
-  );
-  scheduleStarwaveSave();
-  toast("已加入公開事件記憶");
+
+  const button = $("rememberRoleLive");
+  button.disabled = true;
+  const epoch = rpGenerationEpoch;
+  const latestId = segments.at(-1).id;
+  toast("正在整理最近 5 個直播回合……");
+  try{
+    const summary = await summarizeLiveMemory(
+      character.liveTitle || publicName(character),
+      segments.map(segment => sanitizePublicText(segment.text || ""))
+    );
+    if(!summary || epoch !== rpGenerationEpoch || currentRoleLiveReplay ||
+       currentRoleLiveId !== character.id ||
+       getCharacter(character.id)?.liveStory?.at(-1)?.id !== latestId) return;
+    addMemory(
+      `${publicName(character)} 的直播：${summary}`,
+      "public",
+      ["player",character.id]
+    );
+    scheduleStarwaveSave();
+    toast("已加入公開事件記憶");
+  }catch(error){
+    console.error("STARWAVE role live memory summary failed:",error);
+    showNotice("整理直播記憶失敗",error?.message || "請稍後再試，尚未新增記憶。");
+  }finally{
+    button.disabled = false;
+  }
 };
 
 $("refreshRoleLive").onclick =
