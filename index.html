@@ -20608,6 +20608,58 @@ $("forumBack").onclick = () => {
   $("forumDetail").classList.remove("open");
 };
 
+const publicReplyPending = new Set();
+
+async function respondToPublicInteraction(kind, post, playerText, parentId=null){
+  if(state.refresh[kind] === "off") return;
+  const key = kind + ":" + post.id;
+  if(publicReplyPending.has(key)) return;
+  const authors = kind === "sns" ? snsPublicAuthors() : forumPublicAuthors();
+  const epoch = rpGenerationEpoch;
+  publicReplyPending.add(key);
+  try{
+    const context = kind === "sns"
+      ? {text:sanitizePublicText(post.text), comments:(post.comments || []).slice(-6).map(item => ({id:item.id,author:publicAuthor(item.authorId,item.author),text:sanitizePublicText(item.text)}))}
+      : {title:sanitizePublicText(post.title),body:sanitizePublicText(post.body),replies:(post.replies || []).slice(-6).map(item => ({id:item.id,author:publicAuthor(item.authorId,item.author),text:sanitizePublicText(item.text)}))};
+    const result = await generateWithApi({
+      prompt:`你正在模擬 STARWAVE 的公開${kind === "sns" ? "SNS" : "論壇"}。
+玩家剛剛在下面這篇內容發言。請只生成對這次發言的自然回應，不建立新貼文或其他討論串。
+公開貼文：${JSON.stringify(context)}
+玩家剛發出的文字：${JSON.stringify(sanitizePublicText(playerText))}
+可用的公開帳號：${JSON.stringify(authors)}
+黑粉強度：${state.community.blackfan}%；柔和社群：${state.community.soft ? "ON" : "OFF"}。
+只使用公開資訊，不使用角色卡、私人關係、WAVELINK、線下故事或私人記憶。
+由有理由看到內容的角色或粉絲回應，語氣自然，不必每次都是角色本人；不要替玩家發言。
+輸出有效 JSON：{"replies":[{"authorId":"既有帳號 id，若是新粉絲則留空","fanName":"新粉絲名稱或空字串","fanHandle":"@新粉絲ID或空字串","text":"回應文字"}]}。生成 1～2 則。`,
+      json:true
+    });
+    if(epoch !== rpGenerationEpoch) return;
+    const stillExists = kind === "sns"
+      ? state.snsPosts.includes(post)
+      : state.forumPosts.includes(post);
+    if(!stillExists) return;
+    const data = parseStarwaveLlmJson(result.text);
+    (Array.isArray(data.replies) ? data.replies : []).slice(0,2).forEach(raw => {
+      const author = resolveForumAiAuthor(raw,authors);
+      const text = sanitizePublicText(String(raw?.text || "").trim());
+      if(!author || !text) return;
+      if(kind === "sns"){
+        post.comments.push({id:uid("comment"),parentId:parentId && post.comments.some(item => item.id === parentId) ? parentId : null,authorId:author.id,author:author.name,handle:author.handle,time:currentRpTimeShort(),text,likes:0,likedByPlayer:false});
+      }else{
+        post.replies.push({id:uid("fr"),parentId:parentId && post.replies.some(item => item.id === parentId) ? parentId : null,authorId:author.id,author:author.name,time:currentRpTimeShort(),text});
+      }
+    });
+    if(kind === "sns") renderSns();
+    else {renderForum();if(currentForumId === post.id) renderForumThread();}
+    scheduleStarwaveSave();
+  }catch(error){
+    console.error("STARWAVE public reply failed:",error);
+    toast("回應暫時未完成，可稍後重試");
+  }finally{
+    publicReplyPending.delete(key);
+  }
+}
+
 $("sendForumReply").onclick = () => {
   const post =
     state.forumPosts.find(
@@ -20624,9 +20676,10 @@ $("sendForumReply").onclick = () => {
     return;
   }
 
+  const replyParentId = forumReplyParentId;
   post.replies.push({
     id:uid("fr"),
-    parentId:forumReplyParentId,
+    parentId:replyParentId,
     author:state.player.name,
     authorId:"player",
     time:currentRpTimeShort(),
@@ -20640,6 +20693,7 @@ $("sendForumReply").onclick = () => {
 
   renderForumThread();
   renderForum();
+  void respondToPublicInteraction("forum",post,text,replyParentId);
 };
 
 function forumPublicAuthors(){
@@ -21676,6 +21730,7 @@ mainSend.textContent = "↑";
       });
 
       renderSns();
+      void respondToPublicInteraction("sns",post,value);
     };
 
     mainReply.append(mainInput,mainSend);
@@ -21930,6 +21985,7 @@ send.textContent = "↑";
         snsReplyTargets[post.id] = null;
 
         renderSns();
+        void respondToPublicInteraction("sns",post,value,comment.id);
       };
 
       replyBox.append(input,send);
@@ -21975,6 +22031,7 @@ $("sendSns").onclick = () => {
   $("snsInput").value = "";
 
   renderSns();
+  void respondToPublicInteraction("sns",state.snsPosts[0],text);
 };
 
 function snsPublicAuthors(){
