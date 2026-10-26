@@ -12472,7 +12472,7 @@ $("sendRoleLiveComment").onclick = () => {
   void generateRoleLiveNext(character);
 };
 
-$("[data-donation-amount]").forEach(button => {
+$$("[data-donation-amount]").forEach(button => {
   button.onclick = () => {
     selectedDonationAmount =
       Number(button.dataset.donationAmount);
