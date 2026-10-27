@@ -11853,6 +11853,9 @@ ${characterAgeGuidance(character,"live")}
 一般約 1～3 段。每段描述一個連貫的動作或話題；不同段落之間必須換行並空一行（JSON 字串使用 \\n\\n），不要把所有敘事擠成一大段。
 不要只寫一句「主播繼續直播」。
 
+【liveBreak】
+只有主播在本段直播內容明確公開宣布自己即將休假或旅行、那段時間暫停開台時，才輸出 {"startInDays":0,"durationDays":3,"longBreak":false}；今天起為 0，明天起為 1，休息 1～14 天，明確長假才填 longBreak:true。一般閒聊或只是提到旅行填 null。這是內部排程資訊，不要在直播台詞中提 RP 回合。
+
 【viewerDelta】
 本段觀看人數變化，可正、負或 0。
 
@@ -11918,6 +11921,7 @@ amount 必須為 0。
 
 {
   "stageText": "直播敘事",
+  "liveBreak": null,
   "viewerDelta": 0,
   "guestVisit": null,
   "comments": [
@@ -12109,6 +12113,7 @@ async function generateRoleLiveNext(
       id:uid("segment"),
       text:storyText
     });
+    if(!character.isReplayGeneration) applyRoleLiveBreak(character,stageText,data.liveBreak);
     if(!character.isReplayGeneration) character.liveLastGeneratedAt = Date.now();
     if(hasGuest){
       const life = peerLifeState();
@@ -12981,7 +12986,33 @@ function roleLiveSceneFor(title,startedAt){
   if(/ASMR|睡|晚安/.test(value)) return night ? "nightRoom" : "studio";
   return night ? "nightRoom" : "brightRoom";
 }
+function roleLiveOnBreak(character,tickAt){
+  if(realTimeEnabled()){
+    return tickAt >= Number(character.liveBreakStartAt || 0) &&
+      tickAt < Number(character.liveBreakUntilAt || 0);
+  }
+  const turn = Number(state.timeSettings.rpTurnCount || 0);
+  return turn >= Number(character.liveBreakStartTurn || 0) &&
+    turn < Number(character.liveBreakUntilTurn || 0);
+}
+function applyRoleLiveBreak(character,text,raw){
+  if(!character || !raw || !/(休假|請假|放假|旅行|旅遊|出遊|度假|暫停開台|暫停直播)/.test(text) ||
+    /(休假結束|旅行結束|回來了|回國了|已經回來|取消休假|不休假)/.test(text)) return;
+  const days = Number(raw.durationDays);
+  if(!Number.isInteger(days) || days < 1 || days > 14) return;
+  const offset = Number(raw.startInDays);
+  if(!Number.isInteger(offset) || offset < 0 || offset > 14) return;
+  const now = Date.now();
+  const turn = Number(state.timeSettings.rpTurnCount || 0);
+  const startAt = now + offset * 24*60*60*1000;
+  const startTurn = turn + offset * 10;
+  character.liveBreakStartAt = startAt;
+  character.liveBreakUntilAt = startAt + days * 24*60*60*1000;
+  character.liveBreakStartTurn = startTurn;
+  character.liveBreakUntilTurn = startTurn + (raw.longBreak === true ? 100 : Math.min(100,Math.max(10,days*10)));
+}
 function roleLiveCanStartToday(character,tickAt){
+  if(roleLiveOnBreak(character,tickAt)) return false;
   if(!realTimeEnabled()) return true;
   const day = new Date(tickAt).toDateString();
   const starts = (character.liveHistory || []).map(record => Number(record.startedAt || 0));
@@ -13409,7 +13440,7 @@ function advanceRoleLiveLifecycle(tickAt=Date.now()){
 
       character.liveOfflineTurns =
         Math.min(
-          10,
+          20,
           offlineTurns + 1
         );
     });
@@ -13422,13 +13453,9 @@ function advanceRoleLiveLifecycle(tickAt=Date.now()){
     ).length;
 
 
-  /* 同時最多兩名匯入角色直播 */
+  /* 角色各自決定是否開播，不限制同時直播的人數。 */
 
-  const maxLive =
-    Math.min(
-      2,
-      characters.length
-    );
+  const maxLive = characters.length;
 
 
   if(liveCount < maxLive){
@@ -13501,16 +13528,13 @@ function advanceRoleLiveLifecycle(tickAt=Date.now()){
         離線越久，
         開播可能性逐漸提高。
 
-        最晚累積到 10 個 RP 回合
-        就會自動開播。
+        RP 模式最晚累積到 20 個回合就會開播。
+        現實時間不保證每天都開台。
       */
 
-      const chance =
-        Math.min(
-          .30,
-          .05 +
-          offlineTurns * .025
-        );
+      const chance = realTimeEnabled()
+        ? .025
+        : Math.min(.30,.05 + offlineTurns * .0125);
 
 
       if(character.plannedLiveAt &&
@@ -13526,8 +13550,8 @@ function advanceRoleLiveLifecycle(tickAt=Date.now()){
           (realTimeEnabled()
             ? tickAt >= character.plannedLiveAt
             : state.timeSettings.rpTurnCount >= character.plannedLiveTurn)) ||
-        (offlineTurns >= 10 && !alreadyToday) ||
-        Math.random() < chance * (alreadyToday ? .03 : 1)
+        (!realTimeEnabled() && offlineTurns >= 20) ||
+        Math.random() < chance * (alreadyToday ? .20 : 1)
       ){
         startAutonomousRoleLive(
           character,
@@ -22767,6 +22791,7 @@ ${state.community.soft ? "ON" : "OFF"}
 最多生成 ${count} 篇。
 
 每篇可以帶 0～4 則留言。
+角色創作者若明確公開說自己即將休假、旅行而暫停開台，liveBreak 才填起始天數 startInDays（今天為 0）與休息天數 durationDays（1～14）；明確是長假時 longBreak:true。沒有明確宣布暫停開台填 null，粉絲貼文也填 null。休假期間不要預告開播。
 角色創作者若在貼文中明確預告近期會開播（例如「今晚開雜談」），
 輸出 plannedLive:true 與相符的 liveTitle，之後系統會安排開播。liveTitle 要寫成一場具體直播；可以自然結合聊天與唱歌，不要直接貼上頻道所有直播類型的清單。角色公開資料中的 liveActivityLimits 若禁止飲酒，就不能預告酒雜或喝酒；也不要公開推測 VTuber 真人年齡。
 普通感想、猜測、否定開播或粉絲發文一律 plannedLive:false。
@@ -22818,6 +22843,7 @@ null
       "text":"貼文內容",
       "plannedLive":false,
       "liveTitle":"",
+      "liveBreak":null,
       "likes":12,
       "reposts":1,
       "comments":[
@@ -23196,7 +23222,9 @@ async function generateSnsNow(
 
 
           const plannedCharacter = getCharacter(author.id);
-          if(plannedCharacter && rawPost.plannedLive === true && !plannedCharacter.live){
+          if(plannedCharacter) applyRoleLiveBreak(plannedCharacter,text,rawPost.liveBreak);
+          if(plannedCharacter && rawPost.plannedLive === true && !plannedCharacter.live &&
+            !rawPost.liveBreak && !roleLiveOnBreak(plannedCharacter,Date.now())){
             plannedCharacter.plannedLiveAt = Date.now() + 60*60*1000;
             plannedCharacter.plannedLiveTurn = Number(state.timeSettings.rpTurnCount || 0) + 2;
             plannedCharacter.plannedLiveTitle =
