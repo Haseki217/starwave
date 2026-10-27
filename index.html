@@ -22033,16 +22033,12 @@ function toggleLike(target){
   }
 }
 
-function snsAiRepliesToComment(text,parent){
-  if(!parent) return false;
-  const value = String(text || "").trim();
-  const handle = String(parent.handle || "").trim();
-  const name = String(parent.author || "").trim();
-  return Boolean(
-    (handle && value.includes(handle)) ||
-    (name.length >= 2 && value.includes(name)) ||
-    /^(?:樓上|你說|你提到|你剛剛|你的留言|你也是)[：:，,！!\s]/.test(value)
-  );
+function snsAiRepliesToComment(parent,quote,postText){
+  if(!parent || parent.parentId) return false;
+  const phrase = String(quote || "").trim();
+  return phrase.length >= 3 &&
+    String(parent.text || "").includes(phrase) &&
+    !String(postText || "").includes(phrase);
 }
 
 function snsChildren(post,parentId){
@@ -22890,7 +22886,8 @@ null
 = 回覆同一篇 comments 中
 更早出現的留言索引，
 從 0 開始。
-只有文字明確在回應該留言（例如點名對方、回答對方問題）時才能填索引；只是同樣回應貼文主樓，即使排在另一則留言後面也必須填 null。兩位粉絲各自對主樓發表感想時，兩則 replyTo 都是 null。
+只有內容真的接續那則留言（例如回答對方的問題、接續對方的看法）才填索引，不需要點名對方。若兩位粉絲各自回應貼文，兩則 replyTo 都是 null。
+replyToQuote 必須摘錄被回覆留言中獨有、連續至少三字的原文，不能引用貼文主樓；直接回貼文時 replyToQuote 填空字串。
 
 最多一層回覆即可。
 
@@ -22909,7 +22906,7 @@ null
 
 若要回覆既有留言，
 必須使用該貼文中
-真正存在的 comment id，且文字要明確接續那則留言。若只是回應貼文主樓，填 null。
+真正存在的 comment id，且文字要真的接續該留言，不需點名對方。若只是回應貼文主樓，填 null。replyToQuote 同樣要摘錄目標留言獨有的連續原文（至少三字），直接回主樓時填空字串。
 
 不需要每次都追加留言。
 同一篇貼文請避免由最近留言過的同一帳號在下一次更新時接連發言；可換其他帳號，或略過這篇。
@@ -22934,7 +22931,8 @@ null
           "fanName":"另一名粉絲",
           "fanHandle":"@another_fan",
           "text":"留言內容",
-          "replyTo":null
+          "replyTo":null,
+          "replyToQuote":""
         }
       ]
     }
@@ -22947,7 +22945,8 @@ null
       "fanName":"新粉絲顯示名稱",
       "fanHandle":"@new_fan",
       "text":"留言內容",
-      "replyToCommentId":null
+      "replyToCommentId":null,
+      "replyToQuote":""
     }
   ]
 }
@@ -22958,11 +22957,66 @@ null
       "postId":"既有 SNS id",
       "authorId":"帳號 id",
       "text":"留言內容",
-      "replyToCommentId":null
+      "replyToCommentId":null,
+      "replyToQuote":""
     }
   ]
 }
 `;
+}
+
+let snsLegacyReplyReviewing = false;
+async function reviewLegacySnsAiReplies(){
+  if(snsLegacyReplyReviewing) return;
+  const profile = state.api.profiles[state.api.active];
+  if(!String(profile?.apiKey || "").trim() || !String(profile?.model || "").trim()) return;
+  snsLegacyReplyReviewing = true;
+  const epoch = rpGenerationEpoch;
+  const attempted = new Set();
+  try{
+    while(epoch === rpGenerationEpoch){
+      const candidates = state.snsPosts.flatMap(post =>
+        (post.comments || []).filter(comment => {
+          if(!comment.parentId || comment.aiReplyVerified || comment.authorId === "player" ||
+            attempted.has(comment.id)) return false;
+          const parent = snsCommentById(post,comment.parentId);
+          return parent && parent.authorId !== "player";
+        }).map(comment => ({post,comment,parent:snsCommentById(post,comment.parentId)}))
+      ).slice(0,20);
+      if(!candidates.length) break;
+      candidates.forEach(({comment}) => attempted.add(comment.id));
+      const result = await generateWithApi({
+        prompt:`判斷下列 SNS 留言是否真的在接續指定的上一則留言，還是其實直接回應貼文主樓。
+不必點名對方才能算回覆。重點是內容是否承接上則留言獨有的問題、意見或敘述；若兩則只是各自對主樓表示期待，replyToParent 必須是 false。
+資料：${JSON.stringify(candidates.map(({post,comment,parent}) => ({
+          id:comment.id,post:post.text,parent:parent.text,comment:comment.text
+        })))}
+只輸出 JSON：{"results":[{"id":"留言 id","replyToParent":false}]}。`,
+        maxTokens:Math.min(1200,100+candidates.length*45),
+        json:true
+      });
+      if(epoch !== rpGenerationEpoch) break;
+      const decisions = parseStarwaveLlmJson(result.text).results;
+      if(!Array.isArray(decisions)) break;
+      let changed = false;
+      candidates.forEach(({post,comment,parent}) => {
+        if(!post.comments.includes(comment) || comment.parentId !== parent.id) return;
+        const decision = decisions.find(item => item.id === comment.id);
+        if(typeof decision?.replyToParent !== "boolean") return;
+        comment.aiReplyVerified = true;
+        if(!decision.replyToParent){
+          comment.parentId = null;
+          changed = true;
+        }
+      });
+      if(changed) renderSns();
+      scheduleStarwaveSave();
+    }
+  }catch(error){
+    console.error("STARWAVE SNS reply review failed:",error);
+  }finally{
+    snsLegacyReplyReviewing = false;
+  }
 }
 
 function resolveSnsAiAuthor(
@@ -23230,7 +23284,7 @@ async function generateSnsNow(
 
                     const parent = builtComments[index];
                     if(!parent.parentId &&
-                      snsAiRepliesToComment(commentText,parent)){
+                      snsAiRepliesToComment(parent,rawComment.replyToQuote,text)){
                       parentId = parent.id;
                     }
                   }
@@ -23258,6 +23312,7 @@ async function generateSnsNow(
 
                   text:
                     commentText,
+                  aiReplyVerified:true,
 
                   likes:0,
 
@@ -23395,7 +23450,7 @@ async function generateSnsNow(
 
 
             if(parent && !parent.parentId &&
-              snsAiRepliesToComment(text,parent)){
+              snsAiRepliesToComment(parent,rawComment.replyToQuote,post.text)){
               parentId = parent.id;
             }
           }
@@ -23421,6 +23476,7 @@ async function generateSnsNow(
               currentRpTimeShort(),
 
             text,
+            aiReplyVerified:true,
 
             likes:0,
 
@@ -26088,7 +26144,10 @@ if(state.api.active === index){
 }
 
 toast(`API Profile ${index+1} 已儲存`);
-      if(state.api.active === index) void enrichRoleLiveHistoryTitles();
+      if(state.api.active === index){
+        void enrichRoleLiveHistoryTitles();
+        void reviewLegacySnsAiReplies();
+      }
 
       renderApiProfiles();
     };
@@ -27126,6 +27185,7 @@ async function init(){
       roleLiveSingleTopic(character,character.liveTitle)
     ));
   void enrichRoleLiveHistoryTitles();
+  void reviewLegacySnsAiReplies();
   triggerAutoContent({onOpen:true,skipLedger:true});
   maybeAdvancePeerLife();
 }
