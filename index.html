@@ -12932,16 +12932,19 @@ function roleLiveTitleIsMixed(character,title){
   const bracket = value.match(/^【([^】]+)】/)?.[1] || "";
   const detail = value.replace(/^【[^】]+】/,"")
     .replace(/(?:[｜|]\s*)?(?:直播中|開台中)$/,"").trim();
-  const isCatalog = part => {
+  const isCatalog = (part,bracketed=false) => {
     const entries = part.split(/[、，,／/|｜]/).map(item => item.trim()).filter(Boolean);
+    if(entries.length < 2) return false;
     const naturalPair = entries.length === 2 &&
       entries.some(item => /雜談|聊天/.test(item));
-    return entries.length >= 2 &&
-      entries.slice(0,Math.min(3,entries.length)).every(item => topics.includes(item)) &&
-      !naturalPair &&
-      (entries.length >= 3 || /直播中|開台中/.test(value));
+    if(naturalPair) return false;
+    // 沒有 API 時也要擋住整串頻道類型，不能只依賴和角色欄位完全相同的文字。
+    if(entries.length >= 3 && (bracketed || /直播中|開台中/.test(value)) &&
+      entries.every(item => item.length <= 16)) return true;
+    return entries.every(item => topics.includes(item));
   };
-  return isCatalog(bracket) || isCatalog(detail);
+  return isCatalog(bracket,true) || isCatalog(detail);
+
 }
 
 function roleLiveAutoTitle(character,topic=roleLiveSingleTopic(character)){
