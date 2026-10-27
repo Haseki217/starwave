@@ -8859,9 +8859,9 @@ function createStreamCard({
 }
 
 function roleLiveHistoryLabel(record){
-  return realTimeEnabled()
+  return record.realTimeAtStart && Number(record.endedAt)
     ? new Date(record.endedAt).toLocaleString("zh-TW")
-    : `RP 第 ${Number(record.endedRpTurn || 0)} 回合`;
+    : "";
 }
 
 function pruneRoleLiveHistory(){
@@ -9762,6 +9762,7 @@ $("preLiveShopItems")
 renderBackstage();
 
 state.live.started = true;
+state.live.startedWithRealTime = realTimeEnabled();
 state.live.lastActivityAt = Date.now();
 state.live.awayContext = "";
 renderLiveAwayPrompt();
@@ -11223,7 +11224,7 @@ $("endLive").onclick = () => {
         name:state.player.name,
         channel:state.player.channel,
         category:state.player.category,
-        time:new Date().toLocaleString("zh-TW"),
+        time:state.live.startedWithRealTime ? new Date().toLocaleString("zh-TW") : "",
         endedAt:Date.now(),
         peak:state.player.peak,
         turns:state.live.turn,
@@ -11233,6 +11234,7 @@ $("endLive").onclick = () => {
       });
 
     state.live.started = false;
+state.live.startedWithRealTime = false;
 state.live.lastActivityAt = 0;
 state.live.awayContext = "";
 renderLiveAwayPrompt();
@@ -11417,6 +11419,8 @@ async function openRoleLiveReplay(characterId,recordId){
       viewers:0,
       peak:record.peak || 0,
       isReplayGeneration:true,
+      liveFocus:record.title,
+      liveUsesRealTime:Boolean(record.realTimeAtStart),
       liveReplayElapsedMinutes:Math.max(0,Math.floor((record.endedAt-record.startedAt)/120000)),
       liveReplayElapsedTurns:Math.max(0,Math.floor((record.endedRpTurn-record.startedRpTurn)/2))
     };
@@ -11443,9 +11447,11 @@ function buildRoleLiveAiPrompt(
   const elapsedTurns = Number.isFinite(character.liveReplayElapsedTurns)
     ? character.liveReplayElapsedTurns
     : Math.max(0,Number(state.timeSettings.rpTurnCount || 0) - Number(character.liveStartedTurn || 0));
-  const elapsedLabel = realTimeEnabled()
-    ? `約 ${elapsedMinutes} 分鐘`
-    : `約 ${elapsedTurns} 個 RP 回合`;
+  const elapsedLabel = character.isReplayGeneration
+    ? "這場直播已結束"
+    : character.liveUsesRealTime
+      ? `約 ${elapsedMinutes} 分鐘`
+      : `約 ${elapsedTurns} 個 RP 回合`;
   const lastContentAt = Number(character.liveLastGeneratedAt) ||
     Number(character.liveStartedAt) || Date.now();
   const sinceLastContentMinutes = Math.max(0,Math.floor((Date.now()-lastContentAt)/60000));
@@ -11715,8 +11721,9 @@ Lorebook 是公開背景與世界設定資料，
 目前觀看：${character.viewers || 0}
 目前回合：${character.liveTurn || 0}
 已開播：${elapsedLabel}
-距離上次生成的直播內容：${realTimeEnabled() ? `約 ${sinceLastContentMinutes} 分鐘` : "依 RP 回合推進"}
+距離上次生成的直播內容：${character.isReplayGeneration ? "正在觀看歷史直播" : character.liveUsesRealTime ? `約 ${sinceLastContentMinutes} 分鐘` : "依 RP 回合推進"}
 是否為本場首次儲存內容：${first ? "是" : "否"}
+${character.isReplayGeneration ? "這是已結束直播的重播。只依本場標題與本場場景還原當時內容；不能沿用角色目前其他直播的題材或方向。" : ""}
 
 若本場已開播一段時間，即使這是首次儲存內容，也要直接從直播當下的中途場景開始。不要重新描寫開播、開場招呼或假設玩家已看過前半場；不必補寫先前整段直播。可以用一兩句自然語境讓觀眾聽懂當下話題，不得替玩家編造先前的行動或發言。
 如果距離上段內容已過數分鐘，請讓直播自然推進到現在：簡短交代這段時間主題如何發展，重點描寫此刻正在發生的事，不要原地重複上一段、逐分鐘補寫，也不要替玩家虛構行動或台詞。
@@ -12423,7 +12430,7 @@ function renderRoleLive(){
       .filter(Boolean);
 
   $("roleLiveMeta").textContent =
-    `${publicName(character)} · ${character.channel}${replay ? ` · ${roleLiveHistoryLabel(replay)}` : ""}${
+    `${publicName(character)} · ${character.channel}${replay && roleLiveHistoryLabel(replay) ? ` · ${roleLiveHistoryLabel(replay)}` : ""}${
       collabNames.length
         ? ` · 🎙 連動：${collabNames.join("・")}`
         : ""
@@ -12947,8 +12954,42 @@ function roleLiveTitleIsMixed(character,title){
 
 }
 
+function roleLiveCleanTitle(title){
+  return String(title || "").replace(/(?:[｜|]\s*)?(?:直播中|開台中)\s*$/,"").trim();
+}
 function roleLiveAutoTitle(character,topic=roleLiveSingleTopic(character)){
-  return `【${topic}】直播中`;
+  return `【${topic}】`;
+}
+function roleLiveTimeConflict(title,startedAt){
+  if(!realTimeEnabled()) return false;
+  const hour = new Date(startedAt).getHours();
+  const value = String(title || "");
+  if(/深夜|午夜|半夜|凌晨|今夜|夜聊|夜景|夜間|今晚/.test(value) && hour >= 6 && hour < 18) return true;
+  if(/早安|早晨|清晨/.test(value) && (hour < 5 || hour >= 12)) return true;
+  if(/午間|中午/.test(value) && (hour < 11 || hour >= 15)) return true;
+  return /傍晚/.test(value) && (hour < 16 || hour >= 21);
+}
+function roleLiveSceneFor(title,startedAt){
+  const value = String(title || "");
+  const hour = new Date(startedAt).getHours();
+  const night = realTimeEnabled() ? hour < 6 || hour >= 18 : /深夜|夜景|夜間|午夜|凌晨/.test(value);
+  if(/酒吧|酒館|酒雜|喝酒|飲酒/.test(value)) return night ? "nightRoom" : "studio";
+  if(/咖啡|甜點|下午茶/.test(value)) return "cafe";
+  if(/夜景|天臺|屋頂/.test(value)) return night ? "rooftop" : "studio";
+  if(/遊戲|PvP|ゲーム/i.test(value)) return "gaming";
+  if(/戶外|漫遊|探店|街頭|城市|公園|散步/.test(value)) return "studio";
+  if(/ASMR|睡|晚安/.test(value)) return night ? "nightRoom" : "studio";
+  return night ? "nightRoom" : "brightRoom";
+}
+function roleLiveCanStartToday(character,tickAt){
+  if(!realTimeEnabled()) return true;
+  const hour = new Date(tickAt).getHours();
+  if(hour < 8) return false;
+  const day = new Date(tickAt).toDateString();
+  const starts = (character.liveHistory || []).map(record => Number(record.startedAt || 0));
+  if(character.live) starts.push(Number(character.liveStartedAt || 0));
+  const today = starts.filter(at => at > 0 && at <= tickAt && new Date(at).toDateString() === day);
+  return today.length < 2 && today.every(at => tickAt - at >= 6*60*60*1000);
 }
 
 async function enrichRoleLiveTitle(character, startedAt, topic){
@@ -12965,6 +13006,8 @@ async function enrichRoleLiveTitle(character, startedAt, topic){
 當場主題：${topic}
 創作者公開資料：${JSON.stringify(publicCharacterContext(character))}
 近期公開 SNS：${JSON.stringify(recentPosts)}
+現在當地時間：${realTimeEnabled() ? new Date(startedAt).toLocaleString("zh-TW") : "未啟用現實時間"}。若有現實時間，標題的早晨、中午、深夜等時段必須與開播時間相符。
+標題不可包含「直播中」或「開台中」。
 標題格式為「【主題】具體的直播內容」。純聊天常稱「雜談」，邊唱歌邊聊天可稱「歌雜」，邊喝酒邊聊天可稱「酒雜」，也可以自然寫成「聊天」。
 本場主方向：${topic}。酒雜／飲酒是否允許：${characterActivityLimits(character).liveMayDrink ? "可以依角色設定安排" : "不可安排"}。
 請依公開資料構思符合這場直播的內容；聊天與唱歌等自然搭配可以寫進具體標題，但不要把頻道列出的全部類型原樣串成清單，也不要虛構已發生的私人事件。
@@ -12976,7 +13019,8 @@ async function enrichRoleLiveTitle(character, startedAt, topic){
       character.liveStartedAt !== startedAt ||
       !state.characters.includes(character)) return;
     const title = sanitizePublicText(String(parseStarwaveLlmJson(result.text).title || "").trim());
-    if(!title || roleLiveTitleIsMixed(character,title)) return;
+    if(!title || roleLiveTitleIsMixed(character,title) ||
+      roleLiveTimeConflict(title,startedAt)) return;
     const category = title.match(/^【([^】]+)】/);
     const compatibleCategory = category && (
       category[1] === topic ||
@@ -12987,9 +13031,10 @@ async function enrichRoleLiveTitle(character, startedAt, topic){
     );
     if(category && !compatibleCategory) return;
     const detail = (category ? title.slice(category[0].length) : title).trim();
-    if(!detail || detail === "直播中") return;
-    character.liveTitle = `【${category ? category[1] : topic}】${detail}`.slice(0,80);
+    if(!roleLiveCleanTitle(detail)) return;
+    character.liveTitle = roleLiveCleanTitle(`【${category ? category[1] : topic}】${detail}`).slice(0,80);
     character.liveFocus = category ? category[1] : topic;
+    character.sceneId = roleLiveSceneFor(character.liveTitle,startedAt);
     renderExplore();
     renderSubscriptions();
     if(currentRoleLiveId === character.id) renderRoleLive();
@@ -13011,6 +13056,7 @@ function startAutonomousRoleLive(
   character.live =
     true;
   character.liveStartedAt = Number(options.startedAt) || Date.now();
+  character.liveUsesRealTime = realTimeEnabled();
   character.plannedLiveAt = 0;
   character.plannedLiveTurn = 0;
   character.plannedLiveTitle = "";
@@ -13021,14 +13067,12 @@ function startAutonomousRoleLive(
     ? String(options.title || "連動").split("｜")[0].trim()
     : roleLiveSingleTopic(character,options.announcement || options.title || "");
   const mixedTitle = !hasCollab && roleLiveTitleIsMixed(character,options.title);
+  const timeConflict = roleLiveTimeConflict(options.title,character.liveStartedAt);
+  const safeTopic = timeConflict
+    ? roleLiveTopics(character).find(item => !roleLiveTimeConflict(item,character.liveStartedAt)) || "雜談"
+    : topic;
   const titleCategory = String(options.title || "").match(/^【([^】]+)】/)?.[1];
-  character.liveFocus = titleCategory && !mixedTitle ? titleCategory : topic;
-  const sceneChoices = /遊戲|PvP|ゲーム/i.test(topic)
-    ? ["gaming","studio","brightRoom"]
-    : /ASMR|睡|夜|雜談/i.test(topic)
-      ? ["nightRoom","living","studio","brightRoom"]
-      : builtInScenes.map(scene => scene.id);
-  character.sceneId = randomItem(sceneChoices);
+  character.liveFocus = titleCategory && !mixedTitle && !timeConflict ? titleCategory : safeTopic;
   character.liveHistory ||= [];
 
   character.viewers = realTimeEnabled()
@@ -13050,12 +13094,14 @@ function startAutonomousRoleLive(
     0;
   character.liveEndsAt = character.liveStartedAt + character.liveRemainingTurns * 30*60*1000;
 
-  character.liveTitle = mixedTitle
-    ? roleLiveAutoTitle(character,topic)
-    : sanitizePublicText(options.title || roleLiveAutoTitle(character,topic));
+  character.liveTitle = mixedTitle || timeConflict
+    ? roleLiveAutoTitle(character,safeTopic)
+    : roleLiveCleanTitle(sanitizePublicText(options.title || roleLiveAutoTitle(character,safeTopic))) ||
+      roleLiveAutoTitle(character,safeTopic);
+  character.sceneId = roleLiveSceneFor(character.liveTitle,character.liveStartedAt);
 
-  if(!options.title || mixedTitle){
-    void enrichRoleLiveTitle(character,character.liveStartedAt,topic);
+  if(!options.title || mixedTitle || timeConflict){
+    void enrichRoleLiveTitle(character,character.liveStartedAt,safeTopic);
   }
 
   character.liveStory =
@@ -13114,9 +13160,10 @@ function stopAutonomousRoleLive(
   character.liveHistory ||= [];
   character.liveHistory.unshift({
     id:uid("roleReplay"),
-    title:character.liveTitle || "正在直播",
+    title:roleLiveCleanTitle(character.liveTitle) || "直播",
     startedAt:character.liveStartedAt || endedAt,
     startedRpTurn:Number(character.liveStartedTurn || 0),
+    realTimeAtStart:Boolean(character.liveUsesRealTime),
     endedAt,
     endedRpTurn:Number(state.timeSettings.rpTurnCount || 0),
     peak:Number(character.peak || 0),
@@ -13126,6 +13173,7 @@ function stopAutonomousRoleLive(
     liveChat:deepClone(character.liveChat || [])
   });
   character.liveStartedAt = 0;
+  character.liveUsesRealTime = false;
   character.liveLastGeneratedAt = 0;
   character.liveStartedTurn = 0;
   character.liveEndsAt = 0;
@@ -13410,7 +13458,8 @@ function advanceRoleLiveLifecycle(tickAt=Date.now()){
       plan.status === "ready" &&
       maxLive - liveCount >= 2 &&
       plan.participantIds.length === 2 &&
-      plan.participantIds.every(id => candidates.some(item => item.id === id))
+      plan.participantIds.every(id => candidates.some(item => item.id === id) &&
+        roleLiveCanStartToday(getCharacter(id),tickAt))
     );
     if(readyPlan){
       const pair = readyPlan.participantIds.map(getCharacter);
@@ -13435,6 +13484,7 @@ function advanceRoleLiveLifecycle(tickAt=Date.now()){
       of candidates
     ){
 
+      if(!roleLiveCanStartToday(character,tickAt)) continue;
       if(
         liveCount >= maxLive
       ){
@@ -13470,13 +13520,16 @@ function advanceRoleLiveLifecycle(tickAt=Date.now()){
           ? tickAt >= character.plannedLiveAt
           : state.timeSettings.rpTurnCount >= character.plannedLiveTurn)) continue;
 
+      const alreadyToday = realTimeEnabled() &&
+        (character.liveHistory || []).some(record =>
+          new Date(record.startedAt).toDateString() === new Date(tickAt).toDateString());
       if(
         (character.plannedLiveAt &&
           (realTimeEnabled()
             ? tickAt >= character.plannedLiveAt
             : state.timeSettings.rpTurnCount >= character.plannedLiveTurn)) ||
-        offlineTurns >= 10 ||
-        Math.random() < chance
+        (offlineTurns >= 10 && !alreadyToday) ||
+        Math.random() < chance * (alreadyToday ? .03 : 1)
       ){
         startAutonomousRoleLive(
           character,
@@ -26924,7 +26977,12 @@ async function init(){
   }catch{}
 
   state.characters.forEach(character => {
+    (character.liveHistory || []).forEach(record => {
+      if(record.realTimeAtStart === undefined) record.realTimeAtStart = realTimeEnabled();
+      record.title = roleLiveCleanTitle(record.title);
+    });
     if(!character.live) return;
+    if(character.liveUsesRealTime === undefined) character.liveUsesRealTime = realTimeEnabled();
     const topic = roleLiveSingleTopic(character,character.liveTitle);
     const catalog = roleLiveTitleIsMixed(character,character.liveTitle);
     const category = String(character.liveTitle || "").match(/^【([^】]+)】/)?.[1];
@@ -26932,6 +26990,8 @@ async function init(){
     if(catalog){
       character.liveTitle = roleLiveAutoTitle(character,topic);
       void enrichRoleLiveTitle(character,character.liveStartedAt,topic);
+    }else{
+      character.liveTitle = roleLiveCleanTitle(character.liveTitle);
     }
   });
 
