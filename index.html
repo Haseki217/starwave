@@ -12983,8 +12983,6 @@ function roleLiveSceneFor(title,startedAt){
 }
 function roleLiveCanStartToday(character,tickAt){
   if(!realTimeEnabled()) return true;
-  const hour = new Date(tickAt).getHours();
-  if(hour < 8) return false;
   const day = new Date(tickAt).toDateString();
   const starts = (character.liveHistory || []).map(record => Number(record.startedAt || 0));
   if(character.live) starts.push(Number(character.liveStartedAt || 0));
