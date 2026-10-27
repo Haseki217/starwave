@@ -12977,8 +12977,8 @@ function roleLiveTimeConflict(title,startedAt,usesRealTime=realTimeEnabled()){
   if(/午間|中午/.test(value) && (hour < 11 || hour >= 15)) return true;
   return /傍晚/.test(value) && (hour < 16 || hour >= 21);
 }
-function roleLiveSceneFor(title,startedAt,usesRealTime=realTimeEnabled()){
-  const value = String(title || "");
+function roleLiveSceneFor(title,startedAt,usesRealTime=realTimeEnabled(),topic=""){
+  const value = `${title || ""} ${topic || ""}`;
   const hour = new Date(startedAt).getHours();
   const night = usesRealTime ? hour < 6 || hour >= 18 : /深夜|夜景|夜間|午夜|凌晨/.test(value);
   if(/酒吧|酒館|酒雜|喝酒|飲酒/.test(value)) return night ? "nightRoom" : "studio";
@@ -13039,11 +13039,11 @@ async function enrichRoleLiveTitle(character, startedAt, topic){
 創作者公開資料：${JSON.stringify(publicCharacterContext(character))}
 近期公開 SNS：${JSON.stringify(recentPosts)}
 現在當地時間：${realTimeEnabled() ? new Date(startedAt).toLocaleString("zh-TW") : "未啟用現實時間"}。若有現實時間，標題的早晨、中午、深夜等時段必須與開播時間相符。
-標題不可包含「直播中」或「開台中」。
-標題格式為「【主題】具體的直播內容」。純聊天常稱「雜談」，邊唱歌邊聊天可稱「歌雜」，邊喝酒邊聊天可稱「酒雜」，也可以自然寫成「聊天」。
+標題不可包含「直播中」或「開台中」。臺灣背景用自然的臺灣口吻；遇到「探店」類型可寫逛店、走訪店家或街區散步，不必照抄類型名稱。
+標題要像創作者自己取的自然標題，不必把頻道類型放進【】。可以用「【雜談】聊聊今天的事」、「【遊戲名稱】今晚來對戰」、「今天來對戰～」等形式；遊戲名稱只有公開資料或已保存內容明確提供時才能使用，不能杜撰名稱。純聊天可稱「雜談」，邊唱歌邊聊天可稱「歌雜」，喝酒聊天可稱「酒雜」。
 本場主方向：${topic}。酒雜／飲酒是否允許：${characterActivityLimits(character).liveMayDrink ? "可以依角色設定安排" : "不可安排"}。
 請依公開資料構思符合這場直播的內容；聊天與唱歌等自然搭配可以寫進具體標題，但不要把頻道列出的全部類型原樣串成清單，也不要虛構已發生的私人事件。
-只輸出 JSON：{"title":"【主題】具體內容"}。`,
+只輸出 JSON：{"title":"自然的具體直播標題"}。`,
       maxTokens:200,
       json:true
     });
@@ -13055,25 +13055,16 @@ async function enrichRoleLiveTitle(character, startedAt, topic){
     const title = sanitizePublicText(String(parseStarwaveLlmJson(result.text).title || "").trim());
     if(!title || roleLiveTitleIsMixed(character,title) ||
       roleLiveTimeConflict(title,startedAt)) return;
-    const category = title.match(/^【([^】]+)】/);
-    const compatibleCategory = category && (
-      category[1] === topic ||
-      category[1].includes(topic) ||
-      (category[1] === "歌雜" && /雜談|聊天|唱歌|歌回/.test(topic)) ||
-      (category[1] === "酒雜" && /雜談|聊天|酒雜|喝酒/.test(topic) &&
-        characterActivityLimits(character).liveMayDrink)
-    );
-    if(category && !compatibleCategory) return;
-    const detail = (category ? title.slice(category[0].length) : title).trim();
-    if(!roleLiveCleanTitle(detail)) return;
-    const resolvedTitle = roleLiveCleanTitle(`【${category ? category[1] : topic}】${detail}`).slice(0,80);
+    const resolvedTitle = roleLiveCleanTitle(title).slice(0,80);
+    if(roleLiveTitleNeedsDetail(resolvedTitle) ||
+      resolvedTitle === topic || resolvedTitle.length < 6) return;
     if(active){
       character.liveTitle = resolvedTitle;
-      character.liveFocus = category ? category[1] : topic;
-      character.sceneId = roleLiveSceneFor(resolvedTitle,startedAt,character.liveUsesRealTime);
+      character.liveFocus = topic;
+      character.sceneId = roleLiveSceneFor(resolvedTitle,startedAt,character.liveUsesRealTime,topic);
     }else{
       archived.title = resolvedTitle;
-      archived.sceneId = roleLiveSceneFor(resolvedTitle,startedAt,archived.realTimeAtStart);
+      archived.sceneId = roleLiveSceneFor(resolvedTitle,startedAt,archived.realTimeAtStart,topic);
     }
     renderExplore();
     renderSubscriptions();
@@ -13112,12 +13103,12 @@ async function enrichRoleLiveHistoryTitles(){
       }));
       const result = await generateWithApi({
         prompt:`替已結束的角色直播補上自然、具體、各不相同的標題。
-每筆的 topic 是已保存的主題分類，必須原樣保留在【】中，後面接具體內容。不要只回分類，不要寫「直播中」。
+每筆的 topic 是已保存的直播方向，不必原樣放進【】。標題可以用自然的一句話，也可以用【雜談】、【遊戲名稱】等開頭；遊戲名只有創作者公開資料或 knownStory 明確提供時才可用，不可杜撰。不要只回分類，不要寫「直播中」。
 若有 knownStory，標題要符合那場已保存的直播內容；沒有故事時依創作者公開資料合理構思，勿冒充已知私人經歷。
 有 startedAt 時，早晨、深夜等用語必須符合該場開播時間；沒有時間時不要強加時段。
-不得把所有頻道類型串成標題，不得洩漏私人資訊或違反公開資料中的年齡行為限制。
+不得把所有頻道類型串成標題；臺灣背景若主題含「探店」，可用逛店、走訪店家等自然說法，不必照抄分類。不得洩漏私人資訊或違反公開資料中的年齡行為限制。
 直播資料：${JSON.stringify(entries)}
-只輸出 JSON：{"titles":[{"id":"對應 id","title":"【原主題】具體內容"}]}。`,
+只輸出 JSON：{"titles":[{"id":"對應 id","title":"自然的具體直播標題"}]}。`,
         maxTokens:Math.min(1800,200+pending.length*140),
         json:true
       });
@@ -13129,13 +13120,12 @@ async function enrichRoleLiveHistoryTitles(){
         if(!character.liveHistory?.includes(record) || !roleLiveTitleNeedsDetail(record.title)) return;
         const response = titles.find(item => item.id === record.id);
         const title = sanitizePublicText(roleLiveCleanTitle(response?.title || "")).slice(0,80);
-        const originalCategory = record.title.match(/^【[^】]+】/)?.[0];
-        if(!originalCategory || !title.startsWith(originalCategory) ||
-          !title.slice(originalCategory.length).trim() ||
+        if(!title || title.length < 6 || roleLiveTitleNeedsDetail(title) ||
           roleLiveTitleIsMixed(character,title) ||
           roleLiveTimeConflict(title,record.startedAt,record.realTimeAtStart)) return;
+        const topic = record.title;
         record.title = title;
-        record.sceneId = roleLiveSceneFor(title,record.startedAt,record.realTimeAtStart);
+        record.sceneId = roleLiveSceneFor(title,record.startedAt,record.realTimeAtStart,topic);
         changed = true;
       });
       if(changed){
@@ -13206,7 +13196,7 @@ function startAutonomousRoleLive(
     ? roleLiveAutoTitle(character,safeTopic)
     : roleLiveCleanTitle(sanitizePublicText(options.title || roleLiveAutoTitle(character,safeTopic))) ||
       roleLiveAutoTitle(character,safeTopic);
-  character.sceneId = roleLiveSceneFor(character.liveTitle,character.liveStartedAt);
+  character.sceneId = roleLiveSceneFor(character.liveTitle,character.liveStartedAt,character.liveUsesRealTime,safeTopic);
 
   if(!options.title || mixedTitle || timeConflict){
     void enrichRoleLiveTitle(character,character.liveStartedAt,safeTopic);
@@ -27093,7 +27083,7 @@ async function init(){
     const topic = roleLiveSingleTopic(character,character.liveTitle);
     const catalog = roleLiveTitleIsMixed(character,character.liveTitle);
     const category = String(character.liveTitle || "").match(/^【([^】]+)】/)?.[1];
-    character.liveFocus = category && !catalog ? category : topic;
+    character.liveFocus = catalog ? topic : character.liveFocus || topic;
     if(catalog){
       character.liveTitle = roleLiveAutoTitle(character,topic);
       void enrichRoleLiveTitle(character,character.liveStartedAt,topic);
