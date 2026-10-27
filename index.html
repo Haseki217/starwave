@@ -22033,6 +22033,18 @@ function toggleLike(target){
   }
 }
 
+function snsAiRepliesToComment(text,parent){
+  if(!parent) return false;
+  const value = String(text || "").trim();
+  const handle = String(parent.handle || "").trim();
+  const name = String(parent.author || "").trim();
+  return Boolean(
+    (handle && value.includes(handle)) ||
+    (name.length >= 2 && value.includes(name)) ||
+    /^(?:樓上|你說|你提到|你剛剛|你的留言|你也是)[：:，,！!\s]/.test(value)
+  );
+}
+
 function snsChildren(post,parentId){
   return post.comments.filter(
     comment =>
@@ -22878,6 +22890,7 @@ null
 = 回覆同一篇 comments 中
 更早出現的留言索引，
 從 0 開始。
+只有文字明確在回應該留言（例如點名對方、回答對方問題）時才能填索引；只是同樣回應貼文主樓，即使排在另一則留言後面也必須填 null。兩位粉絲各自對主樓發表感想時，兩則 replyTo 都是 null。
 
 最多一層回覆即可。
 
@@ -22896,7 +22909,7 @@ null
 
 若要回覆既有留言，
 必須使用該貼文中
-真正存在的 comment id。
+真正存在的 comment id，且文字要明確接續那則留言。若只是回應貼文主樓，填 null。
 
 不需要每次都追加留言。
 同一篇貼文請避免由最近留言過的同一帳號在下一次更新時接連發言；可換其他帳號，或略過這篇。
@@ -23215,10 +23228,11 @@ async function generateSnsNow(
                       builtComments.length
                   ){
 
-                    parentId =
-                      builtComments[
-                        index
-                      ].id;
+                    const parent = builtComments[index];
+                    if(!parent.parentId &&
+                      snsAiRepliesToComment(commentText,parent)){
+                      parentId = parent.id;
+                    }
                   }
                 }
 
@@ -23380,9 +23394,9 @@ async function generateSnsNow(
               );
 
 
-            if(parent){
-              parentId =
-                parent.id;
+            if(parent && !parent.parentId &&
+              snsAiRepliesToComment(text,parent)){
+              parentId = parent.id;
             }
           }
 
