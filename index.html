@@ -27158,9 +27158,10 @@ async function init(){
     }
   }catch{}
 
-  if(state.player.realAge === undefined){
-    state.player.realAge = state.player.age || "";
+  if(!state.player.ageFieldsMigrated){
+    state.player.realAge = state.player.realAge || state.player.age || "";
     state.player.age = "";
+    state.player.ageFieldsMigrated = true;
   }
   state.characters.forEach(character => {
     if(character.realAge === undefined){
