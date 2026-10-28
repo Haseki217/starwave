@@ -4710,13 +4710,14 @@ body[data-theme="halloween"] .live-stage{
           </div>
 
           <div class="field">
-            <label>年齡（VTuber 為公開設定）</label>
-            <input id="charAge" type="number">
+            <label>真實年齡</label>
+            <input id="charRealAge" type="number" min="0" max="120">
           </div>
 
-          <div class="field" id="charPerformerAgeField" hidden>
-            <label>真人年齡（私人，僅供 VTuber 行為判斷）</label>
-            <input id="charPerformerAge" type="number" min="0" max="120">
+          <div class="field">
+            <label>直播設定年齡</label>
+            <input id="charAge" type="number" min="0" max="120">
+            <div class="field-help">公開資料，選填；空白時不公開年齡，可與真實年齡不同。</div>
           </div>
 
           <div class="field">
@@ -5303,8 +5304,14 @@ body[data-theme="halloween"] .live-stage{
       </div>
 
       <div class="field">
-        <label>年齡</label>
-        <input id="playerAge" type="number">
+        <label>真實年齡</label>
+        <input id="playerRealAge" type="number" min="0" max="120">
+      </div>
+
+      <div class="field">
+        <label>直播設定年齡</label>
+        <input id="playerAge" type="number" min="0" max="120">
+        <div class="field-help">公開資料，選填；空白時不公開年齡，可與真實年齡不同。</div>
       </div>
 
       <div class="field">
@@ -7113,6 +7120,7 @@ const state = {
     realName:"",
     realNamePublic:false,
     age:"",
+    realAge:"",
     name:"主播名稱",
     channel:"STARWAVE 頻道",
     liveId:"@creator",
@@ -8442,7 +8450,8 @@ $("realTimeSwitch").onclick = () => {
   
 function fillProfile(){
   $("playerRealName").value = state.player.realName;
-  $("playerAge").value = state.player.age;
+  $("playerRealAge").value = state.player.realAge || "";
+  $("playerAge").value = state.player.age || "";
   $("playerName").value = state.player.name;
   $("playerChannel").value = state.player.channel;
   $("playerLiveId").value = state.player.liveId;
@@ -8577,8 +8586,8 @@ $("saveProfile").onclick = () => {
   state.player.realName =
     $("playerRealName").value.trim();
 
-  state.player.age =
-    $("playerAge").value;
+  state.player.realAge = $("playerRealAge").value;
+  state.player.age = $("playerAge").value;
 
   state.player.name =
     $("playerName").value.trim() ||
@@ -11484,6 +11493,7 @@ function buildRoleLiveAiPrompt(
 
     streamerType:
       state.player.streamerType,
+    ...(state.player.age ? {age:state.player.age} : {}),
 
     content:
       state.player.content || "",
@@ -11566,6 +11576,7 @@ function buildRoleLiveAiPrompt(
             liveId:state.player.liveId,
             streamerType:
               state.player.streamerType,
+    ...(state.player.age ? {age:state.player.age} : {}),
             content:
               state.player.content || "",
             publicAppearance:
@@ -14062,6 +14073,7 @@ function buildWavelinkAiPrompt(
 
     streamerType:
       state.player.streamerType,
+    ...(state.player.age ? {age:state.player.age} : {}),
 
     content:
       state.player.content || "",
@@ -16687,6 +16699,7 @@ $("offlineTime").textContent =
 
     streamerType:
       state.player.streamerType,
+    ...(state.player.age ? {age:state.player.age} : {}),
 
     content:
       state.player.content || "",
@@ -17295,7 +17308,7 @@ function buildLifeLedgerAiPrompt(){
 
   const playerContext = {
     age:
-      state.player.age || "",
+      state.player.realAge || "",
 
     streamerType:
       state.player.streamerType || "",
@@ -19259,8 +19272,10 @@ const publicActivityName =
   const character = {
     id,
     name,
-    age:root.age ?? "",
-    performerAge:root.performerAge ?? root.realAge ?? "",
+    age:root.streamAge ?? root.publicAge ??
+      ((root.streamerType === "vtuber" || generated.streamerType === "vtuber") ? root.age ?? "" : ""),
+    realAge:root.realAge ?? root.performerAge ??
+      ((root.streamerType === "vtuber" || generated.streamerType === "vtuber") ? "" : root.age ?? ""),
     card:
       formatImportedCharacterCard(raw),
     streamerName:publicActivityName,
@@ -20124,9 +20139,8 @@ $("charPublicDescribe").disabled =
 
   $("charName").value = character.name;
   $("charStreamerName").value = character.streamerName;
-  $("charAge").value = character.age;
-  $("charPerformerAge").value = character.performerAge || "";
-  $("charPerformerAgeField").hidden = character.streamerType !== "vtuber";
+  $("charRealAge").value = character.realAge || "";
+  $("charAge").value = character.age || "";
   $("charChannel").value = character.channel;
   $("charLiveId").value = character.liveId;
   $("charSnsId").value = character.snsId;
@@ -20157,9 +20171,6 @@ $("charPublicDescribe").disabled =
   renderCharacterLorebookLinks();
 }
 
-$("charStreamerType").onchange = () => {
-  $("charPerformerAgeField").hidden = $("charStreamerType").value !== "vtuber";
-};
 
   function refreshCharacterImageUI(
   character
@@ -20423,17 +20434,15 @@ function characterAgeNumber(value){
 
 function characterActivityLimits(character){
   const publicAge = characterAgeNumber(character.age);
-  const actualAge = character.streamerType === "vtuber"
-    ? characterAgeNumber(character.performerAge)
-    : publicAge;
+  const actualAge = characterAgeNumber(character.realAge);
   return {
     liveMayDrink:actualAge !== null && actualAge >= 18 &&
-      (character.streamerType !== "vtuber" || publicAge === null || publicAge >= 18),
+      (publicAge === null || publicAge >= 18),
     offlineMayDrink:actualAge !== null && actualAge >= 18,
     mayDrive:actualAge !== null && actualAge >= 18,
     mayRideHeavyMotorcycle:actualAge !== null && actualAge >= 20,
     liveMaySmoke:actualAge !== null && actualAge >= 20 &&
-      (character.streamerType !== "vtuber" || publicAge === null || publicAge >= 20),
+      (publicAge === null || publicAge >= 20),
     offlineMaySmoke:actualAge !== null && actualAge >= 20
   };
 }
@@ -20494,6 +20503,8 @@ function publicCharacterContext(
 
     streamerType:
       character.streamerType || "real",
+
+    ...(character.age ? {age:character.age} : {}),
 
     liveActivityLimits:(() => {
       const limits = characterActivityLimits(character);
@@ -20707,9 +20718,8 @@ $("saveChannelCharacter").onclick = () => {
     $("charStreamerName").value.trim() ||
     character.streamerName;
 
-  character.age =
-    $("charAge").value;
-  character.performerAge = $("charPerformerAge").value;
+  character.realAge = $("charRealAge").value;
+  character.age = $("charAge").value;
 
   character.channel =
     $("charChannel").value.trim() ||
@@ -20764,7 +20774,7 @@ $("addBlankChannel").onclick = () => {
     id,
     name:"新角色",
     age:"",
-    performerAge:"",
+    realAge:"",
     card:"",
     streamerName:"新主播",
     channel:"新頻道",
@@ -21250,6 +21260,7 @@ function buildForumAiPrompt(
 
     streamerType:
       state.player.streamerType,
+    ...(state.player.age ? {age:state.player.age} : {}),
 
     content:
       state.player.content || "",
@@ -22589,6 +22600,7 @@ function buildSnsAiPrompt(
 
     streamerType:
       state.player.streamerType,
+    ...(state.player.age ? {age:state.player.age} : {}),
 
     content:
       state.player.content || "",
@@ -27146,7 +27158,19 @@ async function init(){
     }
   }catch{}
 
+  if(state.player.realAge === undefined){
+    state.player.realAge = state.player.age || "";
+    state.player.age = "";
+  }
   state.characters.forEach(character => {
+    if(character.realAge === undefined){
+      if(character.streamerType === "vtuber"){
+        character.realAge = character.performerAge || "";
+      }else{
+        character.realAge = character.age || "";
+        character.age = "";
+      }
+    }
     (character.liveHistory || []).forEach(record => {
       if(record.realTimeAtStart === undefined) record.realTimeAtStart = realTimeEnabled();
       record.title = roleLiveCleanTitle(record.title);
