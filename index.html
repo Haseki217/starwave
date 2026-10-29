@@ -15336,7 +15336,17 @@ function openContentEditor(title,fields,onSave){
     wrap.className = "field";
     const label = document.createElement("label");
     label.textContent = field.label;
-    const input = document.createElement(field.single ? "input" : "textarea");
+    const input = document.createElement(
+      field.options ? "select" : field.single ? "input" : "textarea"
+    );
+    if(field.options){
+      field.options.forEach(option => {
+        const choice = document.createElement("option");
+        choice.value = option.value;
+        choice.textContent = option.label;
+        input.append(choice);
+      });
+    }
     input.value = field.value || "";
     wrap.append(label,input);
     modal.append(wrap);
@@ -22691,14 +22701,35 @@ time.textContent =
 
     actions.append(heart,reply);
     row.append(contentManageActions(
-      () => openContentEditor("編輯 SNS 留言",[
-        {label:"留言內容",value:comment.text}
-      ],([value]) => {
-        if(!post.comments.includes(comment)) return false;
-        comment.text = sanitizePublicText(value);
-        renderSns();
-        scheduleStarwaveSave();
-      }),
+      () => {
+        const hasChildren = post.comments.some(item => item.parentId === comment.id);
+        const targets = post.comments.filter(item =>
+          item !== comment && !item.parentId && (!hasChildren || item.id === comment.parentId)
+        );
+        openContentEditor("編輯 SNS 留言",[
+          {label:"留言內容",value:comment.text},
+          {label:"回覆對象",value:comment.parentId || "__post__",options:[
+            {value:"__post__",label:"直接回覆貼文"},
+            ...targets.map(item => ({
+              value:item.id,
+              label:`回覆 ${publicAuthor(item.authorId,item.author)}：${String(item.text || "").slice(0,30)}`
+            }))
+          ]}
+        ],([value,targetId]) => {
+          if(!post.comments.includes(comment)) return false;
+          const parent = targetId === "__post__"
+            ? null
+            : post.comments.find(item =>
+                item.id === targetId && !item.parentId && item !== comment
+              );
+          if(targetId !== "__post__" && !parent) return false;
+          comment.text = sanitizePublicText(value);
+          comment.parentId = parent?.id || null;
+          comment.aiReplyVerified = true;
+          renderSns();
+          scheduleStarwaveSave();
+        });
+      },
       () => confirmContentDeletion("SNS 留言",() => {
         if(!post.comments.includes(comment)) return;
         post.comments.forEach(item => {
@@ -23206,60 +23237,6 @@ null
   ]
 }
 `;
-}
-
-let snsLegacyReplyReviewing = false;
-async function reviewLegacySnsAiReplies(){
-  if(snsLegacyReplyReviewing) return;
-  const profile = state.api.profiles[state.api.active];
-  if(!String(profile?.apiKey || "").trim() || !String(profile?.model || "").trim()) return;
-  snsLegacyReplyReviewing = true;
-  const epoch = rpGenerationEpoch;
-  const attempted = new Set();
-  try{
-    while(epoch === rpGenerationEpoch){
-      const candidates = state.snsPosts.flatMap(post =>
-        (post.comments || []).filter(comment => {
-          if(!comment.parentId || comment.aiReplyVerified || comment.authorId === "player" ||
-            attempted.has(comment.id)) return false;
-          const parent = snsCommentById(post,comment.parentId);
-          return parent && parent.authorId !== "player";
-        }).map(comment => ({post,comment,parent:snsCommentById(post,comment.parentId)}))
-      ).slice(0,20);
-      if(!candidates.length) break;
-      candidates.forEach(({comment}) => attempted.add(comment.id));
-      const result = await generateWithApi({
-        prompt:`判斷下列 SNS 留言是否真的在接續指定的上一則留言，還是其實直接回應貼文主樓。
-不必點名對方才能算回覆。重點是內容是否承接上則留言獨有的問題、意見或敘述；若兩則只是各自對主樓表示期待，replyToParent 必須是 false。
-資料：${JSON.stringify(candidates.map(({post,comment,parent}) => ({
-          id:comment.id,post:post.text,parent:parent.text,comment:comment.text
-        })))}
-只輸出 JSON：{"results":[{"id":"留言 id","replyToParent":false}]}。`,
-        maxTokens:Math.min(1200,100+candidates.length*45),
-        json:true
-      });
-      if(epoch !== rpGenerationEpoch) break;
-      const decisions = parseStarwaveLlmJson(result.text).results;
-      if(!Array.isArray(decisions)) break;
-      let changed = false;
-      candidates.forEach(({post,comment,parent}) => {
-        if(!post.comments.includes(comment) || comment.parentId !== parent.id) return;
-        const decision = decisions.find(item => item.id === comment.id);
-        if(typeof decision?.replyToParent !== "boolean") return;
-        comment.aiReplyVerified = true;
-        if(!decision.replyToParent){
-          comment.parentId = null;
-          changed = true;
-        }
-      });
-      if(changed) renderSns();
-      scheduleStarwaveSave();
-    }
-  }catch(error){
-    console.error("STARWAVE SNS reply review failed:",error);
-  }finally{
-    snsLegacyReplyReviewing = false;
-  }
 }
 
 function resolveSnsAiAuthor(
@@ -26389,7 +26366,7 @@ if(state.api.active === index){
 toast(`API Profile ${index+1} 已儲存`);
       if(state.api.active === index){
         void enrichRoleLiveHistoryTitles();
-        void reviewLegacySnsAiReplies();
+      
       }
 
       renderApiProfiles();
@@ -27441,7 +27418,7 @@ async function init(){
       roleLiveSingleTopic(character,character.liveTitle)
     ));
   void enrichRoleLiveHistoryTitles();
-  void reviewLegacySnsAiReplies();
+
   triggerAutoContent({onOpen:true,skipLedger:true});
   maybeAdvancePeerLife();
 }
