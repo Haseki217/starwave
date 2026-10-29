@@ -21362,11 +21362,12 @@ async function respondToPublicInteraction(kind, post, playerText, parentId=null)
 ${publicTaiwanLanguageRules()}
 公開貼文：${JSON.stringify(context)}
 玩家剛發出的文字：${JSON.stringify(sanitizePublicText(playerText))}
+${kind === "sns" && post.authorId === "player" ? "這是玩家自己的貼文，請評估其他人對這篇貼文新增的按讚與轉發數。likesAdded 與 repostsAdded 是這次互動增加量（非總數），允許 0，按讚最多 30、轉發最多 5；依內容自然判斷，不要替玩家自己按讚或轉發。" : ""}
 可用的公開帳號：${JSON.stringify(authors)}
 黑粉強度：${state.community.blackfan}%；柔和社群：${state.community.soft ? "ON" : "OFF"}。
 只使用公開資訊，不使用角色卡、私人關係、WAVELINK、線下故事或私人記憶。
 由有理由看到內容的角色或粉絲回應，語氣自然，不必每次都是角色本人；不要替玩家發言。正在開直播的角色不要回覆 SNS 或論壇，粉絲與未開播角色仍可回應。
-輸出有效 JSON：{"replies":[{"authorId":"既有帳號 id，若是新粉絲則留空","fanName":"新粉絲名稱或空字串","fanHandle":"@新粉絲ID或空字串","text":"回應文字"}]}。生成 1～2 則。`,
+輸出有效 JSON：{"replies":[{"authorId":"既有帳號 id，若是新粉絲則留空","fanName":"新粉絲名稱或空字串","fanHandle":"@新粉絲ID或空字串","text":"回應文字"}],"likesAdded":0,"repostsAdded":0}。生成 1～2 則；只有玩家自己的 SNS 貼文才填入合理的新增按讚與轉發數，其他情況兩者都填 0。`,
       json:true
     });
     if(epoch !== rpGenerationEpoch) return;
@@ -21375,6 +21376,10 @@ ${publicTaiwanLanguageRules()}
       : state.forumPosts.includes(post);
     if(!stillExists) return;
     const data = parseStarwaveLlmJson(result.text);
+    if(kind === "sns" && post.authorId === "player"){
+      post.likes = Number(post.likes || 0) + Math.min(30,snsSafeCount(data.likesAdded));
+      post.reposts = Number(post.reposts || 0) + Math.min(5,snsSafeCount(data.repostsAdded));
+    }
     (Array.isArray(data.replies) ? data.replies : []).slice(0,2).forEach(raw => {
       const author = resolveForumAiAuthor(raw,authors);
       const text = sanitizePublicText(String(raw?.text || "").trim());
@@ -23008,6 +23013,8 @@ function buildSnsAiPrompt(
           id:
             post.id,
 
+          authorId:post.authorId,
+
           createdAt:
             realTimeEnabled() ? (post.createdAt || "") : "",
 
@@ -23027,6 +23034,9 @@ function buildSnsAiPrompt(
             sanitizePublicText(
               post.text
             ),
+
+          likes:Number(post.likes || 0),
+          reposts:Number(post.reposts || 0),
 
           comments:
             (post.comments || [])
@@ -23133,7 +23143,7 @@ ${JSON.stringify(authors)}
 自動發文或自動留言。
 
 玩家自己已經發出的貼文
-可以被其他角色或觀眾留言。
+可以被其他角色或觀眾留言、按讚與轉發。
 
 【社群設定】
 
@@ -23203,6 +23213,13 @@ replyToQuote 必須摘錄真正被回覆留言中獨有、連續至少三字的�
 
 可以回覆第一層或第二層留言，最多到第三層；內容若是在接續第二層留言，就直接指定那則留言，不能標成回覆它的上一層。
 
+【既有玩家貼文的互動】
+
+existingEngagement 可以替 recentSns 裡 authorId 為 player 的貼文增加按讚與轉發。
+只填這次更新增加的數量，不是總數；likesAdded 可為 0～30，repostsAdded 可為 0～5。
+依貼文內容與目前數字自然判斷，不要替玩家自己按讚或轉發。沒有新增互動時可省略該篇。
+不能變動其他人的貼文數字，也不要重複計算新貼文。
+
 【回覆既有 SNS】
 
 existingComments
@@ -23252,6 +23269,9 @@ null
     }
   ],
 
+  "existingEngagement":[
+    {"postId":"既有玩家 SNS id","likesAdded":0,"repostsAdded":0}
+  ],
   "existingComments":[
     {
       "postId":"既有 SNS id",
@@ -23419,6 +23439,9 @@ async function generateSnsNow(
     let changed =
       0;
 
+
+    const eligiblePlayerPostIds = new Set(state.snsPosts.slice(0,8)
+      .filter(post => post.authorId === "player").map(post => post.id));
 
     const newPosts =
       Array.isArray(
@@ -23595,6 +23618,24 @@ async function generateSnsNow(
         }
       );
 
+
+    const existingEngagement = Array.isArray(data.existingEngagement)
+      ? data.existingEngagement : [];
+
+    const engagedPosts = new Set();
+    existingEngagement.slice(0,8).forEach(raw => {
+      const postId = String(raw?.postId || "");
+      if(!eligiblePlayerPostIds.has(postId) || engagedPosts.has(postId)) return;
+      engagedPosts.add(postId);
+      const post = state.snsPosts.find(item => item.id === postId);
+      if(!post) return;
+      const likesAdded = Math.min(30,snsSafeCount(raw.likesAdded));
+      const repostsAdded = Math.min(5,snsSafeCount(raw.repostsAdded));
+      if(!likesAdded && !repostsAdded) return;
+      post.likes = Number(post.likes || 0) + likesAdded;
+      post.reposts = Number(post.reposts || 0) + repostsAdded;
+      changed++;
+    });
 
     const existingComments =
       Array.isArray(
