@@ -1587,6 +1587,16 @@ textarea::placeholder{
   font-weight:700;
 }
 
+.content-manage-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:6px;}
+.content-manage-actions button{min-height:20px;padding:0;border:0;background:transparent;color:var(--muted);font-size:10px;}
+.content-manage-actions button:hover{color:var(--blue);}
+.content-manage-actions .content-delete:hover{color:var(--red);}
+.wl-system .content-manage-actions{justify-content:center;}
+.wl-bubble.me .content-manage-actions{justify-content:flex-end;}
+.confirm-overlay{z-index:9002;}
+.content-edit-overlay{z-index:9003;}
+.content-edit-modal .field{margin-top:10px;}
+.content-edit-modal textarea{width:100%;min-height:130px;resize:vertical;}
 .wl-system{
   align-self:center;
   max-width:86%;
@@ -3065,6 +3075,7 @@ textarea::placeholder{
 .role-live-overlay,
 .confirm-overlay,
 .memory-edit-overlay,
+.content-edit-overlay,
 .lore-edit-overlay,
 .lore-rename-overlay,
 .import-role-overlay,
@@ -3083,6 +3094,7 @@ textarea::placeholder{
 .role-live-overlay[hidden],
 .confirm-overlay[hidden],
 .memory-edit-overlay[hidden],
+.content-edit-overlay[hidden],
 .lore-edit-overlay[hidden],
 .lore-rename-overlay[hidden],
 .import-role-overlay[hidden],
@@ -3210,6 +3222,7 @@ textarea::placeholder{
 
 .confirm-modal,
 .memory-edit-modal,
+.content-edit-modal,
 .lore-edit-modal,
 .import-role-modal,
 .group-create-modal{
@@ -14930,7 +14943,7 @@ messages.forEach(message => {
       }
 
 
-    pushWlMessage(
+    const generatedMessage = pushWlMessage(
       room,
       {
         id:
@@ -14949,6 +14962,7 @@ messages.forEach(message => {
 
 
 generatedMessages.push({
+  id:generatedMessage.id,
   authorId,
   text
 });
@@ -15276,6 +15290,73 @@ $("wlArchiveFolder").onclick =
     renderWavelink();
   };
 
+function openContentEditor(title,fields,onSave){
+  const overlay = document.createElement("div");
+  overlay.className = "content-edit-overlay";
+  const modal = document.createElement("div");
+  modal.className = "content-edit-modal";
+  const heading = document.createElement("div");
+  heading.className = "confirm-title";
+  heading.textContent = title;
+  modal.append(heading);
+  const inputs = fields.map(field => {
+    const wrap = document.createElement("div");
+    wrap.className = "field";
+    const label = document.createElement("label");
+    label.textContent = field.label;
+    const input = document.createElement(field.single ? "input" : "textarea");
+    input.value = field.value || "";
+    wrap.append(label,input);
+    modal.append(wrap);
+    return input;
+  });
+  const buttons = document.createElement("div");
+  buttons.className = "confirm-actions";
+  const cancel = document.createElement("button");
+  cancel.className = "secondary";
+  cancel.textContent = "取消";
+  cancel.onclick = () => overlay.remove();
+  const save = document.createElement("button");
+  save.className = "primary";
+  save.textContent = "儲存修改";
+  save.onclick = () => {
+    const values = inputs.map(input => input.value.trim());
+    if(values.some(value => !value)){
+      toast("內容不能留空");
+      return;
+    }
+    if(onSave(values) !== false) overlay.remove();
+  };
+  buttons.append(cancel,save);
+  modal.append(buttons);
+  overlay.append(modal);
+  document.body.append(overlay);
+  inputs[0].focus();
+}
+
+function confirmContentDeletion(label,onDelete){
+  showConfirm({
+    title:`刪除${label}？`,
+    message:`確定要刪除這則${label}嗎？刪除後無法復原。`,
+    okText:"刪除",
+    onConfirm:onDelete
+  });
+}
+
+function contentManageActions(onEdit,onDelete){
+  const actions = document.createElement("div");
+  actions.className = "content-manage-actions";
+  const edit = document.createElement("button");
+  edit.textContent = "編輯";
+  edit.onclick = onEdit;
+  const remove = document.createElement("button");
+  remove.className = "content-delete";
+  remove.textContent = "刪除";
+  remove.onclick = onDelete;
+  actions.append(edit,remove);
+  return actions;
+}
+
 function renderWavelinkConversation(){
   const room =
     getRoom(state.currentWavelink);
@@ -15550,6 +15631,24 @@ const readOnly =
   bubble.append(time);
 }
 
+    bubble.append(contentManageActions(
+      () => openContentEditor("編輯 WAVELINK 訊息",[
+        {label:"訊息內容",value:message.text}
+      ],([value]) => {
+        if(!room.messages.includes(message)) return false;
+        message.text = value;
+        renderWavelinkConversation();
+        if(voiceCall.active && voiceCall.roomId === room.id) renderVoiceLog();
+        scheduleStarwaveSave();
+      }),
+      () => confirmContentDeletion("WAVELINK 訊息",() => {
+        if(!room.messages.includes(message)) return;
+        room.messages = room.messages.filter(item => item !== message);
+        renderWavelinkConversation();
+        if(voiceCall.active && voiceCall.roomId === room.id) renderVoiceLog();
+        scheduleStarwaveSave();
+      })
+    ));
     $("wlMessages").append(bubble);
   });
 
@@ -16169,6 +16268,11 @@ function renderVoiceLog(){
   $("voiceLog").innerHTML = "";
 
   voiceCall.entries.forEach(entry => {
+    const room = getRoom(voiceCall.roomId);
+    const message = entry.messageId
+      ? room?.messages.find(item => item.id === entry.messageId)
+      : null;
+    if(entry.messageId && !message) return;
     const line = document.createElement("div");
 
     if(entry.system){
@@ -16191,9 +16295,28 @@ function renderVoiceLog(){
           : publicName(getAnyCharacter(entry.authorId));
 
       const text = document.createElement("span");
-      text.textContent = entry.text;
-
+      text.textContent = message ? message.text : entry.text;
       line.append(author,text);
+      if(message){
+        line.append(contentManageActions(
+          () => openContentEditor("編輯語音訊息",[
+            {label:"訊息內容",value:message.text}
+          ],([value]) => {
+            if(!room.messages.includes(message)) return false;
+            message.text = value;
+            renderVoiceLog();
+            if(state.currentWavelink === room.id) renderWavelinkConversation();
+            scheduleStarwaveSave();
+          }),
+          () => confirmContentDeletion("語音訊息",() => {
+            if(!room.messages.includes(message)) return;
+            room.messages = room.messages.filter(item => item !== message);
+            renderVoiceLog();
+            if(state.currentWavelink === room.id) renderWavelinkConversation();
+            scheduleStarwaveSave();
+          })
+        ));
+      }
     }
 
     $("voiceLog").append(line);
@@ -16329,13 +16452,10 @@ $("sendVoice").onclick =
       sendButton.textContent;
 
 
-    voiceCall.entries.push({
-      authorId:"player",
-      text
-    });
+    const voiceEntry = {authorId:"player",text};
+    voiceCall.entries.push(voiceEntry);
 
-
-    pushWlMessage(
+    const sentMessage = pushWlMessage(
       room,
       {
         id:
@@ -16351,6 +16471,8 @@ $("sendVoice").onclick =
       }
     );
 
+
+    voiceEntry.messageId = sentMessage.id;
 
     $("voiceInput").value =
       "";
@@ -16396,11 +16518,9 @@ $("sendVoice").onclick =
       ).forEach(message => {
 
         voiceCall.entries.push({
-          authorId:
-            message.authorId,
-
-          text:
-            message.text
+          messageId:message.id,
+          authorId:message.authorId,
+          text:message.text
         });
       });
 
@@ -21020,6 +21140,29 @@ function renderForumThread(){
     </div>
   `;
 
+  $("forumOp").append(contentManageActions(
+    () => openContentEditor("編輯論壇貼文",[
+      {label:"標題",value:post.title,single:true},
+      {label:"內容",value:post.body}
+    ],([title,body]) => {
+      if(!state.forumPosts.includes(post)) return false;
+      post.title = title;
+      post.body = body;
+      renderForum();
+      renderForumThread();
+      scheduleStarwaveSave();
+    }),
+    () => confirmContentDeletion("論壇貼文",() => {
+      if(!state.forumPosts.includes(post)) return;
+      state.forumPosts = state.forumPosts.filter(item => item !== post);
+      currentForumId = null;
+      forumReplyParentId = null;
+      $("forumIndex").hidden = false;
+      $("forumDetail").classList.remove("open");
+      renderForum();
+      scheduleStarwaveSave();
+    })
+  ));
   $("forumReplies").innerHTML = "";
 
   flattenReplies(post).forEach(
@@ -21114,6 +21257,30 @@ function renderForumThread(){
       };
 
       meta.append(action);
+      meta.append(contentManageActions(
+        () => openContentEditor("編輯論壇回覆",[
+          {label:"回覆內容",value:reply.text}
+        ],([value]) => {
+          if(!post.replies.includes(reply)) return false;
+          reply.text = value;
+          renderForumThread();
+          scheduleStarwaveSave();
+        }),
+        () => confirmContentDeletion("論壇回覆",() => {
+          if(!post.replies.includes(reply)) return;
+          post.replies.forEach(item => {
+            if(item.parentId === reply.id) item.parentId = reply.parentId || null;
+          });
+          post.replies = post.replies.filter(item => item !== reply);
+          if(forumReplyParentId === reply.id){
+            forumReplyParentId = null;
+            $("forumReplyTarget").hidden = true;
+          }
+          renderForumThread();
+          renderForum();
+          scheduleStarwaveSave();
+        })
+      ));
 
       row.append(meta);
 
@@ -22221,6 +22388,23 @@ function renderSns(){
     };
 
     actions.append(heart,count,repost);
+    actions.append(contentManageActions(
+      () => openContentEditor("編輯 SNS 貼文",[
+        {label:"貼文內容",value:post.text}
+      ],([value]) => {
+        if(!state.snsPosts.includes(post)) return false;
+        post.text = sanitizePublicText(value);
+        renderSns();
+        scheduleStarwaveSave();
+      }),
+      () => confirmContentDeletion("SNS 貼文",() => {
+        if(!state.snsPosts.includes(post)) return;
+        state.snsPosts = state.snsPosts.filter(item => item !== post);
+        delete snsReplyTargets[post.id];
+        renderSns();
+        scheduleStarwaveSave();
+      })
+    ));
 
     main.append(actions);
 
@@ -22467,6 +22651,26 @@ time.textContent =
     };
 
     actions.append(heart,reply);
+    actions.append(contentManageActions(
+      () => openContentEditor("編輯 SNS 留言",[
+        {label:"留言內容",value:comment.text}
+      ],([value]) => {
+        if(!post.comments.includes(comment)) return false;
+        comment.text = sanitizePublicText(value);
+        renderSns();
+        scheduleStarwaveSave();
+      }),
+      () => confirmContentDeletion("SNS 留言",() => {
+        if(!post.comments.includes(comment)) return;
+        post.comments.forEach(item => {
+          if(item.parentId === comment.id) item.parentId = null;
+        });
+        post.comments = post.comments.filter(item => item !== comment);
+        if(snsReplyTargets[post.id] === comment.id) snsReplyTargets[post.id] = null;
+        renderSns();
+        scheduleStarwaveSave();
+      })
+    ));
 
     bodyWrap.append(actions);
 
