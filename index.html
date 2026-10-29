@@ -2337,11 +2337,11 @@ textarea::placeholder{
 
 .sns-comment.level-1{margin-left:0;}
 
-.sns-comment.level-2{
-  margin-left:30px;
-}
+.sns-comment.level-2{margin-left:27px;}
+.sns-comment.level-3{margin-left:54px;}
 
-.sns-comment.level-2::before{
+.sns-comment.level-2::before,
+.sns-comment.level-3::before{
   content:"";
   position:absolute;
   left:-13px;
@@ -22257,12 +22257,28 @@ function toggleLike(target){
   }
 }
 
-function snsAiRepliesToComment(parent,quote,postText){
-  if(!parent || parent.parentId) return false;
+function snsCommentDepth(comments,comment){
+  let depth = 0;
+  let current = comment;
+  const seen = new Set();
+  while(current){
+    if(seen.has(current.id)) return Infinity;
+    seen.add(current.id);
+    depth++;
+    current = comments.find(item => item.id === current.parentId);
+  }
+  return depth;
+}
+
+function snsAiReplyParent(comments,quote,postText){
   const phrase = String(quote || "").trim();
-  return phrase.length >= 3 &&
-    String(parent.text || "").includes(phrase) &&
-    !String(postText || "").includes(phrase);
+  if(phrase.length < 3 || String(postText || "").includes(phrase)) return null;
+  const matches = comments.filter(item =>
+    snsCommentDepth(comments,item) <= 2 &&
+    String(item.text || "").includes(phrase)
+  );
+  if(matches.length !== 1) return null;
+  return matches[0];
 }
 
 function snsChildren(post,parentId){
@@ -22535,7 +22551,7 @@ function renderSnsCommentTree(
       Boolean(comment.likedByPlayer);
 
     const visualDepth =
-      Math.min(depth,2);
+      Math.min(depth,3);
 
     const row =
       document.createElement("div");
@@ -22704,7 +22720,8 @@ time.textContent =
       () => {
         const hasChildren = post.comments.some(item => item.parentId === comment.id);
         const targets = post.comments.filter(item =>
-          item !== comment && !item.parentId && (!hasChildren || item.id === comment.parentId)
+          item !== comment && item.parentId !== comment.id &&
+          snsCommentDepth(post.comments,item) <= (hasChildren ? 1 : 2)
         );
         openContentEditor("編輯 SNS 留言",[
           {label:"留言內容",value:comment.text},
@@ -22720,7 +22737,9 @@ time.textContent =
           const parent = targetId === "__post__"
             ? null
             : post.comments.find(item =>
-                item.id === targetId && !item.parentId && item !== comment
+                item.id === targetId && item !== comment &&
+                item.parentId !== comment.id &&
+                snsCommentDepth(post.comments,item) <= (hasChildren ? 1 : 2)
               );
           if(targetId !== "__post__" && !parent) return false;
           comment.text = sanitizePublicText(value);
@@ -22733,7 +22752,7 @@ time.textContent =
       () => confirmContentDeletion("SNS 留言",() => {
         if(!post.comments.includes(comment)) return;
         post.comments.forEach(item => {
-          if(item.parentId === comment.id) item.parentId = null;
+          if(item.parentId === comment.id) item.parentId = comment.parentId || null;
         });
         post.comments = post.comments.filter(item => item !== comment);
         if(snsReplyTargets[post.id] === comment.id) snsReplyTargets[post.id] = null;
@@ -23011,6 +23030,8 @@ function buildSnsAiPrompt(
                   id:
                     comment.id,
 
+                  parentId:comment.parentId || null,
+
                   author:
                     publicAuthor(
                       comment.authorId,
@@ -23171,9 +23192,9 @@ null
 更早出現的留言索引，
 從 0 開始。
 只有內容真的接續那則留言（例如回答對方的問題、接續對方的看法）才填索引，不需要點名對方。若兩位粉絲各自回應貼文，兩則 replyTo 都是 null。
-replyToQuote 必須摘錄被回覆留言中獨有、連續至少三字的原文，不能引用貼文主樓；直接回貼文時 replyToQuote 填空字串。
+replyToQuote 必須摘錄真正被回覆留言中獨有、連續至少三字的原文，不能引用貼文主樓；直接回貼文時 replyToQuote 填空字串。replyTo 和 replyToQuote 必須指向同一則留言。
 
-最多一層回覆即可。
+可以回覆第一層或第二層留言，最多到第三層；內容若是在接續第二層留言，就直接指定那則留言，不能標成回覆它的上一層。
 
 【回覆既有 SNS】
 
@@ -23190,7 +23211,7 @@ null
 
 若要回覆既有留言，
 必須使用該貼文中
-真正存在的 comment id，且文字要真的接續該留言，不需點名對方。若只是回應貼文主樓，填 null。replyToQuote 同樣要摘錄目標留言獨有的連續原文（至少三字），直接回主樓時填空字串。
+真正存在的 comment id，包括已位於其他留言下的回覆；文字若是在回答那則回覆，請直接指定它的 id，不要指向上層留言。replyToQuote 同樣要摘錄目標留言獨有的連續原文（至少三字）；若只是回應貼文主樓，填 null 並把 replyToQuote 填空字串。
 
 不需要每次都追加留言。
 同一篇貼文請避免由最近留言過的同一帳號在下一次更新時接連發言；可換其他帳號，或略過這篇。
@@ -23476,39 +23497,10 @@ async function generateSnsNow(
                 }
 
 
-                let parentId =
-                  null;
-
-
-                if(
-                  rawComment.replyTo !==
-                    null &&
-                  rawComment.replyTo !==
-                    undefined &&
-                  rawComment.replyTo !==
-                    ""
-                ){
-
-                  const index =
-                    Number(
-                      rawComment.replyTo
-                    );
-
-
-                  if(
-                    Number.isInteger(index) &&
-                    index >= 0 &&
-                    index <
-                      builtComments.length
-                  ){
-
-                    const parent = builtComments[index];
-                    if(!parent.parentId &&
-                      snsAiRepliesToComment(parent,rawComment.replyToQuote,text)){
-                      parentId = parent.id;
-                    }
-                  }
-                }
+                const parent = snsAiReplyParent(
+                  builtComments,rawComment.replyToQuote,text
+                );
+                const parentId = parent?.id || null;
 
 
                 builtComments.push({
@@ -23651,29 +23643,10 @@ async function generateSnsNow(
             .find(comment => comment.authorId !== "player");
           if(lastNonPlayer?.authorId === author.id && authors.length > 1) return;
 
-          let parentId =
-            null;
-
-
-          if(
-            rawComment
-              .replyToCommentId
-          ){
-
-            const parent =
-              post.comments.find(
-                comment =>
-                  comment.id ===
-                  rawComment
-                    .replyToCommentId
-              );
-
-
-            if(parent && !parent.parentId &&
-              snsAiRepliesToComment(parent,rawComment.replyToQuote,post.text)){
-              parentId = parent.id;
-            }
-          }
+          const parent = snsAiReplyParent(
+            post.comments,rawComment.replyToQuote,post.text
+          );
+          const parentId = parent?.id || null;
 
 
           post.comments.push({
