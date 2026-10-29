@@ -1564,9 +1564,10 @@ textarea::placeholder{
 }
 
 .wl-bubble{
+  position:relative;
   width:max-content;
   max-width:76%;
-  padding:9px 11px;
+  padding:9px 58px 9px 11px;
   border-radius:10px 10px 10px 3px;
   background:var(--panel2);
   font-size:11px;
@@ -1587,12 +1588,36 @@ textarea::placeholder{
   font-weight:700;
 }
 
-.content-manage-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:6px;}
-.content-manage-actions button{min-height:20px;padding:0;border:0;background:transparent;color:var(--muted);font-size:10px;}
-.content-manage-actions button:hover{color:var(--blue);}
-.content-manage-actions .content-delete:hover{color:var(--red);}
-.wl-system .content-manage-actions{justify-content:center;}
-.wl-bubble.me .content-manage-actions{justify-content:flex-end;}
+.content-manage-actions{
+  position:absolute;
+  top:7px;
+  right:8px;
+  z-index:1;
+  display:flex;
+  gap:2px;
+}
+.content-manage-actions button{
+  display:grid;
+  place-items:center;
+  width:22px;
+  height:22px;
+  min-height:22px;
+  padding:0;
+  border:0;
+  border-radius:5px;
+  background:transparent;
+  color:var(--muted);
+  opacity:.68;
+}
+.content-manage-actions button:hover,
+.content-manage-actions button:focus-visible{
+  background:var(--softA);
+  color:var(--blue);
+  opacity:1;
+}
+.content-manage-actions .content-delete:hover,
+.content-manage-actions .content-delete:focus-visible{color:var(--red);}
+.content-manage-actions svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
 .confirm-overlay{z-index:9002;}
 .content-edit-overlay{z-index:9003;}
 .content-edit-modal .field{margin-top:10px;}
@@ -1721,6 +1746,8 @@ textarea::placeholder{
 }
 
 .voice-line{
+  position:relative;
+  padding-right:52px;
   margin-bottom:8px;
   font-size:11px;
   line-height:1.65;
@@ -2132,6 +2159,7 @@ textarea::placeholder{
 .forum-detail.open{display:block;}
 
 .forum-op{
+  position:relative;
   margin-bottom:12px;
   padding:13px;
   border:1px solid var(--line2);
@@ -2140,6 +2168,7 @@ textarea::placeholder{
 }
 
 .forum-op-meta{
+  padding-right:52px;
   padding-bottom:8px;
   margin-bottom:9px;
   border-bottom:1px solid var(--line);
@@ -2162,7 +2191,8 @@ textarea::placeholder{
 }
 
 .forum-reply{
-  padding:8px 4px;
+  position:relative;
+  padding:8px 54px 8px 4px;
   border-bottom:1px solid var(--line);
   font-size:11px;
   line-height:1.65;
@@ -2229,6 +2259,8 @@ textarea::placeholder{
   background:var(--panel);
 }
 
+.sns-post{position:relative;}
+.sns-post-main > div:first-child{padding-right:54px;}
 .sns-avatar{
   width:42px;
   height:42px;
@@ -2298,7 +2330,7 @@ textarea::placeholder{
 
 .sns-comment{
   position:relative;
-  padding:8px 0;
+  padding:8px 54px 8px 0;
   font-size:11px;
   line-height:1.6;
 }
@@ -15334,10 +15366,10 @@ function openContentEditor(title,fields,onSave){
   inputs[0].focus();
 }
 
-function confirmContentDeletion(label,onDelete){
+function confirmContentDeletion(label,onDelete,extra=""){
   showConfirm({
     title:`刪除${label}？`,
-    message:`確定要刪除這則${label}嗎？刪除後無法復原。`,
+    message:`確定要刪除這則${label}嗎？${extra}刪除後無法復原。`,
     okText:"刪除",
     onConfirm:onDelete
   });
@@ -15347,11 +15379,17 @@ function contentManageActions(onEdit,onDelete){
   const actions = document.createElement("div");
   actions.className = "content-manage-actions";
   const edit = document.createElement("button");
-  edit.textContent = "編輯";
+  edit.type = "button";
+  edit.title = "編輯";
+  edit.setAttribute("aria-label","編輯內容");
+  edit.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L20 8l-4-4L4 16v4Z"/><path d="m13 7 4 4"/></svg>';
   edit.onclick = onEdit;
   const remove = document.createElement("button");
+  remove.type = "button";
   remove.className = "content-delete";
-  remove.textContent = "刪除";
+  remove.title = "刪除";
+  remove.setAttribute("aria-label","刪除內容");
+  remove.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>';
   remove.onclick = onDelete;
   actions.append(edit,remove);
   return actions;
@@ -21140,7 +21178,7 @@ function renderForumThread(){
     </div>
   `;
 
-  $("forumOp").append(contentManageActions(
+  $("forumOp").querySelector(".forum-op").append(contentManageActions(
     () => openContentEditor("編輯論壇貼文",[
       {label:"標題",value:post.title,single:true},
       {label:"內容",value:post.body}
@@ -21161,7 +21199,7 @@ function renderForumThread(){
       $("forumDetail").classList.remove("open");
       renderForum();
       scheduleStarwaveSave();
-    })
+    },"底下所有回覆也會一起刪除。")
   ));
   $("forumReplies").innerHTML = "";
 
@@ -21257,7 +21295,7 @@ function renderForumThread(){
       };
 
       meta.append(action);
-      meta.append(contentManageActions(
+      row.append(contentManageActions(
         () => openContentEditor("編輯論壇回覆",[
           {label:"回覆內容",value:reply.text}
         ],([value]) => {
@@ -22309,6 +22347,7 @@ function renderSns(){
 
     const main =
       document.createElement("div");
+    main.className = "sns-post-main";
 
     const authorName =
       publicAuthor(
@@ -22388,7 +22427,7 @@ function renderSns(){
     };
 
     actions.append(heart,count,repost);
-    actions.append(contentManageActions(
+    article.append(contentManageActions(
       () => openContentEditor("編輯 SNS 貼文",[
         {label:"貼文內容",value:post.text}
       ],([value]) => {
@@ -22403,7 +22442,7 @@ function renderSns(){
         delete snsReplyTargets[post.id];
         renderSns();
         scheduleStarwaveSave();
-      })
+      },"底下所有留言也會一起刪除。")
     ));
 
     main.append(actions);
@@ -22651,7 +22690,7 @@ time.textContent =
     };
 
     actions.append(heart,reply);
-    actions.append(contentManageActions(
+    row.append(contentManageActions(
       () => openContentEditor("編輯 SNS 留言",[
         {label:"留言內容",value:comment.text}
       ],([value]) => {
