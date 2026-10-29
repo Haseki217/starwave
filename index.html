@@ -18717,13 +18717,7 @@ function renderBackstage(){
       row.innerHTML = `
         <span>${esc(product.name)}</span>
 
-        <strong>
-          ${
-            product.type === "durable"
-              ? "已持有"
-              : `×${qty}`
-          }
-        </strong>
+        ${product.type === "consumable" ? `<strong>${Number(qty)}</strong>` : ""}
       `;
 
            if(product.id === "gift"){
