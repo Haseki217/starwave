@@ -3,6 +3,7 @@ const starwaveSync = (() => {
   const config = window.STARWAVE_SYNC_CONFIG || {};
   const scope = "https://www.googleapis.com/auth/drive.appdata";
   const fileName = "starwave-progress.json";
+  const sessionKey = "starwave-google-drive-session-v1";
   let token = "";
   let expiresAt = 0;
   let user = null;
@@ -38,6 +39,34 @@ const starwaveSync = (() => {
     return payload;
   }
 
+  function clearSession(){
+    try{ sessionStorage.removeItem(sessionKey); }catch{}
+  }
+
+  function rememberSession(){
+    try{
+      sessionStorage.setItem(sessionKey,JSON.stringify({token,expiresAt,user}));
+    }catch{}
+  }
+
+  function restoreSession(){
+    try{
+      const saved = JSON.parse(sessionStorage.getItem(sessionKey) || "null");
+      if(saved && typeof saved.token === "string" && saved.token &&
+         Number.isFinite(saved.expiresAt) &&
+         saved.expiresAt > Date.now() + 30000 &&
+         saved.user?.id === state.sync.userId &&
+         state.sync.provider === "Google Drive"){
+        token = saved.token;
+        expiresAt = saved.expiresAt;
+        user = saved.user;
+        return true;
+      }
+    }catch{}
+    clearSession();
+    return false;
+  }
+
   function authorized(){
     return Boolean(token && user && Date.now() < expiresAt - 30000);
   }
@@ -49,11 +78,12 @@ const starwaveSync = (() => {
   function render(){
     const label = authorized()
       ? `Google Drive · ${state.sync.account || "已連結"}`
-      : token && user ? "Google 授權已到期，請重新連結" : "尚未連結";
+      : state.sync.provider === "Google Drive" && state.sync.userId
+        ? "Google 授權已到期，請重新連結" : "尚未連結";
     $("syncProviderStatus").textContent = failure ||
       (waitingForChoice ? `${label} · 等待選擇進度` : label);
     $("syncLastTime").textContent = state.sync.lastSync || "--";
-    $("disconnectSync").disabled = !user || busy;
+    $("disconnectSync").disabled = (!user && !state.sync.userId) || busy;
     $("syncNow").disabled = busy;
     $("connectGoogle").disabled = busy || connecting;
     $("connectGithub").disabled = true;
@@ -67,7 +97,10 @@ const starwaveSync = (() => {
     });
     if(!response.ok){
       if(response.status === 401){
+        token = "";
         expiresAt = 0;
+        user = null;
+        clearSession();
         renderSyncSettings();
         throw new Error("Google 授權已到期，請重新連結。");
       }
@@ -290,12 +323,14 @@ const starwaveSync = (() => {
             state.sync.lastSync = "";
           }
           state.sync.account = user.account;
+          rememberSession();
           failure = "";
           await syncNow(true);
         }catch(error){
           token = "";
           expiresAt = 0;
           user = null;
+          clearSession();
           showNotice("Google 連結失敗",error.message || "請重試。");
         }
         renderSyncSettings();
@@ -309,7 +344,7 @@ const starwaveSync = (() => {
   }
 
   function disconnect(){
-    if(!user || busy) return;
+    if((!user && !state.sync.userId) || busy) return;
     showConfirm({
       title:"中斷跨裝置同步？",
       message:"只解除這台裝置的連結，本機與 Google Drive 進度都不會刪除。",
@@ -319,6 +354,7 @@ const starwaveSync = (() => {
         token = "";
         expiresAt = 0;
         user = null;
+        clearSession();
         waitingForChoice = false;
         failure = "";
         $("syncConflict").hidden = true;
@@ -367,7 +403,9 @@ const starwaveSync = (() => {
     setInterval(() => {
       if(document.visibilityState === "visible") syncNow(false);
     },60000);
+    const resumed = restoreSession();
     renderSyncSettings();
+    if(resumed) void syncNow(false);
   }
 
   return {init,render,schedule,syncNow};
