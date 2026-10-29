@@ -22921,6 +22921,8 @@ null
 不需要每次都追加留言。
 同一篇貼文請避免由最近留言過的同一帳號在下一次更新時接連發言；可換其他帳號，或略過這篇。
 
+留言的 text 只寫自然社群發言，不夾帶模型內部標記、JSON 片段或無意義符號。
+
 只輸出有效 JSON：
 
 {
@@ -22954,18 +22956,6 @@ null
       "authorId":"",
       "fanName":"新粉絲顯示名稱",
       "fanHandle":"@new_fan",
-      "text":"留言內容",
-      "replyToCommentId":null,
-      "replyToQuote":""
-    }
-  ]
-}
-  ],
-
-  "existingComments":[
-    {
-      "postId":"既有 SNS id",
-      "authorId":"帳號 id",
       "text":"留言內容",
       "replyToCommentId":null,
       "replyToQuote":""
