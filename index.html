@@ -21348,7 +21348,8 @@ async function respondToPublicInteraction(kind, post, playerText, parentId=null)
   if(state.refresh[kind] === "off") return;
   const key = kind + ":" + post.id;
   if(publicReplyPending.has(key)) return;
-  const authors = kind === "sns" ? snsPublicAuthors() : forumPublicAuthors();
+  const authors = (kind === "sns" ? snsPublicAuthors() : forumPublicAuthors())
+    .filter(author => !characterCurrentlyLive(author.id));
   const epoch = rpGenerationEpoch;
   publicReplyPending.add(key);
   try{
@@ -21364,7 +21365,7 @@ ${publicTaiwanLanguageRules()}
 可用的公開帳號：${JSON.stringify(authors)}
 黑粉強度：${state.community.blackfan}%；柔和社群：${state.community.soft ? "ON" : "OFF"}。
 只使用公開資訊，不使用角色卡、私人關係、WAVELINK、線下故事或私人記憶。
-由有理由看到內容的角色或粉絲回應，語氣自然，不必每次都是角色本人；不要替玩家發言。
+由有理由看到內容的角色或粉絲回應，語氣自然，不必每次都是角色本人；不要替玩家發言。正在開直播的角色不要回覆 SNS 或論壇，粉絲與未開播角色仍可回應。
 輸出有效 JSON：{"replies":[{"authorId":"既有帳號 id，若是新粉絲則留空","fanName":"新粉絲名稱或空字串","fanHandle":"@新粉絲ID或空字串","text":"回應文字"}]}。生成 1～2 則。`,
       json:true
     });
@@ -21377,7 +21378,7 @@ ${publicTaiwanLanguageRules()}
     (Array.isArray(data.replies) ? data.replies : []).slice(0,2).forEach(raw => {
       const author = resolveForumAiAuthor(raw,authors);
       const text = sanitizePublicText(String(raw?.text || "").trim());
-      if(!author || !text) return;
+      if(!author || !text || characterCurrentlyLive(author.id)) return;
       if(kind === "sns"){
         post.comments.push({id:uid("comment"),parentId:parentId && post.comments.some(item => item.id === parentId) ? parentId : null,authorId:author.id,author:author.name,handle:author.handle,time:currentRpTimeShort(),text,likes:0,likedByPlayer:false});
       }else{
@@ -21431,6 +21432,10 @@ $("sendForumReply").onclick = () => {
   countRpTurn(`論壇回覆「${post.title.slice(0,120)}」：${text}`);
   void respondToPublicInteraction("forum",post,text,replyParentId);
 };
+
+function characterCurrentlyLive(authorId){
+  return Boolean(getCharacter(authorId)?.live);
+}
 
 function forumPublicAuthors(){
 
@@ -21644,6 +21649,7 @@ ${JSON.stringify(authors)}
 
 不得自行創造新的角色主播帳號。
 不得替玩家帳號自動發文或回覆。
+正在開直播的角色不發論壇主樓，也不回覆論壇討論；粉絲與未開播角色仍可正常討論。
 
 一般觀眾主要以 fan 帳號活動。
 
@@ -21956,7 +21962,7 @@ async function generateForumNow(
               authors
             );
 
-          if(!author){
+          if(!author || characterCurrentlyLive(author.id)){
             return;
           }
 
@@ -22037,7 +22043,7 @@ async function generateForumNow(
                   );
 
 
-                if(!replyAuthor){
+                if(!replyAuthor || characterCurrentlyLive(replyAuthor.id)){
                   return;
                 }
 
@@ -23121,6 +23127,7 @@ ${JSON.stringify(authors)}
 - 不要使用固定名稱模板
 
 不得創造新的角色主播帳號。
+正在開直播的角色可以自己發 SNS 貼文，但不在任何 SNS 貼文下留言或回覆；其他角色與粉絲仍可回覆。
 
 不得替玩家帳號
 自動發文或自動留言。
@@ -23491,7 +23498,8 @@ async function generateSnsNow(
 
                 if(
                   !commentAuthor ||
-                  !commentText
+                  !commentText ||
+                  characterCurrentlyLive(commentAuthor.id)
                 ){
                   return;
                 }
@@ -23632,7 +23640,8 @@ async function generateSnsNow(
 
           if(
             !author ||
-            !text
+            !text ||
+            characterCurrentlyLive(author.id)
           ){
             return;
           }
