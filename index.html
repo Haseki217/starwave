@@ -7214,6 +7214,7 @@ live:{
     memberFee:120,
     inventory:{},
     billCycle:"",
+    lastLedgerRpActivityAt:0,
     bills:[],
     transactions:[]
   },
@@ -8468,6 +8469,8 @@ $("realTimeSwitch").onclick = () => {
     !realTimeEnabled();
   state.timeSettings.lastRoleLiveTick = Date.now();
   state.timeSettings.lastRoleViewerTick = Date.now();
+  state.economy.lastLedgerRpActivityAt = 0;
+  lastScheduledLedgerAttempt = 0;
   if(state.live.started) state.live.lastActivityAt = Date.now();
   renderLiveAwayPrompt();
 
@@ -13460,12 +13463,16 @@ setInterval(() => {
   if(document.visibilityState === "visible"){
     advanceRoleLiveRealTime();
     renderLiveAwayPrompt();
+    if(recordOverdueLedgerBills()){ renderLedger(); renderShop(); }
+    if(realTimeEnabled()) checkScheduledLedgerBills();
   }
 },60000);
 document.addEventListener("visibilitychange",() => {
   if(document.visibilityState === "visible"){
     advanceRoleLiveRealTime();
     renderLiveAwayPrompt();
+    if(recordOverdueLedgerBills()){ renderLedger(); renderShop(); }
+    if(realTimeEnabled()) checkScheduledLedgerBills();
   }
 });
 
@@ -17452,7 +17459,7 @@ function addTransaction({
 function showInsufficientFunds(price){
   showNotice(
     "餘額不足",
-`目前餘額：${money(state.economy.wallet)}
+`目前餘額：${walletMoney(state.economy.wallet)}
 需要金額：${money(price)}
 尚缺：${money(price - state.economy.wallet)}`
   );
@@ -17461,15 +17468,101 @@ function showInsufficientFunds(price){
 let lifeLedgerGenerating =
   false;
 
+let lastScheduledLedgerAttempt = 0;
 
-function buildLifeLedgerAiPrompt(){
+function ledgerBillType(bill){
+  const keyType = String(bill.key || "").split(":").pop();
+  if(["water","electricity","gas","rent","mobile","subscription"].includes(keyType)) return keyType;
+  const name = String(bill.name || "");
+  if(name.includes("房租")) return "rent";
+  if(name.includes("瓦斯")) return "gas";
+  if(name.includes("水電")) return "water+electricity";
+  if(name.includes("電費")) return "electricity";
+  if(name.includes("水費")) return "water";
+  if(name.includes("手機")) return "mobile";
+  if(name.includes("訂閱")) return "subscription";
+  return "";
+}
 
-  const cycle =
-    monthKey();
+function dueLedgerBills(now=new Date()){
+  const realMonth = monthKey(now);
+  // 舊版已建立整個月份的帳單，避免升級後在同月重複收費。
+  if(state.economy.billCycle === realMonth) return [];
+  const year = now.getFullYear();
+  const month = now.getMonth() + 1;
+  const scheduled = [];
+  const add = (type,name,day) => {
+    if(now.getDate() < day) return;
+    const opensAt = new Date(year,month-1,day).getTime();
+    if(!realTimeEnabled() &&
+      Number(state.economy.lastLedgerRpActivityAt || 0) < opensAt) return;
+    scheduled.push({
+      key:`real:${realMonth}:${type}`,type,name,realMonth,
+      due:`${month} 月 ${day} 日前`,
+      dueAt:new Date(year,month-1,day+1).getTime(),
+      mode:"real"
+    });
+  };
+  if(month % 2 === 0) add("electricity","電費",5);
+  else{
+    add("water","水費",5);
+    add("gas","瓦斯費",5);
+  }
+  add("rent","房租",10);
+  add("mobile","手機費",15);
+  add("subscription","訂閱服務",20);
+  return scheduled.filter(spec => !state.economy.bills.some(bill => {
+    if(bill.key === spec.key) return true;
+    if(!ledgerBillType(bill).split("+").includes(spec.type)) return false;
+    const billedRealMonth = bill.issuedRealMonth ||
+      (bill.mode === "real" || !bill.key ? bill.cycle : "");
+    return billedRealMonth === spec.realMonth;
+  }));
+}
 
-  const needsBills =
-    state.economy.billCycle !==
-    cycle;
+function recordOverdueLedgerBills(){
+  if(state.economy.mode !== "full") return false;
+  const now = Date.now();
+  const turn = Number(state.timeSettings.rpTurnCount || 0);
+  let changed = false;
+  state.economy.bills.forEach(bill => {
+    if(bill.paid || bill.debtRecorded) return;
+    if(!realTimeEnabled() && bill.mode === "real" &&
+      Number(state.economy.lastLedgerRpActivityAt || 0) < Number(bill.dueAt)) return;
+    const expired = bill.mode === "real"
+      ? Number(bill.dueAt) > 0 && now >= Number(bill.dueAt)
+      : bill.mode === "rp" && Number(bill.dueTurn) > 0 && turn > Number(bill.dueTurn);
+    if(!expired) return;
+    bill.debtRecorded = true;
+    state.economy.wallet -= Number(bill.amount || 0);
+    const date = new Date();
+    state.economy.transactions.unshift({
+      id:uid("tx"),category:bill.category || "生活帳單",
+      item:`${bill.name}（逾期）`,amount:-Number(bill.amount || 0),
+      source:"逾期帳單",iso:date.toISOString(),
+      month:monthKey(date),time:date.toLocaleString("zh-TW")
+    });
+    changed = true;
+  });
+  if(changed) scheduleStarwaveSave();
+  return changed;
+}
+
+function checkScheduledLedgerBills(){
+  if(state.economy.mode !== "full" || state.refresh.ledger !== "auto" ||
+    !dueLedgerBills().length || lifeLedgerGenerating ||
+    Date.now() - lastScheduledLedgerAttempt < 60*60*1000) return;
+  lastScheduledLedgerAttempt = Date.now();
+  void generateLifeLedgerAi({background:true,billsOnly:true});
+}
+
+function walletMoney(value){
+  return Number(value) < 0 ? signedMoney(value) : money(value);
+}
+
+function buildLifeLedgerAiPrompt(options={}){
+
+  const dueBills = dueLedgerBills();
 
 
   const playerContext = {
@@ -17617,11 +17710,11 @@ function buildLifeLedgerAiPrompt(){
 這是私人生活資料，
 不得將內容公開到論壇、SNS 或直播聊天室。
 
-【目前月份】
-${cycle}
+【帳單計時方式】
+現實日曆日期${realTimeEnabled() ? "（自動檢查）" : "（有 RP 互動後才檢查）"}
 
-【本月是否尚未建立帳單】
-${needsBills ? "是" : "否"}
+【現在需要建立的帳單】
+${JSON.stringify(dueBills.map(bill => ({key:bill.key,name:bill.name,due:bill.due})))}
 
 【目前錢包餘額】
 ${state.economy.wallet}
@@ -17651,13 +17744,13 @@ ${JSON.stringify(inventory)}
 
 - 根據玩家背景、近期故事與一般生活需求判斷。
 - 可以生成飲食、交通、日用品、休閒、
-  醫療、工作、退款或其他合理生活收支。
+  衣物、醫療、工作、退款或其他合理生活收支。
 - 不得重複記錄 SHOP 購買、直播打賞、
   已繳帳單或近期已記錄的同一件事情。
 - 不得憑空生成中獎、遺產、巨額贈與等收入。
 - 正數代表收入，負數代表支出。
 - 普通生活支出金額應符合新臺幣的合理範圍。
-- 每次重整原則上必須生成一筆 transaction。
+${options.billsOnly ? "- 此次只建立到期帳單，transaction 必須為 null。" : "- 每次重整原則上必須生成一筆 transaction。"}
 - 優先補記近期故事中明確發生、
   而且近期收支尚未記錄的消費或收入。
 - 玩家已明確輸入金額時，
@@ -17669,35 +17762,22 @@ ${JSON.stringify(inventory)}
   飲料、日用品或休閒活動就輸出 null。
 - 不得把錢包扣成負數。
   
-【每月帳單規則】
+【定期帳單規則】
 
-${
-  needsBills
-    ? `這個月尚未建立帳單。
-
-請依玩家背景建立 2～5 筆合理的每月帳單，
-例如房租、水電、瓦斯、網路、手機、
-訂閱服務或其他固定生活費。
-
-房租與固定契約不應每次月份變更就劇烈浮動。
-水電等浮動費用可以有合理變化。
-
-所有帳單合計不得超過 25000。
-不得生成稅金。
-不得扣除直播打賞的提領手續費。`
-    : `這個月的帳單已經建立。
-
-bills 必須輸出空陣列，
-不得在同一月份重複建立帳單。`
-}
+只為「現在需要建立的帳單」逐項輸出一筆 bills，每筆 key 必須完全照抄。
+清單為空時 bills 必須是空陣列，不得自行新增其他固定帳單。
+房租、手機費與訂閱服務金額應參考既有帳單保持合理穩定；
+水電瓦斯可以隨用量變化。單筆不得超過 20000；同一月份合計不得超過 25000。
+不得生成稅金或直播打賞提領手續費。
 
 只輸出有效 JSON：
 
 {
   "bills":[
     {
-      "name":"帳單名稱",
-      "category":"分類",
+      "key":"上方指定的帳單 key",
+      "name":"上方指定的帳單名稱",
+      "category":"生活帳單",
       "amount":1000,
       "due":"本月 10 日前"
     }
@@ -17711,11 +17791,7 @@ bills 必須輸出空陣列，
   "summary":"這次新增內容的簡短摘要"
 }
 
-transaction 原則上不得為 null。
-
-只有錢包已無法負擔任何合理日常支出，
-而且近期也沒有合理收入可以記錄時，
-transaction 才可以輸出 null。
+${options.billsOnly ? "這次只建立到期帳單，transaction 必須輸出 null。" : "transaction 原則上不得為 null。只有錢包無法負擔合理日常支出，且近期沒有合理收入時，transaction 才可輸出 null。"}
 `;
 }
 
@@ -17728,7 +17804,7 @@ async function generateLifeLedgerAi(
     Boolean(
       options.background
     );
-
+  const billsOnly = Boolean(options.billsOnly);
 
   if(
     state.economy.mode !==
@@ -17790,12 +17866,7 @@ async function generateLifeLedgerAi(
 
   try{
 
-    const cycle =
-      monthKey();
-
-    const needsBills =
-      state.economy.billCycle !==
-      cycle;
+    const dueBills = dueLedgerBills();
 
 
     const generationEpoch = rpGenerationEpoch;
@@ -17806,7 +17877,7 @@ async function generateLifeLedgerAi(
           state.api.active,
 
         prompt:
-          buildLifeLedgerAiPrompt(),
+          buildLifeLedgerAiPrompt({billsOnly}),
 
         systemInstruction:
           `你是 STARWAVE 的私人生活經濟模擬引擎。
@@ -17832,127 +17903,36 @@ async function generateLifeLedgerAi(
       false;
 
 
-    if(needsBills){
-
-      const generatedBills =
-        Array.isArray(
-          data.bills
-        )
-          ? data.bills
-          : [];
-
-
-      const normalizedBills =
-        [];
-
-      let billTotal =
-        0;
-
-
-      generatedBills
-        .slice(0,5)
-        .forEach(bill => {
-
-          const amount =
-            Math.round(
-              Number(
-                bill?.amount
-              )
-            );
-
-          const name =
-            String(
-              bill?.name || ""
-            )
-              .trim()
-              .slice(0,40);
-
-          const category =
-            String(
-              bill?.category ||
-              "生活帳單"
-            )
-              .trim()
-              .slice(0,30);
-
-          const due =
-            String(
-              bill?.due ||
-              "本月內"
-            )
-              .trim()
-              .slice(0,30);
-
-
-          if(
-            !name ||
-            !Number.isFinite(amount) ||
-            amount <= 0 ||
-            amount > 20000 ||
-            billTotal + amount >
-              25000
-          ){
-            return;
-          }
-
-
-          billTotal +=
-            amount;
-
-
-          normalizedBills.push({
-            id:
-              uid("bill"),
-
-            cycle,
-
-            name,
-
-            category,
-
-            amount,
-
-            due,
-
-            paid:false
-          });
+    if(dueBills.length){
+      const generatedBills = Array.isArray(data.bills) ? data.bills : [];
+      const normalizedBills = [];
+      const totals = new Map();
+      dueBills.forEach(spec => {
+        const raw = generatedBills.find(bill => bill?.key === spec.key);
+        const amount = Math.round(Number(raw?.amount));
+        const period = spec.key.split(":").slice(0,2).join(":");
+        const total = totals.get(period) || 0;
+        if(!Number.isFinite(amount) || amount <= 0 || amount > 20000 ||
+          total + amount > 25000) return;
+        totals.set(period,total + amount);
+        normalizedBills.push({
+          id:uid("bill"),key:spec.key,cycle:spec.key.split(":")[1],
+          type:spec.type,
+          issuedRealMonth:monthKey(),
+          name:spec.name,category:"生活帳單",amount,due:spec.due,
+          dueAt:spec.dueAt || 0,dueTurn:spec.dueTurn || 0,
+          mode:spec.mode,paid:false,debtRecorded:false
         });
-
-
-      if(!normalizedBills.length){
-
-        throw new Error(
-          "AI 沒有產生有效的本月帳單。"
-        );
+      });
+      if(normalizedBills.length !== dueBills.length){
+        throw new Error("AI 沒有產生完整的到期帳單。");
       }
-
-
-      const carriedBills =
-        state.economy.bills
-          .filter(
-            bill =>
-              !bill.paid &&
-              bill.cycle !==
-                cycle
-          );
-
-
-      state.economy.bills = [
-        ...carriedBills,
-        ...normalizedBills
-      ];
-
-
-      state.economy.billCycle =
-        cycle;
-
-      changed =
-        true;
+      state.economy.bills.push(...normalizedBills);
+      changed = true;
     }
 
-
     const transaction =
-      data.transaction &&
+      !billsOnly && data.transaction &&
       typeof data.transaction ===
         "object"
         ? data.transaction
@@ -18094,6 +18074,7 @@ async function generateLifeLedgerAi(
 }
 
 function renderLedger(){
+  recordOverdueLedgerBills();
   syncNumbers();
 
   const thisMonth = monthKey();
@@ -18176,7 +18157,7 @@ function renderLedger(){
 
           <strong>${esc(bill.name)}</strong><br>
 
-          <small>${esc(bill.due)}</small>
+          <small>${esc(bill.due)}${bill.debtRecorded ? " · 已逾期，列入負債" : ""}</small>
 
         </div>
 
@@ -18186,13 +18167,22 @@ function renderLedger(){
       const pay = document.createElement("button");
 
       pay.className = "secondary";
-      pay.textContent = "繳費";
+      pay.textContent = bill.debtRecorded ? "清償負債" : "繳費";
 
       pay.onclick = () => {
-        if(state.economy.mode === "off"){
+        if(state.economy.mode === "off") return;
+        if(bill.debtRecorded){
+          if(state.economy.wallet < 0){
+            showNotice("尚有負債","收入會先抵銷負債，餘額回到零以上後才能完成清償。");
+            return;
+          }
+          // 逾期時已扣入帳本，清償不可再次扣款。
+          bill.paid = true;
+          renderLedger();
+          renderShop();
+          scheduleStarwaveSave();
           return;
         }
-
         if(state.economy.wallet < bill.amount){
           showInsufficientFunds(bill.amount);
           return;
@@ -18209,6 +18199,7 @@ function renderLedger(){
         });
 
         renderLedger();
+        scheduleStarwaveSave();
       };
 
       row.append(pay);
@@ -18285,7 +18276,7 @@ let shopCategory = "all";
 
 function renderShop(){
   $("shopWallet").textContent =
-    money(state.economy.wallet);
+    walletMoney(state.economy.wallet);
 
   $("shopGrid").innerHTML = "";
 
@@ -18378,6 +18369,12 @@ function renderShop(){
 }
 
 function purchaseProduct(product){
+  recordOverdueLedgerBills();
+  if(state.economy.bills.some(bill => bill.debtRecorded && !bill.paid)){
+    renderLedger();
+    showNotice("尚有逾期帳單","請先在生活帳本清償負債，才能購買 SHOP 商品。");
+    return;
+  }
   if(
     product.type === "durable" &&
     shopQuantity(product.id) > 0
@@ -24068,6 +24065,12 @@ ${JSON.stringify(turns)}
 
 function countRpTurn(summary){
   state.timeSettings.rpTurnCount = Number(state.timeSettings.rpTurnCount || 0) + 1;
+  if(!realTimeEnabled()) state.economy.lastLedgerRpActivityAt = Date.now();
+  if(state.economy.mode === "full"){
+    const overdue = recordOverdueLedgerBills();
+    if(overdue){ renderLedger(); renderShop(); }
+    if(!realTimeEnabled()) checkScheduledLedgerBills();
+  }
   const settings = state.memorySettings;
   settings.counter = Number(settings.counter || 0) + 1;
   settings.recentTurns ||= [];
@@ -26444,6 +26447,7 @@ $$(".refreshSelect").forEach(select => {
 
     syncRefreshSelects();
     renderLedger();
+    if(realTimeEnabled()) checkScheduledLedgerBills();
   };
 });
 
@@ -26531,6 +26535,7 @@ $("economyMode").onchange = () => {
     $("economyMode").value;
 
   updateEconomyModeExplain();
+  if(state.economy.mode === "full" && realTimeEnabled()) checkScheduledLedgerBills();
 
   renderLedger();
   renderShop();
@@ -26575,8 +26580,7 @@ if(
   state.refresh.ledger === "auto" &&
   state.economy.mode === "full" &&
   (
-    state.economy.billCycle !==
-      monthKey() ||
+    dueLedgerBills().length > 0 ||
     Math.random() < .30
   )
 ){
@@ -27043,6 +27047,8 @@ character.liveOfflineTurns =
 
   state.economy.billCycle =
     "";
+  state.economy.lastLedgerRpActivityAt = 0;
+  lastScheduledLedgerAttempt = 0;
 
   state.economy.bills =
     [];
@@ -27226,13 +27232,13 @@ function syncNumbers(){
     fmt(state.player.members);
 
   $("walletStat").textContent =
-    money(state.economy.wallet);
+    walletMoney(state.economy.wallet);
 
   $("shopWallet").textContent =
-    money(state.economy.wallet);
+    walletMoney(state.economy.wallet);
 
   $("ledgerWallet").textContent =
-    money(state.economy.wallet);
+    walletMoney(state.economy.wallet);
 
   $("donationIncome").textContent =
     money(state.economy.donationIncome);
@@ -27437,6 +27443,8 @@ async function init(){
   void enrichRoleLiveHistoryTitles();
 
   triggerAutoContent({onOpen:true,skipLedger:true});
+  if(recordOverdueLedgerBills()){ renderLedger(); renderShop(); }
+  if(realTimeEnabled()) checkScheduledLedgerBills();
   maybeAdvancePeerLife();
 }
 
