@@ -21353,6 +21353,7 @@ async function respondToPublicInteraction(kind, post, playerText, parentId=null)
 ${publicTaiwanLanguageRules()}
 公開貼文：${JSON.stringify(context)}
 玩家剛發出的文字：${JSON.stringify(sanitizePublicText(playerText))}
+請每一則回應都針對玩家剛發出的這句話；若生成兩則，兩位都各自回玩家，不互相接話，也不要回上一則留言。
 ${kind === "sns" && post.authorId === "player" ? "這是玩家自己的貼文，請評估其他人對這篇貼文新增的按讚與轉發數。likesAdded 與 repostsAdded 是這次互動增加量（非總數），允許 0，按讚最多 30、轉發最多 5；依內容自然判斷，不要替玩家自己按讚或轉發。" : ""}
 可用的公開帳號：${JSON.stringify(authors)}
 黑粉強度：${state.community.blackfan}%；柔和社群：${state.community.soft ? "ON" : "OFF"}。
@@ -21409,8 +21410,9 @@ $("sendForumReply").onclick = () => {
   }
 
   const replyParentId = forumReplyParentId;
+  const playerReplyId = uid("fr");
   post.replies.push({
-    id:uid("fr"),
+    id:playerReplyId,
     parentId:replyParentId,
     author:state.player.name,
     authorId:"player",
@@ -21426,7 +21428,7 @@ $("sendForumReply").onclick = () => {
   renderForumThread();
   renderForum();
   countRpTurn(`論壇回覆「${post.title.slice(0,120)}」：${text}`);
-  void respondToPublicInteraction("forum",post,text,replyParentId);
+  void respondToPublicInteraction("forum",post,text,playerReplyId);
 };
 
 function characterCurrentlyLive(authorId){
@@ -21702,7 +21704,9 @@ replyTo：
 - 數字 = 回覆本篇 replies 中
   更早出現的那一則
 - 使用從 0 開始的索引
-- 最多只做一層巢狀回覆
+- 只有內容確實接續該則回覆才填索引；否則填 null
+- replyToQuote 摘錄被回覆內容中獨有、連續至少三字的原文；直接回主樓填空字串
+- replyTo 與 replyToQuote 必須指向同一則回覆
 
 【category】
 
@@ -21746,14 +21750,16 @@ chat：
           "fanName":"新粉絲顯示名稱",
           "fanHandle":"@new_fan",
           "text":"回覆內容",
-          "replyTo":null
+          "replyTo":null,
+          "replyToQuote":""
         },
         {
           "authorId":"",
           "fanName":"另一名粉絲",
           "fanHandle":"@another_fan",
           "text":"回覆內容",
-          "replyTo":0
+          "replyTo":0,
+          "replyToQuote":"回覆內容"
         }
       ]
     }
@@ -22003,6 +22009,8 @@ async function generateForumNow(
 
           const builtReplies =
             [];
+          const repliesByRawIndex =
+            [];
 
 
           const rawReplies =
@@ -22016,7 +22024,7 @@ async function generateForumNow(
           rawReplies
             .slice(0,5)
             .forEach(
-              rawReply => {
+              (rawReply,rawIndex) => {
 
                 const text =
                   sanitizePublicText(
@@ -22073,28 +22081,25 @@ async function generateForumNow(
                     ) &&
                     parentIndex >= 0 &&
                     parentIndex <
-                      builtReplies.length
+                      rawIndex
                   ){
 
                     const parent =
-                      builtReplies[
+                      repliesByRawIndex[
                         parentIndex
                       ];
-
-
-                    if(
-                      parent &&
-                      !parent.parentId
-                    ){
-
-                      parentId =
-                        parent.id;
+                    const quote = String(rawReply.replyToQuote || "").trim();
+                    if(parent && quote.length >= 3 &&
+                      String(parent.text || "").includes(quote) &&
+                      builtReplies.filter(item => String(item.text || "").includes(quote)).length === 1 &&
+                      !String(rawPost.body || "").includes(quote)){
+                      parentId = parent.id;
                     }
                   }
                 }
 
 
-                builtReplies.push({
+                const reply = {
                   id:uid("fr"),
 
                   parentId,
@@ -22109,7 +22114,9 @@ async function generateForumNow(
                     currentRpTimeShort(),
 
                   text
-                });
+                };
+                builtReplies.push(reply);
+                repliesByRawIndex[rawIndex] = reply;
               }
             );
 
@@ -22499,8 +22506,9 @@ mainSend.textContent = "↑";
         return;
       }
 
+      const playerReplyId = uid("comment");
       post.comments.push({
-        id:uid("comment"),
+        id:playerReplyId,
         parentId:null,
         authorId:"player",
         author:state.player.name,
@@ -22513,7 +22521,7 @@ mainSend.textContent = "↑";
 
       renderSns();
       countRpTurn(`SNS 回覆「${post.text.slice(0,120)}」：${value}`);
-      void respondToPublicInteraction("sns",post,value);
+      void respondToPublicInteraction("sns",post,value,playerReplyId);
     };
 
     mainReply.append(mainInput,mainSend);
@@ -22797,8 +22805,9 @@ send.textContent = "↑";
           return;
         }
 
+        const playerReplyId = uid("comment");
         post.comments.push({
-          id:uid("comment"),
+          id:playerReplyId,
           parentId:comment.id,
           authorId:"player",
           author:state.player.name,
@@ -22813,7 +22822,7 @@ send.textContent = "↑";
 
         renderSns();
         countRpTurn(`SNS 留言回覆：${value}`);
-        void respondToPublicInteraction("sns",post,value,comment.id);
+        void respondToPublicInteraction("sns",post,value,playerReplyId);
       };
 
       replyBox.append(input,send);
@@ -23479,6 +23488,7 @@ async function generateSnsNow(
 
           const builtComments =
             [];
+          const commentsByRawIndex = [];
 
 
           const rawComments =
@@ -23492,7 +23502,7 @@ async function generateSnsNow(
           rawComments
             .slice(0,4)
             .forEach(
-              rawComment => {
+              (rawComment,rawIndex) => {
 
                 const commentAuthor =
                   resolveSnsAiAuthor(
@@ -23522,10 +23532,17 @@ async function generateSnsNow(
                 const parent = snsAiReplyParent(
                   builtComments,rawComment.replyToQuote,text
                 );
-                const parentId = parent?.id || null;
+                const replyIndex = Number(rawComment.replyTo);
+                const parentId = rawComment.replyTo !== null &&
+                  rawComment.replyTo !== undefined &&
+                  rawComment.replyTo !== "" &&
+                  Number.isInteger(replyIndex) &&
+                  replyIndex >= 0 && replyIndex < rawIndex &&
+                  commentsByRawIndex[replyIndex]?.id === parent?.id
+                    ? parent.id : null;
 
 
-                builtComments.push({
+                const comment = {
 
                   id:
                     uid("comment"),
@@ -23551,7 +23568,9 @@ async function generateSnsNow(
                   likes:0,
 
                   likedByPlayer:false
-                });
+                };
+                builtComments.push(comment);
+                commentsByRawIndex[rawIndex] = comment;
               }
             );
 
@@ -23687,7 +23706,8 @@ async function generateSnsNow(
           const parent = snsAiReplyParent(
             post.comments,rawComment.replyToQuote,post.text
           );
-          const parentId = parent?.id || null;
+          const parentId = String(rawComment.replyToCommentId || "") === parent?.id
+            ? parent.id : null;
 
 
           post.comments.push({
