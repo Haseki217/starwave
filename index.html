@@ -21543,6 +21543,35 @@ function buildForumAiPrompt(
         };
 
 
+  const recentRoleLives =
+    state.characters
+      .map(character => ({
+        creator:publicName(character),
+        streams:(character.liveHistory || [])
+          .slice(0,3)
+          .map(record => ({
+            title:sanitizePublicText(record.title || ""),
+            endedAt:record.realTimeAtStart && Number(record.endedAt)
+              ? new Date(record.endedAt).toLocaleString("zh-TW") : "",
+            knownExcerpt:sanitizePublicText(
+              record.liveStory?.at(-1)?.text || ""
+            ).slice(0,180)
+          }))
+      }))
+      .filter(item => item.streams.length);
+
+  const recentPlayerLives =
+    (state.player.liveHistory || [])
+      .slice(0,3)
+      .map(record => ({
+        title:sanitizePublicText(record.title || ""),
+        endedAt:record.time || "",
+        knownExcerpt:sanitizePublicText(
+          record.stageEntries?.at(-1) || ""
+        ).slice(0,180)
+      }));
+
+
   const publicMemories =
     state.memories
       .filter(
@@ -21606,6 +21635,12 @@ ${JSON.stringify(playerPublic)}
 【玩家目前直播】
 ${JSON.stringify(playerLive)}
 
+【近期已結束的公開直播】
+每位主播的 streams 依新到舊排列，第一筆是最近一場；玩家的紀錄也依新到舊排列。
+knownExcerpt 有內容才代表保存了可引用的公開直播片段；空白表示只有標題，不能假裝看過該場或編造具體內容。
+角色直播：${JSON.stringify(recentRoleLives)}
+玩家直播：${JSON.stringify(recentPlayerLives)}
+
 【平台上的角色主播】
 ${JSON.stringify(creators)}
 
@@ -21624,6 +21659,8 @@ ${JSON.stringify(creators)}
 
 【公開事件記憶】
 ${JSON.stringify(publicMemories)}
+
+記憶與舊論壇可能提到更早的直播，不代表那仍是最近一場。談到主播近期開台時，以該主播正在直播的資訊及上方新到舊的紀錄為準；舊場次只有明確作為回顧時才提，不要把它當成剛發生。論壇不必每篇都討論直播，也可以談角色與粉絲自己的生活。
 
 【最近論壇】
 ${JSON.stringify(recentForum)}
