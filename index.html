@@ -17468,19 +17468,34 @@ let lifeLedgerGenerating =
 
 let lastScheduledLedgerAttempt = 0;
 
+function ledgerBillType(bill){
+  const keyType = String(bill.key || "").split(":").pop();
+  if(["water","electricity","gas","rent","mobile","subscription"].includes(keyType)) return keyType;
+  const name = String(bill.name || "");
+  if(name.includes("房租")) return "rent";
+  if(name.includes("瓦斯")) return "gas";
+  if(name.includes("水電")) return "water+electricity";
+  if(name.includes("電費")) return "electricity";
+  if(name.includes("水費")) return "water";
+  if(name.includes("手機")) return "mobile";
+  if(name.includes("訂閱")) return "subscription";
+  return "";
+}
+
 function dueLedgerBills(now=new Date()){
   const turn = Number(state.timeSettings.rpTurnCount || 0);
+  const realMonth = monthKey(now);
   const scheduled = [];
+  let currentRpCycle = 0;
   if(realTimeEnabled()){
     const year = now.getFullYear();
     const month = now.getMonth() + 1;
-    const cycle = monthKey(now);
     // 舊版已建立整個月份的帳單，避免升級後在同月重複收費。
-    if(state.economy.billCycle === cycle) return [];
-    const add = (id,name,day) => {
+    if(state.economy.billCycle === realMonth) return [];
+    const add = (type,name,day) => {
       if(now.getDate() < day) return;
       scheduled.push({
-        key:`real:${cycle}:${id}`,name,
+        key:`real:${realMonth}:${type}`,type,name,realMonth,
         due:`${month} 月 ${day} 日前`,
         dueAt:new Date(year,month-1,day+1).getTime(),
         mode:"real"
@@ -17497,17 +17512,25 @@ function dueLedgerBills(now=new Date()){
   }else{
     if(state.economy.billScheduleStartTurn == null){
       state.economy.billScheduleStartTurn = turn;
+      // 切換到 RP 時，當月已由現實時間建立的帳單屬於第一個 RP 月份。
+      state.economy.bills.forEach(bill => {
+        if(bill.issuedRpCycle != null || (bill.mode !== "real" && bill.key)) return;
+        if((bill.issuedRealMonth || bill.cycle) === realMonth){
+          bill.issuedRpCycle = 1;
+        }
+      });
       scheduleStarwaveSave();
     }
     const elapsed = Math.max(0,turn - Number(state.economy.billScheduleStartTurn));
     const months = Math.ceil(elapsed/300);
+    currentRpCycle = Math.max(1,months);
     for(let cycle=1;cycle<=months;cycle++){
       const start = Number(state.economy.billScheduleStartTurn) + (cycle-1)*300;
-      const add = (id,name,offset) => {
+      const add = (type,name,offset) => {
         const dueTurn = start + offset;
         if(turn < dueTurn) return;
         scheduled.push({
-          key:`rp:${cycle}:${id}`,name,
+          key:`rp:${cycle}:${type}`,type,name,rpCycle:cycle,
           due:`第 ${dueTurn} 回合前`,
           dueTurn,mode:"rp"
         });
@@ -17522,8 +17545,21 @@ function dueLedgerBills(now=new Date()){
       add("subscription","訂閱服務",200);
     }
   }
-  const existing = new Set(state.economy.bills.map(bill => bill.key));
-  return scheduled.filter(bill => !existing.has(bill.key));
+  return scheduled.filter(spec => !state.economy.bills.some(bill => {
+    if(bill.key === spec.key) return true;
+    if(!ledgerBillType(bill).split("+").includes(spec.type)) return false;
+    const billedRealMonth = bill.issuedRealMonth ||
+      (bill.mode === "real" || !bill.key ? bill.cycle : "");
+    if(spec.mode === "real"){
+      return billedRealMonth === spec.realMonth;
+    }
+    if(Number(bill.issuedRpCycle) === spec.rpCycle) return true;
+    // 先以現實時間出帳、再首次切到 RP 時，把當月帳單視為目前 RP 月份。
+    return bill.issuedRpCycle == null &&
+      (bill.mode === "real" || !bill.key) &&
+      billedRealMonth === realMonth &&
+      spec.rpCycle === currentRpCycle;
+  }));
 }
 
 function recordOverdueLedgerBills(){
@@ -17921,6 +17957,13 @@ async function generateLifeLedgerAi(
         totals.set(period,total + amount);
         normalizedBills.push({
           id:uid("bill"),key:spec.key,cycle:spec.key.split(":")[1],
+          type:spec.type,
+          issuedRealMonth:monthKey(),
+          issuedRpCycle:spec.mode === "rp" ? spec.rpCycle :
+            (state.economy.billScheduleStartTurn == null ? null :
+              Math.max(1,Math.ceil(Math.max(0,
+                Number(state.timeSettings.rpTurnCount || 0) -
+                Number(state.economy.billScheduleStartTurn))/300))),
           name:spec.name,category:"生活帳單",amount,due:spec.due,
           dueAt:spec.dueAt || 0,dueTurn:spec.dueTurn || 0,
           mode:spec.mode,paid:false,debtRecorded:false
