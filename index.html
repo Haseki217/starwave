@@ -11465,6 +11465,7 @@ async function openRoleLiveReplay(characterId,recordId){
     const playback = {
       ...character,
       liveTitle:record.title,
+      livePublicDiscussion:publicLiveDiscussion(record.id),
       sceneId:record.sceneId,
       liveStory:[],
       liveChat:[],
@@ -11780,7 +11781,10 @@ Lorebook 是公開背景與世界設定資料，
 已開播：${elapsedLabel}
 距離上次生成的直播內容：${character.isReplayGeneration ? "正在觀看歷史直播" : character.liveUsesRealTime ? `約 ${sinceLastContentMinutes} 分鐘` : "依 RP 回合推進"}
 是否為本場首次儲存內容：${first ? "是" : "否"}
-${character.isReplayGeneration ? "這是已結束直播的重播。只依本場標題與本場場景還原當時內容；不能沿用角色目前其他直播的題材或方向。" : ""}
+${character.isReplayGeneration ? "這是已結束直播的重播。依本場標題、場景及已公開的同場討論還原當時內容；不能沿用角色目前其他直播的題材或方向。" : ""}
+${character.isReplayGeneration ? `【這場直播已公開的論壇與 SNS 討論】
+${JSON.stringify(character.livePublicDiscussion || [])}
+社群裡已明確提到的同場事件、話題或台詞，必須能在重播中合理對上；猜測、問句與玩笑不能直接當成確定事實。` : ""}
 
 若本場已開播一段時間，即使這是首次儲存內容，也要直接從直播當下的中途場景開始。不要重新描寫開播、開場招呼或假設玩家已看過前半場；不必補寫先前整段直播。可以用一兩句自然語境讓觀眾聽懂當下話題，不得替玩家編造先前的行動或發言。
 如果距離上段內容已過數分鐘，請讓直播自然推進到現在：簡短交代這段時間主題如何發展，重點描寫此刻正在發生的事，不要原地重複上一段、逐分鐘補寫，也不要替玩家虛構行動或台詞。
@@ -21456,6 +21460,63 @@ function forumPublicAuthors(){
   ];
 }
 
+function publicLiveRecordById(id){
+  const key = String(id || "");
+  if(!key) return null;
+  for(const character of state.characters){
+    const record = (character.liveHistory || []).find(item => item.id === key);
+    if(record) return record;
+  }
+  return (state.player.liveHistory || []).find(item => item.id === key) || null;
+}
+
+function publicLiveDiscussion(recordId){
+  if(!recordId) return [];
+  const forum = (state.forumPosts || [])
+    .filter(post => post.relatedLiveId === recordId)
+    .slice(0,4)
+    .map(post => ({
+      source:"論壇",
+      text:sanitizePublicText(`${post.title || ""}：${post.body || ""}`).slice(0,360),
+      replies:(post.replies || []).slice(0,3)
+        .map(item => sanitizePublicText(item.text || "").slice(0,140))
+    }));
+  const sns = (state.snsPosts || [])
+    .filter(post => post.relatedLiveId === recordId)
+    .slice(0,4)
+    .map(post => ({
+      source:"SNS",
+      text:sanitizePublicText(post.text || "").slice(0,300),
+      replies:(post.comments || []).slice(0,3)
+        .map(item => sanitizePublicText(item.text || "").slice(0,140))
+    }));
+  return [...forum,...sns];
+}
+
+function recentPublicRoleLives(){
+  return state.characters.map(character => ({
+    creator:publicName(character),
+    streams:(character.liveHistory || []).slice(0,3).map(record => ({
+      id:record.id,
+      title:sanitizePublicText(record.title || ""),
+      endedAt:record.realTimeAtStart && Number(record.endedAt)
+        ? new Date(record.endedAt).toLocaleString("zh-TW") : "",
+      knownExcerpt:sanitizePublicText(record.liveStory?.at(-1)?.text || "").slice(0,180),
+      discussion:publicLiveDiscussion(record.id)
+    }))
+  })).filter(item => item.streams.length);
+}
+
+function recentPublicPlayerLives(){
+  return (state.player.liveHistory || []).slice(0,3).map(record => ({
+    id:record.id,
+    title:sanitizePublicText(record.title || ""),
+    endedAt:record.time || "",
+    knownExcerpt:sanitizePublicText(record.stageEntries?.at(-1) || "").slice(0,180),
+    discussion:publicLiveDiscussion(record.id)
+  }));
+}
+
 function buildForumAiPrompt(
   count,
   authors
@@ -21543,33 +21604,8 @@ function buildForumAiPrompt(
         };
 
 
-  const recentRoleLives =
-    state.characters
-      .map(character => ({
-        creator:publicName(character),
-        streams:(character.liveHistory || [])
-          .slice(0,3)
-          .map(record => ({
-            title:sanitizePublicText(record.title || ""),
-            endedAt:record.realTimeAtStart && Number(record.endedAt)
-              ? new Date(record.endedAt).toLocaleString("zh-TW") : "",
-            knownExcerpt:sanitizePublicText(
-              record.liveStory?.at(-1)?.text || ""
-            ).slice(0,180)
-          }))
-      }))
-      .filter(item => item.streams.length);
-
-  const recentPlayerLives =
-    (state.player.liveHistory || [])
-      .slice(0,3)
-      .map(record => ({
-        title:sanitizePublicText(record.title || ""),
-        endedAt:record.time || "",
-        knownExcerpt:sanitizePublicText(
-          record.stageEntries?.at(-1) || ""
-        ).slice(0,180)
-      }));
+  const recentRoleLives = recentPublicRoleLives();
+  const recentPlayerLives = recentPublicPlayerLives();
 
 
   const publicMemories =
@@ -21637,7 +21673,8 @@ ${JSON.stringify(playerLive)}
 
 【近期已結束的公開直播】
 每位主播的 streams 依新到舊排列，第一筆是最近一場；玩家的紀錄也依新到舊排列。
-knownExcerpt 有內容才代表保存了可引用的公開直播片段；空白表示只有標題，不能假裝看過該場或編造具體內容。
+即使玩家沒有觀看、knownExcerpt 為空，這場直播仍已真實發生。可以依標題、主播公開資料及既有 discussion 創作合理的觀眾見聞與具體片段；若已有已保存片段或公開討論，必須與之相容。不要把臆測或疑問寫成已證實的事件。
+討論某場已結束的直播時，該篇貼文的 relatedLiveId 必須填該場 id；不是討論特定直播則填 null。不同場次不能混用，較舊場次要明說是之前的直播。
 角色直播：${JSON.stringify(recentRoleLives)}
 玩家直播：${JSON.stringify(recentPlayerLives)}
 
@@ -21781,6 +21818,7 @@ chat：
       "title":"討論串標題",
       "body":"主樓內容",
       "views":120,
+      "relatedLiveId":null,
       "replies":[
         {
           "authorId":"",
@@ -22177,6 +22215,8 @@ async function generateForumNow(
               currentRpDateTime(),
 
             body,
+
+            relatedLiveId:publicLiveRecordById(rawPost.relatedLiveId)?.id || null,
 
             replies:
               builtReplies,
@@ -22999,13 +23039,8 @@ function buildSnsAiPrompt(
         };
 
 
-  const recentPlayerStreams =
-    (state.player.liveHistory || [])
-      .slice(0,3)
-      .map(item => ({
-        title:sanitizePublicText(item.title || ""),
-        endedAt:realTimeEnabled() ? (item.time || "") : "已結束"
-      }));
+  const recentRoleStreams = recentPublicRoleLives();
+  const recentPlayerStreams = recentPublicPlayerLives();
 
   const publicMemories =
     state.memories
@@ -23128,7 +23163,10 @@ ${JSON.stringify(playerPublic)}
 ${JSON.stringify({now:currentRpDateTime() || "目前 RP 回合",playerLive})}
 
 【近期已結束的公開直播】
-${JSON.stringify(recentPlayerStreams)}
+角色直播：${JSON.stringify(recentRoleStreams)}
+玩家直播：${JSON.stringify(recentPlayerStreams)}
+各主播依新到舊排列。沒有玩家觀看或已保存片段的直播也確實發生了；可依標題、公開資料與已有 discussion 自然討論該場內容。已有公開討論及片段要保持一致；更早的場次要說明是之前的直播。
+若新貼文主要談某一場已結束的直播，relatedLiveId 填該場 id；其他貼文填 null。
 
 【角色創作者公開資料】
 ${JSON.stringify(creators)}
@@ -23288,6 +23326,7 @@ null
       "fanName":"新粉絲顯示名稱",
       "fanHandle":"@new_fan",
       "text":"貼文內容",
+      "relatedLiveId":null,
       "plannedLive":false,
       "liveTitle":"",
       "liveBreak":null,
@@ -23630,6 +23669,8 @@ async function generateSnsNow(
               currentRpDateTime(),
 
             text,
+
+            relatedLiveId:publicLiveRecordById(rawPost.relatedLiveId)?.id || null,
 
             likes:
               snsSafeCount(
@@ -26608,27 +26649,13 @@ function triggerAutoContent(
 ){
   const socialCount = options.onOpen ? 2 : 1;
 
- if(
-  state.refresh.forum ===
-  "auto"
-){
-  generateForumNow(
-    socialCount,
-    {
-      background:true
-    }
-  );
-}
+ const forumTask = state.refresh.forum === "auto"
+  ? generateForumNow(socialCount,{background:true})
+  : Promise.resolve();
 
-if(
-  state.refresh.sns ===
-  "auto"
-){
-  generateSnsNow(
-    socialCount,
-    {
-      background:true
-    }
+if(state.refresh.sns === "auto"){
+  void forumTask.then(() =>
+    generateSnsNow(socialCount,{background:true})
   );
 }
 
