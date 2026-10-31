@@ -4765,6 +4765,16 @@ body[data-theme="halloween"] .live-stage{
           </div>
 
           <div class="field">
+            <label>性別</label>
+            <select id="charGender" required>
+              <option value="">請選擇</option>
+              <option value="男性">男性</option>
+              <option value="女性">女性</option>
+              <option value="其他">其他</option>
+            </select>
+          </div>
+
+          <div class="field">
             <label>頻道名稱</label>
             <input id="charChannel" type="text">
           </div>
@@ -5360,6 +5370,16 @@ body[data-theme="halloween"] .live-stage{
       <div class="field">
         <label>直播設定年齡 <span class="field-help">（公開資料，選填；空白時不公開年齡，可與真實年齡不同）</span></label>
         <input id="playerAge" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="3">
+      </div>
+
+      <div class="field">
+        <label>性別</label>
+        <select id="playerGender" required>
+          <option value="">請選擇</option>
+          <option value="男性">男性</option>
+          <option value="女性">女性</option>
+          <option value="其他">其他</option>
+        </select>
       </div>
 
       <div class="field">
@@ -7164,6 +7184,7 @@ const state = {
     realNamePublic:false,
     age:"",
     realAge:"",
+    gender:"",
     name:"主播名稱",
     channel:"STARWAVE 頻道",
     liveId:"@creator",
@@ -7863,6 +7884,8 @@ function publicTaiwanLanguageRules(){
   return `【公開內容語言】
 所有新生成的敘事、觀眾留言、論壇與 SNS 文字，一律使用臺灣繁體中文與臺灣常用語，不輸出簡體字。
 不要使用中國平台用語或套話，例如「視頻、直播間、點讚、彈幕、網友們沖、嗑到了、磕 CP、民政局搬來了」；依情境改用「影片、直播畫面／聊天室、按讚、聊天室留言、嗑 CP」等自然說法。
+不要使用「回看」指觀看已播出的內容；依語意使用「重看」、「看重播」或「回顧」。
+稱呼角色時依公開資料的 gender 使用「他／她」；gender 為「其他」或未設定時用角色名稱，不要依姓名、外貌或聲音推測性別。
 禁止把「民政局」當成嗑 CP 的萬用梗。臺灣現代背景真的提到結婚登記時，才可使用「戶政事務所」；外國、外星、異世界等背景，依已知世界觀稱呼機關，未知時只談感情或婚姻，不擅自套用臺灣制度。
 保留角色姓名、專有名詞、原文引用與已設定的外語，不改動玩家原話。`;
 }
@@ -7928,6 +7951,10 @@ if(privateAppearance){
   });
 
   return output;
+}
+
+function sanitizePublicAiText(text){
+  return sanitizePublicText(String(text ?? "").replace(/回看/g,"重看"));
 }
 
 function publicAuthor(authorId,fallback){
@@ -8498,6 +8525,7 @@ function fillProfile(){
   $("playerRealName").value = state.player.realName;
   $("playerRealAge").value = state.player.realAge || "";
   $("playerAge").value = state.player.age || "";
+  $("playerGender").value = state.player.gender || "";
   $("playerName").value = state.player.name;
   $("playerChannel").value = state.player.channel;
   $("playerLiveId").value = state.player.liveId;
@@ -8629,11 +8657,16 @@ $("playerPublicDelete").onclick = () => {
 };
 
 $("saveProfile").onclick = () => {
+  if(!$("playerGender").value){
+    showNotice("請選擇性別","請在主播資料選擇男性、女性或其他。");
+    return;
+  }
   state.player.realName =
     $("playerRealName").value.trim();
 
   state.player.realAge = $("playerRealAge").value;
   state.player.age = $("playerAge").value;
+  state.player.gender = $("playerGender").value;
 
   state.player.name =
     $("playerName").value.trim() ||
@@ -11541,6 +11574,7 @@ function buildRoleLiveAiPrompt(
     streamerType:
       state.player.streamerType,
     ...(state.player.age ? {age:state.player.age} : {}),
+    gender:state.player.gender || "",
 
     content:
       state.player.content || "",
@@ -11624,6 +11658,7 @@ function buildRoleLiveAiPrompt(
             streamerType:
               state.player.streamerType,
     ...(state.player.age ? {age:state.player.age} : {}),
+    gender:state.player.gender || "",
             content:
               state.player.content || "",
             publicAppearance:
@@ -14128,6 +14163,7 @@ function buildWavelinkAiPrompt(
     streamerType:
       state.player.streamerType,
     ...(state.player.age ? {age:state.player.age} : {}),
+    gender:state.player.gender || "",
 
     content:
       state.player.content || "",
@@ -16877,6 +16913,7 @@ $("offlineTime").textContent =
     streamerType:
       state.player.streamerType,
     ...(state.player.age ? {age:state.player.age} : {}),
+    gender:state.player.gender || "",
 
     content:
       state.player.content || "",
@@ -19149,6 +19186,14 @@ function findImportedName(raw,parsed=null){
 }
 
 
+function normalizeCreatorGender(value){
+  const text = String(value || "").trim().toLowerCase();
+  if(["男性","男","male","man","m"].includes(text)) return "男性";
+  if(["女性","女","female","woman","f"].includes(text)) return "女性";
+  if(["其他","other","nonbinary","non-binary","非二元"].includes(text)) return "其他";
+  return "";
+}
+
 function buildImportedCharacterProfilePrompt(
   raw
 ){
@@ -19197,6 +19242,9 @@ SNS 帳號 ID。
 必須以 @ 開頭。
 可以和 liveId 相同，也可以不同，依角色風格決定。
 
+gender：
+只有角色卡明確提供性別時才填「男性」、「女性」或「其他」；未提供時填空字串，不根據姓名或圖片猜測。
+
 streamerType：
 只能是：
 "real"
@@ -19229,6 +19277,7 @@ relationship：
   "liveId":"",
   "snsId":"",
   "streamerType":"real",
+  "gender":"",
   "content":"",
   "relationship":""
 }
@@ -19437,6 +19486,7 @@ const publicActivityName =
       ((root.streamerType === "vtuber" || generated.streamerType === "vtuber") ? root.age ?? "" : ""),
     realAge:root.realAge ?? root.performerAge ??
       ((root.streamerType === "vtuber" || generated.streamerType === "vtuber") ? "" : root.age ?? ""),
+    gender:normalizeCreatorGender(root.gender ?? root.sex ?? generated.gender),
     card:
       formatImportedCharacterCard(raw),
     streamerName:publicActivityName,
@@ -20302,6 +20352,7 @@ $("charPublicDescribe").disabled =
   $("charStreamerName").value = character.streamerName;
   $("charRealAge").value = character.realAge || "";
   $("charAge").value = character.age || "";
+  $("charGender").value = character.gender || "";
   $("charChannel").value = character.channel;
   $("charLiveId").value = character.liveId;
   $("charSnsId").value = character.snsId;
@@ -20666,6 +20717,7 @@ function publicCharacterContext(
       character.streamerType || "real",
 
     ...(character.age ? {age:character.age} : {}),
+    gender:character.gender || "",
 
     liveActivityLimits:(() => {
       const limits = characterActivityLimits(character);
@@ -20871,6 +20923,11 @@ $("saveChannelCharacter").onclick = () => {
     return;
   }
 
+  if(!$("charGender").value){
+    showNotice("請選擇性別","請在角色資料選擇男性、女性或其他。");
+    return;
+  }
+
   character.name =
     $("charName").value.trim() ||
     character.name;
@@ -20881,6 +20938,7 @@ $("saveChannelCharacter").onclick = () => {
 
   character.realAge = $("charRealAge").value;
   character.age = $("charAge").value;
+  character.gender = $("charGender").value;
 
   character.channel =
     $("charChannel").value.trim() ||
@@ -20936,6 +20994,7 @@ $("addBlankChannel").onclick = () => {
     name:"新角色",
     age:"",
     realAge:"",
+    gender:"",
     card:"",
     streamerName:"新主播",
     channel:"新頻道",
@@ -21378,7 +21437,7 @@ ${kind === "sns" && post.authorId === "player" ? "這是玩家自己的貼文，
     }
     (Array.isArray(data.replies) ? data.replies : []).slice(0,2).forEach(raw => {
       const author = resolveForumAiAuthor(raw,authors);
-      const text = sanitizePublicText(String(raw?.text || "").trim());
+      const text = sanitizePublicAiText(String(raw?.text || "").trim());
       if(!author || !text || characterCurrentlyLive(author.id)) return;
       if(kind === "sns"){
         post.comments.push({id:uid("comment"),parentId:parentId && post.comments.some(item => item.id === parentId) ? parentId : null,authorId:author.id,author:author.name,handle:author.handle,time:currentRpTimeShort(),text,likes:0,likedByPlayer:false});
@@ -21538,6 +21597,7 @@ function buildForumAiPrompt(
     streamerType:
       state.player.streamerType,
     ...(state.player.age ? {age:state.player.age} : {}),
+    gender:state.player.gender || "",
 
     content:
       state.player.content || "",
@@ -22008,7 +22068,7 @@ async function generateForumNow(
         rawPost => {
 
           const title =
-            sanitizePublicText(
+            sanitizePublicAiText(
               String(
                 rawPost?.title ||
                 ""
@@ -22017,7 +22077,7 @@ async function generateForumNow(
 
 
           const body =
-            sanitizePublicText(
+            sanitizePublicAiText(
               String(
                 rawPost?.body ||
                 ""
@@ -22102,7 +22162,7 @@ async function generateForumNow(
               (rawReply,rawIndex) => {
 
                 const text =
-                  sanitizePublicText(
+                  sanitizePublicAiText(
                     String(
                       rawReply?.text ||
                       ""
@@ -22980,6 +23040,7 @@ function buildSnsAiPrompt(
     streamerType:
       state.player.streamerType,
     ...(state.player.age ? {age:state.player.age} : {}),
+    gender:state.player.gender || "",
 
     content:
       state.player.content || "",
@@ -23546,7 +23607,7 @@ async function generateSnsNow(
 
 
           const text =
-            sanitizePublicText(
+            sanitizePublicAiText(
               String(
                 rawPost?.text ||
                 ""
@@ -23588,7 +23649,7 @@ async function generateSnsNow(
 
 
                 const commentText =
-                  sanitizePublicText(
+                  sanitizePublicAiText(
                     String(
                       rawComment?.text ||
                       ""
@@ -23697,9 +23758,9 @@ async function generateSnsNow(
             plannedCharacter.plannedLiveAt = Date.now() + 60*60*1000;
             plannedCharacter.plannedLiveTurn = Number(state.timeSettings.rpTurnCount || 0) + 2;
             plannedCharacter.plannedLiveTitle =
-              sanitizePublicText(String(rawPost.liveTitle || "").trim());
+              sanitizePublicAiText(String(rawPost.liveTitle || "").trim());
             plannedCharacter.plannedLiveAnnouncement =
-              sanitizePublicText(String(rawPost.text || "").trim()).slice(0,250);
+              sanitizePublicAiText(String(rawPost.text || "").trim()).slice(0,250);
           }
 
           changed++;
@@ -23759,7 +23820,7 @@ async function generateSnsNow(
 
 
           const text =
-            sanitizePublicText(
+            sanitizePublicAiText(
               String(
                 rawComment?.text ||
                 ""
