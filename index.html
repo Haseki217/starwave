@@ -4819,6 +4819,13 @@ body[data-theme="halloween"] .live-stage{
           </div>
 
           <div class="field full">
+            <label>直播背景</label>
+            <div id="charScenePicker" class="scene-picker"></div>
+            <div class="field-help">選擇自動搭配、內建場景，或這名角色專屬的背景；從下一場直播開始使用。</div>
+            <input id="charSceneFile" type="file" accept="image/*" style="margin-top:8px">
+          </div>
+
+          <div class="field full">
             <label>角色卡／私人完整設定</label>
 
             <textarea
@@ -7448,11 +7455,16 @@ function sceneById(id){
   );
 }
 
-function sceneForCharacter(character){
+function roleSceneById(character,id){
   return (
-    builtInScenes.find(scene => scene.id === character.sceneId) ||
+    builtInScenes.find(scene => scene.id === id) ||
+    (character?.customScenes || []).find(scene => scene.id === id) ||
     builtInScenes[0]
   );
+}
+
+function sceneForCharacter(character){
+  return roleSceneById(character,character?.sceneId);
 }
 
 function setImageBox(element,url,fallback){
@@ -8988,7 +9000,7 @@ function renderRoleLiveHistoryGrid(container, characters){
       name:publicName(character),
       viewers:record.peak,
       image:character.publicImage,
-      scene:sceneById(record.sceneId)?.image || sceneForCharacter(character)?.image,
+      scene:roleSceneById(character,record.sceneId).image,
       replay:true,
       detail:roleLiveHistoryLabel(record),
       click:() => openRoleLiveReplay(character.id,record.id)
@@ -9007,7 +9019,7 @@ function renderExploreHistory(){
           title:record.title, channel:character.channel,
           name:publicName(character), viewers:record.peak,
           image:character.publicImage,
-          scene:sceneById(record.sceneId)?.image || sceneForCharacter(character)?.image,
+          scene:roleSceneById(character,record.sceneId).image,
           replay:true, detail:roleLiveHistoryLabel(record),
           click:() => openRoleLiveReplay(character.id,record.id)
         })
@@ -12541,7 +12553,7 @@ function renderRoleLive(){
     `◉ ${fmt(replay ? replay.peak : character.viewers)}`;
 
   $("roleLiveStage").style.backgroundImage =
-    `url("${sceneById(replay?.sceneId)?.image || sceneForCharacter(character).image}")`;
+    `url("${replay ? roleSceneById(character,replay.sceneId).image : sceneForCharacter(character).image}")`;
 
   $("roleLiveStory").textContent =
     (content.liveStory || [])
@@ -13085,6 +13097,15 @@ function roleLiveSceneFor(title,startedAt,usesRealTime=realTimeEnabled(),topic="
   if(/ASMR|睡|晚安/.test(value)) return night ? "nightRoom" : "studio";
   return night ? "nightRoom" : "brightRoom";
 }
+function roleLiveSceneIdFor(character,title,startedAt,usesRealTime,topic,preference=character.preferredSceneId){
+  if(preference && preference !== "auto"){
+    const scene = [...builtInScenes,...(character.customScenes || [])]
+      .find(item => item.id === preference);
+    if(scene) return scene.id;
+  }
+  return roleLiveSceneFor(title,startedAt,usesRealTime,topic);
+}
+
 function roleLiveOnBreak(character,tickAt){
   if(realTimeEnabled()){
     return tickAt >= Number(character.liveBreakStartAt || 0) &&
@@ -13157,10 +13178,10 @@ async function enrichRoleLiveTitle(character, startedAt, topic){
     if(active){
       character.liveTitle = resolvedTitle;
       character.liveFocus = topic;
-      character.sceneId = roleLiveSceneFor(resolvedTitle,startedAt,character.liveUsesRealTime,topic);
+      character.sceneId = roleLiveSceneIdFor(character,resolvedTitle,startedAt,character.liveUsesRealTime,topic,character.liveScenePreferenceId || "auto");
     }else{
       archived.title = resolvedTitle;
-      archived.sceneId = roleLiveSceneFor(resolvedTitle,startedAt,archived.realTimeAtStart,topic);
+      archived.sceneId = roleLiveSceneIdFor(character,resolvedTitle,startedAt,archived.realTimeAtStart,topic,archived.scenePreferenceId || "auto");
     }
     renderExplore();
     renderSubscriptions();
@@ -13221,7 +13242,7 @@ async function enrichRoleLiveHistoryTitles(){
           roleLiveTimeConflict(title,record.startedAt,record.realTimeAtStart)) return;
         const topic = record.title;
         record.title = title;
-        record.sceneId = roleLiveSceneFor(title,record.startedAt,record.realTimeAtStart,topic);
+        record.sceneId = roleLiveSceneIdFor(character,title,record.startedAt,record.realTimeAtStart,topic,record.scenePreferenceId || "auto");
         changed = true;
       });
       if(changed){
@@ -13292,7 +13313,8 @@ function startAutonomousRoleLive(
     ? roleLiveAutoTitle(character,safeTopic)
     : roleLiveCleanTitle(sanitizePublicText(options.title || roleLiveAutoTitle(character,safeTopic))) ||
       roleLiveAutoTitle(character,safeTopic);
-  character.sceneId = roleLiveSceneFor(character.liveTitle,character.liveStartedAt,character.liveUsesRealTime,safeTopic);
+  character.liveScenePreferenceId = character.preferredSceneId || "auto";
+  character.sceneId = roleLiveSceneIdFor(character,character.liveTitle,character.liveStartedAt,character.liveUsesRealTime,safeTopic,character.liveScenePreferenceId);
 
   if(!options.title || mixedTitle || timeConflict){
     void enrichRoleLiveTitle(character,character.liveStartedAt,safeTopic);
@@ -13362,6 +13384,7 @@ function stopAutonomousRoleLive(
     endedRpTurn:Number(state.timeSettings.rpTurnCount || 0),
     peak:Number(character.peak || 0),
     sceneId:character.sceneId,
+    scenePreferenceId:character.liveScenePreferenceId || "auto",
     collabIds:formerCollabIds,
     liveStory:deepClone(character.liveStory || []),
     liveChat:deepClone(character.liveChat || [])
@@ -19558,6 +19581,8 @@ privateImage:"",
     peak:0,
     liveTitle:"正在直播",
     sceneId:"brightRoom",
+    preferredSceneId:"auto",
+    customScenes:[],
     liveTurn:0,
     liveRemainingTurns:0,
     liveOfflineTurns:0,
@@ -20363,6 +20388,7 @@ $("charPublicDescribe").disabled =
     formatImportedCharacterCard(
       character.card
     );
+  renderCharacterScenePicker(character);
 
   const statusText = {
   locked:"未解鎖",
@@ -20435,6 +20461,87 @@ $("charPublicDescribe").disabled =
 }
 
  
+function renderCharacterScenePicker(character){
+  const picker = $("charScenePicker");
+  picker.innerHTML = "";
+  const selected = character.preferredSceneId || "auto";
+  const auto = document.createElement("button");
+  auto.type = "button";
+  auto.className = "scene-card" + (selected === "auto" ? " active" : "");
+  auto.innerHTML = '<div class="scene-thumb" style="background:var(--softA);display:grid;place-items:center;font-size:22px">✦</div><div class="scene-card-name">依直播內容自動搭配</div>';
+  auto.onclick = () => {
+    character.preferredSceneId = "auto";
+    renderCharacterScenePicker(character);
+    scheduleStarwaveSave();
+  };
+  picker.append(auto);
+
+  [...builtInScenes,...(character.customScenes || [])].forEach(scene => {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "scene-card" + (selected === scene.id ? " active" : "");
+    const thumb = document.createElement("div");
+    thumb.className = "scene-thumb";
+    thumb.style.backgroundImage = `url("${scene.image}")`;
+    const name = document.createElement("div");
+    name.className = "scene-card-name";
+    name.textContent = scene.name;
+    card.append(thumb,name);
+    card.onclick = () => {
+      character.preferredSceneId = scene.id;
+      renderCharacterScenePicker(character);
+      scheduleStarwaveSave();
+    };
+    if(!scene.builtIn){
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "scene-delete";
+      del.textContent = "×";
+      del.title = "刪除這名角色的背景";
+      del.onclick = event => {
+        event.stopPropagation();
+        showConfirm({
+          title:"刪除角色直播背景？",
+          message:`確定要刪除「${scene.name}」嗎？`,
+          okText:"刪除",
+          onConfirm(){
+            character.customScenes = character.customScenes.filter(item => item.id !== scene.id);
+            if(character.preferredSceneId === scene.id) character.preferredSceneId = "auto";
+            if(character.sceneId === scene.id) character.sceneId = "brightRoom";
+            renderCharacterScenePicker(character);
+            renderExplore();
+            if(currentRoleLiveId === character.id || currentRoleLiveReplay?.characterId === character.id) renderRoleLive();
+            scheduleStarwaveSave();
+          }
+        });
+      };
+      card.append(del);
+    }
+    picker.append(card);
+  });
+}
+
+$("charSceneFile").onchange = event => {
+  const character = getCharacter(state.selectedCharacter);
+  const file = event.target.files?.[0];
+  if(!character || !file) return;
+  readImage(file,data => {
+    if(!state.characters.includes(character)) return;
+    const scene = {
+      id:uid("roleScene"),
+      name:file.name.replace(/\.[^.]+$/,"") || "自訂場景",
+      image:data,
+      builtIn:false
+    };
+    character.customScenes ||= [];
+    character.customScenes.push(scene);
+    character.preferredSceneId = scene.id;
+    event.target.value = "";
+    renderCharacterScenePicker(character);
+    scheduleStarwaveSave();
+  });
+};
+
 $("charPrivateUpload").onclick = () =>
   $("charPrivateFile").click();
 
