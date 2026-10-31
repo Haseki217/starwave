@@ -8316,6 +8316,7 @@ function goPage(name){
   if(name === "sns") renderSns();
   if(name === "memory") renderMemories();
   if(name === "lorebook") renderLorebooks();
+  syncBgmPlayback();
 
   window.scrollTo({
     top:0,
@@ -8860,6 +8861,20 @@ function extractYouTubeId(url){
   return "";
 }
 
+function syncBgmPlayback(){
+  const frame = $("bgmFrame");
+  const visibleLivePage = document.querySelector(".page.active")?.dataset.view === "live";
+  const id = state.live.bgmVideoId;
+  const play = visibleLivePage && Boolean(id);
+  $("bgmContainer").hidden = !play;
+  if(!play){
+    if(frame.hasAttribute("src")) frame.removeAttribute("src");
+    return;
+  }
+  const src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(id)}?autoplay=1&loop=1&playlist=${encodeURIComponent(id)}`;
+  if(frame.getAttribute("src") !== src) frame.src = src;
+}
+
 $("applyBgm").onclick = () => {
   const url = $("bgmUrl").value.trim();
 
@@ -8867,10 +8882,8 @@ $("applyBgm").onclick = () => {
     state.live.bgmUrl = "";
     state.live.bgmVideoId = "";
 
-    $("bgmContainer").hidden = true;
-    $("bgmFrame").src = "";
+    syncBgmPlayback();
 
-    
     toast("BGM 已清除");
     return;
   }
@@ -8888,12 +8901,8 @@ $("applyBgm").onclick = () => {
   state.live.bgmUrl = url;
   state.live.bgmVideoId = id;
 
-  $("bgmContainer").hidden = false;
+  syncBgmPlayback();
 
-  $("bgmFrame").src =
-    `https://www.youtube-nocookie.com/embed/${encodeURIComponent(id)}?autoplay=1&loop=1&playlist=${encodeURIComponent(id)}`;
-
-  
   toast("已套用 BGM");
 };
 
@@ -9925,6 +9934,12 @@ function syncLiveSettingsLocation(){
     }
   });
 
+  const bgmAnchor = state.live.started
+    ? $("liveSettingsDrawer")
+    : preGrid;
+  if(bgmAnchor.nextElementSibling !== $("bgmContainer")){
+    bgmAnchor.after($("bgmContainer"));
+  }
 
   $("toggleLiveSettings").hidden =
     !state.live.started;
@@ -9939,6 +9954,7 @@ function syncLiveSettingsLocation(){
 function syncLive(){
 
   syncLiveSettingsLocation();
+  syncBgmPlayback();
 
   if(!state.live.started){
     renderPreLiveShopItems();
@@ -10310,6 +10326,12 @@ ${publicTaiwanLanguageRules()}
 公開／直播外貌：${state.player.publicAppearance || "未設定"}
 主播形式：${state.player.streamerType || "未設定"}
 VTuber 模型／公開形象設定：${state.player.vtuberModel || "無"}
+
+【直播形象描寫】
+若主播形式為 vtuber，觀眾看見的是虛擬模型，不是中之人的真實鏡頭。
+只描寫模型可呈現的表情、姿勢或已明確在直播中展現的動作，以及觀眾聽得見的聲音；不要把中之人撥頭髮、托腮、揉眼睛等實體動作當作畫面所見，也不要自行假設模型有手部追蹤或特殊動態功能。
+若主播形式為 real，才可依玩家已輸入的動作描寫真人鏡頭；不得替玩家補未輸入的動作。
+連動角色也須依各自的 streamerType 區分虛擬形象與真人畫面。
 
 【目前數字】
 即時觀看：${state.player.viewers}
@@ -11813,6 +11835,12 @@ function buildRoleLiveAiPrompt(
 ${publicTaiwanLanguageRules()}
 【本場主播公開資料】
 ${JSON.stringify(role)}
+
+【直播形象描寫】
+若本場主播 streamerType 為 vtuber，觀眾看見的是虛擬模型，不是中之人的真實鏡頭。
+stageText 可描寫模型實際能呈現的表情、姿勢與聲音；不要把中之人撥頭髮、單手托腮、揉眼睛等實體動作寫成畫面可見，也不要自行假設有手部追蹤或特殊動態功能。
+若為 real，才可依直播情境描寫真人鏡頭中的自然動作。
+連動成員與短暫來電的角色也須依各自的 streamerType 區分虛擬模型與真人；語音來電者沒有開鏡頭時，不描寫觀眾看得到他的動作或外貌。
 
 【本次命中的公開 Lorebook 條目】
 ${JSON.stringify(lorebookEntries)}
@@ -27595,15 +27623,7 @@ function fullRender(){
     state.ui.offlineView
   );
 
-  if(state.live.bgmVideoId){
-    $("bgmContainer").hidden = false;
-
-    $("bgmFrame").src =
-      `https://www.youtube-nocookie.com/embed/${encodeURIComponent(state.live.bgmVideoId)}?autoplay=1&loop=1&playlist=${encodeURIComponent(state.live.bgmVideoId)}`;
-  }else{
-    $("bgmContainer").hidden = true;
-    $("bgmFrame").src = "";
-  }
+  syncBgmPlayback();
     scheduleStarwaveSave();
 }
 
