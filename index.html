@@ -17880,7 +17880,10 @@ ${options.billsOnly ? "- 此次只建立到期帳單，transaction 必須為 nul
 只為「現在需要建立的帳單」逐項輸出一筆 bills，每筆 key 必須完全照抄。
 清單為空時 bills 必須是空陣列，不得自行新增其他固定帳單。
 房租、手機費與訂閱服務金額應參考既有帳單保持合理穩定；
-水電瓦斯可以隨用量變化。單筆不得超過 20000；同一月份合計不得超過 25000。
+水費與瓦斯費是每兩個月才各收一次，預設一人住的普通用量。
+這兩個月的水費請落在 NT$80～180，瓦斯費請落在 NT$140～300；兩者可依生活情況在範圍內變化，不要當成每月帳單。
+電費仍依玩家在家直播與實際生活情境估算。
+其他帳單單筆不得超過 20000；同一月份合計不得超過 25000。
 不得生成稅金或直播打賞提領手續費。
 
 只輸出有效 JSON：
@@ -18022,7 +18025,15 @@ async function generateLifeLedgerAi(
       const totals = new Map();
       dueBills.forEach(spec => {
         const raw = generatedBills.find(bill => bill?.key === spec.key);
-        const amount = Math.round(Number(raw?.amount));
+        const proposedAmount = Math.round(Number(raw?.amount));
+        const utilityRange = spec.type === "water"
+          ? [80,180]
+          : spec.type === "gas"
+            ? [140,300]
+            : null;
+        const amount = utilityRange && Number.isFinite(proposedAmount)
+          ? Math.max(utilityRange[0],Math.min(utilityRange[1],proposedAmount))
+          : proposedAmount;
         const period = spec.key.split(":").slice(0,2).join(":");
         const total = totals.get(period) || 0;
         if(!Number.isFinite(amount) || amount <= 0 || amount > 20000 ||
@@ -18186,7 +18197,26 @@ async function generateLifeLedgerAi(
   }
 }
 
+function capCurrentUnpaidUtilityBills(){
+  const cycle = monthKey();
+  let changed = false;
+  state.economy.bills.forEach(bill => {
+    if(bill.paid || bill.debtRecorded) return;
+    const max = bill.key === `real:${cycle}:water`
+      ? 180
+      : bill.key === `real:${cycle}:gas`
+        ? 300
+        : 0;
+    if(max && Number(bill.amount) > max){
+      bill.amount = max;
+      changed = true;
+    }
+  });
+  if(changed) scheduleStarwaveSave();
+}
+
 function renderLedger(){
+  capCurrentUnpaidUtilityBills();
   recordOverdueLedgerBills();
   syncNumbers();
 
