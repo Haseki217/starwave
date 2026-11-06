@@ -8516,8 +8516,19 @@ $("realTimeSwitch").onclick = () => {
 
   state.timeSettings.useRealTime =
     !realTimeEnabled();
-  state.timeSettings.lastRoleLiveTick = Date.now();
-  state.timeSettings.lastRoleViewerTick = Date.now();
+  const switchedAt = Date.now();
+  if(realTimeEnabled()){
+    state.characters.forEach(character => {
+      if(character.live && !character.liveUsesRealTime && !character.liveManagedByPlayer){
+        character.liveEndsAt = Math.max(
+          Number(character.liveEndsAt) || 0,
+          switchedAt + 10*60*1000
+        );
+      }
+    });
+  }
+  state.timeSettings.lastRoleLiveTick = switchedAt;
+  state.timeSettings.lastRoleViewerTick = switchedAt;
   state.economy.lastLedgerRpActivityAt = 0;
   lastScheduledLedgerAttempt = 0;
   if(state.live.started) state.live.lastActivityAt = Date.now();
