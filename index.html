@@ -8516,8 +8516,19 @@ $("realTimeSwitch").onclick = () => {
 
   state.timeSettings.useRealTime =
     !realTimeEnabled();
-  state.timeSettings.lastRoleLiveTick = Date.now();
-  state.timeSettings.lastRoleViewerTick = Date.now();
+  const switchedAt = Date.now();
+  if(realTimeEnabled()){
+    state.characters.forEach(character => {
+      if(character.live && !character.liveUsesRealTime && !character.liveManagedByPlayer){
+        character.liveEndsAt = Math.max(
+          Number(character.liveEndsAt) || 0,
+          switchedAt + 10*60*1000
+        );
+      }
+    });
+  }
+  state.timeSettings.lastRoleLiveTick = switchedAt;
+  state.timeSettings.lastRoleViewerTick = switchedAt;
   state.economy.lastLedgerRpActivityAt = 0;
   lastScheduledLedgerAttempt = 0;
   if(state.live.started) state.live.lastActivityAt = Date.now();
@@ -8982,28 +8993,23 @@ function roleLiveHistoryLabel(record){
     : "";
 }
 
-function pruneRoleLiveHistory(){
-  const now = Date.now();
-  const currentTurn = Number(state.timeSettings.rpTurnCount || 0);
-  let removed = false;
-  state.characters.forEach(character => {
-    const history = Array.isArray(character.liveHistory)
-      ? character.liveHistory
-      : [];
-    const kept = history.filter(record => {
-      if(record.realTimeAtStart){
-        const endedAt = Number(record.endedAt);
-        return !Number.isFinite(endedAt) || endedAt <= 0 ||
-          now - endedAt <= 3*24*60*60*1000;
-      }
-      const endedTurn = Number(record.endedRpTurn);
-      return !Number.isFinite(endedTurn) || endedTurn < 0 ||
-        currentTurn - endedTurn <= 100;
-    });
-    if(kept.length !== history.length) removed = true;
-    character.liveHistory = kept;
-  });
-  if(removed) scheduleStarwaveSave();
+function isRecentExploreLive(record){
+  // 只決定探索頁顯示；頻道與創作者後台保留完整歷史。
+  const usesRealTime = typeof record.realTimeAtStart === "boolean"
+    ? record.realTimeAtStart
+    : typeof record.time === "string" ? Boolean(record.time) : null;
+  if(usesRealTime === true){
+    const endedAt = Number(record.endedAt) || Date.parse(record.time || "");
+    return Number.isFinite(endedAt) && endedAt > 0 &&
+      Date.now() - endedAt <= 3*24*60*60*1000;
+  }
+  if(usesRealTime === false && record.endedRpTurn != null){
+    const endedTurn = Number(record.endedRpTurn);
+    return Number.isFinite(endedTurn) && endedTurn >= 0 &&
+      Number(state.timeSettings.rpTurnCount || 0) - endedTurn <= 100;
+  }
+  // 舊紀錄缺少時間依據時仍保留原始資料，從頻道／後台觀看。
+  return false;
 }
 
 function renderRoleLiveHistoryGrid(container, characters){
@@ -9012,7 +9018,7 @@ function renderRoleLiveHistoryGrid(container, characters){
     (character.liveHistory || []).map(record => ({character,record}))
   ).sort((a,b) => Number(b.record.endedAt) - Number(a.record.endedAt));
   if(!records.length){
-    container.innerHTML = '<div class="empty-state" style="grid-column:1/-1">目前沒有近期直播。</div>';
+    container.innerHTML = '<div class="empty-state" style="grid-column:1/-1">目前沒有歷史直播。</div>';
     return;
   }
   records.forEach(({character,record}) =>
@@ -9035,7 +9041,7 @@ function renderExploreHistory(){
   grid.innerHTML = "";
   const records = [
     ...state.characters.flatMap(character =>
-      (character.liveHistory || []).map(record => ({
+      (character.liveHistory || []).filter(isRecentExploreLive).map(record => ({
         endedAt:Number(record.endedAt || 0),
         card:() => createStreamCard({
           title:record.title, channel:character.channel,
@@ -9047,7 +9053,7 @@ function renderExploreHistory(){
         })
       }))
     ),
-    ...(state.player.liveHistory || []).map(item => ({
+    ...(state.player.liveHistory || []).filter(isRecentExploreLive).map(item => ({
       endedAt:Number(item.endedAt || Date.parse(item.time) || 0),
       card:() => createStreamCard({
         title:item.title, channel:item.channel || state.player.channel,
@@ -9109,7 +9115,6 @@ $("closePlayerReplay").onclick = () => {
 };
 
 function renderExplore(){
-  pruneRoleLiveHistory();
   const grid = $("homeStreamGrid");
 
   grid.innerHTML = "";
@@ -11361,6 +11366,8 @@ $("endLive").onclick = () => {
         category:state.player.category,
         time:state.live.startedWithRealTime ? new Date().toLocaleString("zh-TW") : "",
         endedAt:Date.now(),
+        realTimeAtStart:Boolean(state.live.startedWithRealTime),
+        endedRpTurn:Number(state.timeSettings.rpTurnCount || 0),
         peak:state.player.peak,
         turns:state.live.turn,
         sceneId:state.live.sceneId,
@@ -13259,7 +13266,8 @@ async function enrichRoleLiveHistoryTitles(){
     while(epoch === rpGenerationEpoch){
       const pending = state.characters.flatMap(character =>
         (character.liveHistory || [])
-          .filter(record => roleLiveTitleNeedsDetail(record.title) && !attempted.has(record.id))
+          .filter(record => isRecentExploreLive(record) &&
+            roleLiveTitleNeedsDetail(record.title) && !attempted.has(record.id))
           .map(record => ({character,record}))
       ).slice(0,8);
       if(!pending.length) break;
@@ -13542,8 +13550,10 @@ function advanceRoleLiveRealTime(){
     advanceRoleLiveViewerRealTime(now);
     return;
   }
-  state.timeSettings.lastRoleLiveTick = now-((now-last)%interval);
-  for(let i=0;i<elapsed;i++) advanceRoleLiveLifecycle(last+(i+1)*interval);
+  const latestTick = now-((now-last)%interval);
+  const firstTick = latestTick - (elapsed-1)*interval;
+  state.timeSettings.lastRoleLiveTick = latestTick;
+  for(let i=0;i<elapsed;i++) advanceRoleLiveLifecycle(firstTick+i*interval);
   advanceRoleLiveViewerRealTime(now);
   scheduleStarwaveSave();
 }
@@ -13624,9 +13634,11 @@ function advanceRoleLiveLifecycle(tickAt=Date.now()){
       const endsAt = Number(character.liveEndsAt) ||
         (realTimeEnabled() && Number(character.liveStartedAt) > 0
           ? Number(character.liveStartedAt) + 3*60*60*1000 : 0);
-      if(realTimeEnabled() && endsAt && tickAt >= endsAt){
-        justEnded.add(character.id);
-        stopAutonomousRoleLive(character,endsAt);
+      if(realTimeEnabled()){
+        if(endsAt && tickAt >= endsAt){
+          justEnded.add(character.id);
+          stopAutonomousRoleLive(character,endsAt);
+        }
         return;
       }
 
@@ -20510,7 +20522,6 @@ $("charPublicDescribe").disabled =
   $("channelContent").textContent =
     character.content;
 
-  pruneRoleLiveHistory();
   renderRoleLiveHistoryGrid($("channelRoleLiveHistory"),[character]);
   renderCharacterMemories();
   renderCharacterLorebookLinks();
@@ -24442,7 +24453,6 @@ function countRpTurn(summary){
     advanceRoleLiveMetrics();
     advanceRoleLiveLifecycle();
   }
-  pruneRoleLiveHistory();
 
   if(settings.counter >= interval){
     settings.pendingBatches.push(settings.recentTurns.slice());
@@ -27752,7 +27762,6 @@ async function init(){
       }
     }
     (character.liveHistory || []).forEach(record => {
-      if(record.realTimeAtStart === undefined) record.realTimeAtStart = realTimeEnabled();
       record.title = roleLiveCleanTitle(record.title);
     });
     if(!character.live) return;
