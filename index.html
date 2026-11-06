@@ -8988,12 +8988,16 @@ function pruneRoleLiveHistory(){
     const history = Array.isArray(character.liveHistory)
       ? character.liveHistory
       : [];
-    const kept = history.filter(record =>
-      realTimeEnabled()
-        ? Number.isFinite(Number(record.endedAt)) &&
-          now - Number(record.endedAt) <= 3*24*60*60*1000
-        : currentTurn - Number(record.endedRpTurn || 0) <= 100
-    );
+    const kept = history.filter(record => {
+      if(record.realTimeAtStart){
+        const endedAt = Number(record.endedAt);
+        return !Number.isFinite(endedAt) || endedAt <= 0 ||
+          now - endedAt <= 3*24*60*60*1000;
+      }
+      const endedTurn = Number(record.endedRpTurn);
+      return !Number.isFinite(endedTurn) || endedTurn < 0 ||
+        currentTurn - endedTurn <= 100;
+    });
     if(kept.length !== history.length) removed = true;
     character.liveHistory = kept;
   });
