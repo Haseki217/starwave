@@ -7249,6 +7249,7 @@ live:{
     inventory:{},
     billCycle:"",
     lastLedgerRpActivityAt:0,
+    skippedSubscriptionMonths:[],
     bills:[],
     transactions:[]
   },
@@ -17624,7 +17625,10 @@ function dueLedgerBills(now=new Date()){
   add("rent","房租",10);
   add("mobile","手機費",15);
   add("subscription","訂閱服務",20);
-  return scheduled.filter(spec => !state.economy.bills.some(bill => {
+  return scheduled.filter(spec => !(
+    spec.type === "subscription" &&
+    (state.economy.skippedSubscriptionMonths || []).includes(spec.realMonth)
+  ) && !state.economy.bills.some(bill => {
     if(bill.key === spec.key) return true;
     if(!ledgerBillType(bill).split("+").includes(spec.type)) return false;
     const billedRealMonth = bill.issuedRealMonth ||
@@ -17671,6 +17675,22 @@ function checkScheduledLedgerBills(){
 
 function walletMoney(value){
   return Number(value) < 0 ? signedMoney(value) : money(value);
+}
+
+function scheduledBillAmountRange(spec){
+  if(spec.type === "water") return [100,300];
+  if(spec.type === "gas") return [120,600];
+  if(spec.type === "rent") return [18000,18000];
+  if(spec.type === "mobile") return [599,599];
+  if(spec.type === "electricity"){
+    const billMonth = Number(String(spec.realMonth || "").split("-")[1]);
+    const summerMonths = [billMonth - 2,billMonth - 1]
+      .filter(month => month >= 6 && month <= 9).length;
+    return summerMonths === 2 ? [1500,2500]
+      : summerMonths === 1 ? [1200,2200]
+      : [1000,1800];
+  }
+  return null;
 }
 
 function buildLifeLedgerAiPrompt(options={}){
@@ -17827,7 +17847,12 @@ function buildLifeLedgerAiPrompt(options={}){
 現實日曆日期${realTimeEnabled() ? "（自動檢查）" : "（有 RP 互動後才檢查）"}
 
 【現在需要建立的帳單】
-${JSON.stringify(dueBills.map(bill => ({key:bill.key,name:bill.name,due:bill.due})))}
+${JSON.stringify(dueBills.map(bill => ({
+  key:bill.key,name:bill.name,due:bill.due,
+  ...(scheduledBillAmountRange(bill)
+    ? {amountRange:scheduledBillAmountRange(bill)}
+    : {})
+})))}
 
 【目前錢包餘額】
 ${state.economy.wallet}
@@ -17877,10 +17902,17 @@ ${options.billsOnly ? "- 此次只建立到期帳單，transaction 必須為 nul
   
 【定期帳單規則】
 
-只為「現在需要建立的帳單」逐項輸出一筆 bills，每筆 key 必須完全照抄。
+「現在需要建立的帳單」每項都要在 bills 中回傳對應 key；一般帳單各輸出一筆，key 必須完全照抄。
 清單為空時 bills 必須是空陣列，不得自行新增其他固定帳單。
-房租、手機費與訂閱服務金額應參考既有帳單保持合理穩定；
-水電瓦斯可以隨用量變化。單筆不得超過 20000；同一月份合計不得超過 25000。
+房租每月固定 NT$18,000；手機費每月固定 NT$599，兩者不受既有舊帳單金額影響。
+手機小額付費只有近期故事明確發生時才可另外記錄一次 transaction，不要擅自加進固定手機費。
+訂閱服務由你依玩家背景、既有訂閱及生活情況判斷本月是否有；可以沒有，不要為了生成帳單硬說玩家訂了服務。
+若本月沒有訂閱，請輸出 {"key":"對應的 subscription key","skip":true}；有訂閱時輸出合理的每月金額與具體、自然的訂閱項目名稱（例如影音、音樂、遊戲或軟體服務），可參考既有訂閱維持連續性。
+本月只判斷一次，不得在同一月的其他重整中反覆新增不同訂閱費。
+水費、瓦斯費和電費是雙月帳單，應依本次清單各項的 amountRange 生成。
+水費每期 NT$100～300，瓦斯費每期 NT$120～600，可依日常洗澡與料理用量變化。
+電費每期總範圍 NT$1,000～2,500；依計費期前兩個月是否處於 6～9 月夏月調整：非夏月 NT$1,000～1,800，跨季 NT$1,200～2,200，兩個月都是夏月 NT$1,500～2,500。夏季開冷氣較多可偏高，冬季通常偏低；不要只按帳單開出的月份判斷季節。
+其他帳單單筆不得超過 20000；同一月份合計不得超過 25000。
 不得生成稅金或直播打賞提領手續費。
 
 只輸出有效 JSON：
@@ -18019,10 +18051,23 @@ async function generateLifeLedgerAi(
     if(dueBills.length){
       const generatedBills = Array.isArray(data.bills) ? data.bills : [];
       const normalizedBills = [];
+      const skippedSubscriptionMonths = [];
       const totals = new Map();
       dueBills.forEach(spec => {
         const raw = generatedBills.find(bill => bill?.key === spec.key);
-        const amount = Math.round(Number(raw?.amount));
+        if(spec.type === "subscription" && raw?.skip === true){
+          skippedSubscriptionMonths.push(spec.realMonth);
+          return;
+        }
+        const proposedAmount = Math.round(Number(raw?.amount));
+        const range = scheduledBillAmountRange(spec);
+        const amount = range
+          ? range[0] === range[1]
+            ? range[0]
+            : Number.isFinite(proposedAmount)
+              ? Math.max(range[0],Math.min(range[1],proposedAmount))
+              : proposedAmount
+          : proposedAmount;
         const period = spec.key.split(":").slice(0,2).join(":");
         const total = totals.get(period) || 0;
         if(!Number.isFinite(amount) || amount <= 0 || amount > 20000 ||
@@ -18032,15 +18077,22 @@ async function generateLifeLedgerAi(
           id:uid("bill"),key:spec.key,cycle:spec.key.split(":")[1],
           type:spec.type,
           issuedRealMonth:monthKey(),
-          name:spec.name,category:"生活帳單",amount,due:spec.due,
+          name:spec.type === "subscription"
+            ? String(raw?.name || spec.name).trim().slice(0,40) || spec.name
+            : spec.name,
+          category:"生活帳單",amount,due:spec.due,
           dueAt:spec.dueAt || 0,dueTurn:spec.dueTurn || 0,
           mode:spec.mode,paid:false,debtRecorded:false
         });
       });
-      if(normalizedBills.length !== dueBills.length){
+      if(normalizedBills.length + skippedSubscriptionMonths.length !== dueBills.length){
         throw new Error("AI 沒有產生完整的到期帳單。");
       }
       state.economy.bills.push(...normalizedBills);
+      if(skippedSubscriptionMonths.length){
+        state.economy.skippedSubscriptionMonths ||= [];
+        state.economy.skippedSubscriptionMonths.push(...skippedSubscriptionMonths);
+      }
       changed = true;
     }
 
@@ -27335,6 +27387,7 @@ character.liveOfflineTurns =
   state.economy.billCycle =
     "";
   state.economy.lastLedgerRpActivityAt = 0;
+  state.economy.skippedSubscriptionMonths = [];
   lastScheduledLedgerAttempt = 0;
 
   state.economy.bills =
