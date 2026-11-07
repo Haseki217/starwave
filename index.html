@@ -5134,11 +5134,6 @@ body[data-theme="halloween"] .live-stage{
 
       </div>
 
-      <div class="mini-actions" style="margin:0 12px 12px">
-        <button id="importLorebook" class="secondary">匯入 JSON</button>
-        <input id="importLorebookFile" type="file" accept=".json,application/json" hidden>
-      </div>
-
       <div
         id="loreBookList"
         class="lore-book-list"
@@ -6622,6 +6617,22 @@ body[data-theme="halloween"] .live-stage{
 
   </div>
 
+</div>
+
+<div id="loreCreateOverlay" class="lore-rename-overlay" hidden>
+  <div class="lore-edit-modal" role="dialog" aria-modal="true" aria-labelledby="loreCreateTitle">
+    <div id="loreCreateTitle" class="confirm-title">新增 Lorebook</div>
+    <button id="importLorebook" class="secondary">匯入 JSON</button>
+    <input id="importLorebookFile" type="file" accept=".json,application/json" hidden>
+    <div class="field" style="margin-top:16px">
+      <label for="loreCreateName">手動建立：Lorebook 名稱</label>
+      <input id="loreCreateName" type="text" maxlength="80" placeholder="輸入 Lorebook 名稱">
+    </div>
+    <div class="confirm-actions">
+      <button id="cancelLoreCreate" class="secondary">取消</button>
+      <button id="confirmLoreCreate" class="primary">建立</button>
+    </div>
+  </div>
 </div>
 
 <div
@@ -24768,6 +24779,7 @@ $("importLorebookFile").onchange = async event => {
     );
     state.lorebooks.push(...books);
     state.selectedLorebookId = books[0].id;
+    $("loreCreateOverlay").hidden = true;
     renderLorebooks();
     renderCharacterLorebookLinks();
     scheduleStarwaveSave();
@@ -24917,16 +24929,37 @@ function renderLorebooks(){
 }
 
 $("addLorebook").onclick = () => {
-  const book = {
-    id:uid("lorebook"),
-    name:`Lorebook ${state.lorebooks.length + 1}`,
-    entries:[]
-  };
+  $("loreCreateName").value = "";
+  $("loreCreateOverlay").hidden = false;
+  requestAnimationFrame(() => $("loreCreateName").focus());
+};
 
+$("cancelLoreCreate").onclick = () => {
+  $("loreCreateOverlay").hidden = true;
+  $("loreCreateName").value = "";
+};
+
+function createNamedLorebook(){
+  const name = $("loreCreateName").value.trim();
+  if(!name){
+    showNotice("名稱不能留空","請輸入 Lorebook 名稱。");
+    return;
+  }
+  const book = {id:uid("lorebook"),name,entries:[]};
   state.lorebooks.push(book);
   state.selectedLorebookId = book.id;
-
+  $("loreCreateOverlay").hidden = true;
   renderLorebooks();
+  renderCharacterLorebookLinks();
+  scheduleStarwaveSave();
+}
+
+$("confirmLoreCreate").onclick = createNamedLorebook;
+$("loreCreateName").onkeydown = event => {
+  if(event.key === "Enter"){
+    event.preventDefault();
+    createNamedLorebook();
+  }
 };
 
 $("renameLorebook").onclick = () => {
