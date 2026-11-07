@@ -7929,8 +7929,20 @@ $("playerPublicDescribe").onclick =
       "public"
     );
 
+function taiwanWrittenLanguageRules(){
+  return `【臺灣繁體中文用字】
+所有新寫出的中文欄位、標題、名稱與敘述，使用臺灣繁體中文，輸出前逐詞檢查。
+不要只逐字簡轉繁：須按詞義區分后／後、發／髮、里／裡、干／乾／幹等。
+時間應寫「午後、以後、後來、之後、最後、稍後、後續、後天」；身分稱謂則保留「皇后、太后、王后」，不可把所有「后」一律改成「後」。
+不要將玩家原話、已指定的姓名、帳號、網址或原文引用擅自改寫。`;
+}
+
+function correctAiTaiwanPhrases(text){
+  return String(text ?? "").replace(/午后/g,"午後");
+}
+
 function publicTaiwanLanguageRules(){
-  return `【公開內容語言】
+  return `${taiwanWrittenLanguageRules()}\n【公開內容語言】
 所有新生成的敘事、觀眾留言、論壇與 SNS 文字，一律使用臺灣繁體中文與臺灣常用語，不輸出簡體字。
 不要使用中國平台用語或套話，例如「視頻、直播間、點讚、彈幕、網友們沖、嗑到了、磕 CP、民政局搬來了」；依情境改用「影片、直播畫面／聊天室、按讚、聊天室留言、嗑 CP」等自然說法。
 不要使用「回看」指觀看已播出的內容；依語意使用「重看」、「看重播」或「回顧」。
@@ -8003,7 +8015,7 @@ if(privateAppearance){
 }
 
 function sanitizePublicAiText(text){
-  return sanitizePublicText(String(text ?? "").replace(/回看/g,"重看"));
+  return sanitizePublicText(correctAiTaiwanPhrases(text).replace(/回看/g,"重看"));
 }
 
 function publicAuthor(authorId,fallback){
@@ -19560,6 +19572,10 @@ async function generateImportedCharacterProfile(
     generated.snsId = revised.snsId;
     generated.content = revised.content;
   }
+  // 只校正新生成的文字欄位；原卡片明確指定的值仍由建立流程優先採用。
+  for(const key of ["streamerName","channel","content"]){
+    if(typeof generated[key] === "string") generated[key] = correctAiTaiwanPhrases(generated[key]);
+  }
   return generated;
 }
 
@@ -26470,6 +26486,8 @@ async function generateWithApi({
 
 } = {}){
 
+
+  systemInstruction = [taiwanWrittenLanguageRules(),systemInstruction].filter(Boolean).join("\n\n");
 
   const profile =
     state.api.profiles[
