@@ -9929,6 +9929,7 @@ $("preLiveShopItems")
 renderBackstage();
 
 state.live.started = true;
+clearOtherLiveDrafts();
 state.live.startedWithRealTime = realTimeEnabled();
 state.live.lastActivityAt = Date.now();
 state.live.awayContext = "";
@@ -12585,8 +12586,16 @@ async function generateRoleLiveNext(
     button.textContent =
       oldButtonText;
     $("sendRoleLiveComment").disabled = Boolean(state.live.started);
-    $("sendRoleDonation").disabled = false;
+    $("sendRoleDonation").disabled = Boolean(state.live.started);
   }
+}
+
+function clearOtherLiveDrafts(){
+  for(const id of ["roleLiveComment","roleDonationMessage","roleDonationCustom"]){
+    $(id).value = "";
+  }
+  selectedDonationAmount = 0;
+  updateDonationPresetSelection();
 }
 
 function renderRoleLive(){
@@ -12610,12 +12619,14 @@ function renderRoleLive(){
   $("refreshRoleLive").hidden = Boolean(replay);
   $("rememberRoleLive").hidden = Boolean(replay);
   $("roleLiveComment").closest(".role-viewer-input").hidden = Boolean(replay);
+  if(state.live.started) clearOtherLiveDrafts();
   $("roleLiveComment").disabled = Boolean(state.live.started);
   $("sendRoleLiveComment").disabled = Boolean(state.live.started) || $("refreshRoleLive").disabled;
   $("roleLiveComment").placeholder = state.live.started ? "直播中暫停其他直播的留言" : "在聊天室留言……";
   $("roleDonationMessage").disabled = Boolean(state.live.started);
-  $("roleDonationMessage").placeholder = state.live.started ? "直播中可打賞，暫不附言" : "打賞附言（選填）";
-  $("roleDonationCustom").closest(".donation-panel").hidden = Boolean(replay);
+  $("roleDonationMessage").placeholder = "打賞附言（選填）";
+  $("sendRoleDonation").disabled = Boolean(state.live.started) || $("refreshRoleLive").disabled;
+  $("roleDonationCustom").closest(".donation-panel").hidden = Boolean(replay) || Boolean(state.live.started);
 
   const collabNames =
     (
@@ -12801,7 +12812,8 @@ $("sendRoleLiveComment").onclick = () => {
     getCharacter(currentRoleLiveId);
   if(currentRoleLiveReplay) return;
   if(state.live.started){
-    showNotice("目前正在直播","結束自己的直播後，才能到其他直播留言。");
+    clearOtherLiveDrafts();
+    showNotice("目前正在直播","結束自己的直播後，才能到其他直播留言或打賞。");
     return;
   }
 
@@ -12859,6 +12871,11 @@ $("sendRoleDonation").onclick = () => {
   if(!character || currentRoleLiveReplay){
     return;
   }
+  if(state.live.started){
+    clearOtherLiveDrafts();
+    showNotice("目前正在直播","結束自己的直播後，才能到其他直播留言或打賞。");
+    return;
+  }
 
   if(state.economy.mode === "off"){
     showNotice(
@@ -12886,8 +12903,7 @@ $("sendRoleDonation").onclick = () => {
     return;
   }
 
-  const message = state.live.started ? "" :
-    $("roleDonationMessage").value.trim() || "支持直播！";
+  const message = $("roleDonationMessage").value.trim() || "支持直播！";
 
   state.economy.wallet -= amount;
 
@@ -12904,13 +12920,13 @@ $("sendRoleDonation").onclick = () => {
     accountId:null,
     author:state.player.name,
     donation:true,
-    text:message ? `${money(amount)}｜${message}` : money(amount)
+    text:`${money(amount)}｜${message}`
   });
 
   character.lastViewerAction =
-    message ? `打賞 ${money(amount)}：${message}` : `打賞 ${money(amount)}（沒有附言）`;
+    `打賞 ${money(amount)}：${message}`;
 
-  if(!state.live.started) $("roleDonationMessage").value = "";
+  $("roleDonationMessage").value = "";
   $("roleDonationCustom").value = "";
 
   syncNumbers();
