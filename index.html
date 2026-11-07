@@ -535,6 +535,16 @@ textarea::placeholder{
 .primary,
 .secondary,
 .danger,
+body:is([data-theme="deep"],[data-theme="vampire"]) :is(#deleteLorebook,#loreEntryList .danger){
+  background:#36212a;
+  color:#f4c4cf;
+  border-color:#875764;
+}
+body:is([data-theme="deep"],[data-theme="vampire"]) :is(#deleteLorebook,#loreEntryList .danger):hover{
+  background:#482d37;
+  color:#ffe2e9;
+}
+
 .ghost{
   min-height:34px;
   padding:0 11px;
@@ -19391,14 +19401,17 @@ organizedCard：
 
 streamerName：
 角色在直播平台公開使用的主播名／活動名。
-可以和本名相同，但只有在角色設定真的適合時才這樣做。
+除非卡片已明確指定公開活動名，請創作獨立的網名／藝名；不可直接使用本名或截取其中一兩個字。
 若角色明顯會使用藝名、暱稱、網名或 VTuber 名稱，請替他建立合理名稱。
 除非卡片明確指定，活動名不可只截取本名的一個字或兩個字；要依角色意象構思獨立、自然且有辨識度的名稱。
 
 channel：
 頻道名稱。
-要像真正的直播／影音頻道名稱。
-不要只寫「角色名的頻道」。
+STARWAVE 的公開直播舞台固定是現代世界。請取簡短自然、像現代創作者使用的頻道名稱，可以呼應活動名；不要堆疊「雜記與某某鑑定室」等職業說明。
+所有非現代寫實世界的設定，包含但不限於吸血鬼、靈能力、超能力、魔法、末日、異世界、精靈、天使、惡魔、星際種族與架空機構，一律視為 VTuber 的人設／RP 背景。
+這些設定可以保留在私人卡片，也可以在直播中以人設 RP 的口吻自然提起；不代表要刪掉角色特色或禁止聊人設。
+但不得把種族、能力、虛構職業或原世界事件直接寫成頻道主題或主要直播內容：不能列「超能力展示、末日求生實況、天使審判、惡魔召喚、靈術構造解析、靈鳥觀察」等。
+頻道名稱可有符合人設的藝名與意象；不可把上述虛構活動包裝成現實營業或節目項目。主要直播方向仍使用現代能做的雜談、歌唱、遊戲、閱讀、創作等，依角色興趣選擇。
 
 liveId：
 STARWAVE 直播帳號 ID。
@@ -19410,6 +19423,12 @@ snsId：
 SNS 帳號 ID。
 必須以 @ 開頭。
 可以和 liveId 相同，也可以不同，依角色風格決定。
+
+realAge：
+填卡片明確提供的真實年齡／一般年齡，只填數字字串；未提供留空，不可猜測。轉成 VTuber 不會抹掉角色既有年齡。
+
+streamAge：
+只有卡片明確提供直播設定年齡／公開年齡才填；沒有就留空，不要自動複製真實年齡。
 
 gender：
 只有角色卡明確提供性別時才填「男性」、「女性」或「其他」；未提供時填空字串，不根據姓名或圖片猜測。
@@ -19427,7 +19446,10 @@ streamerType：
 
 content：
 主要直播內容。
-請根據角色設定推測這個人真的可能做的直播內容。
+根據性格與興趣，轉譯成現代設備與現實生活能進行的內容；私人世界觀仍原樣保留，公開頻道不得把異世界活動當成現代真的能做的事。
+所有非現代設定均遵守前述 VTuber 人設／RP 規則，不限於任何特定種族、能力或世界觀。直播對話可以扮演人設，但 content 欄只能列現代可進行的節目方向，不要把「某種族雜談／某能力教學／某世界實況」當成主題。
+例如喜歡古籍可轉成閱讀與歷史文化雜談，喜歡靈鳥可轉成一般鳥類觀察或鳥類遊戲；遊戲中的魔法可以聊，但須明確是遊戲／虛構作品。
+保留角色個性，避免每人都套相同節目，不要公開私人秘密。
 可以有 2～5 種主要方向。
 例如雜談、遊戲、音樂、料理、創作、戶外、專業內容等，
 但不要硬套範例。
@@ -19451,6 +19473,8 @@ relationship：
   "snsId":"",
   "streamerType":"real",
   "gender":"",
+  "realAge":"",
+  "streamAge":"",
   "content":"",
   "relationship":""
 }
@@ -19503,6 +19527,31 @@ async function generateImportedCharacterProfile(
   const generated = parseStarwaveLlmJson(result.text);
   if(!String(generated.name || "").trim() || !String(generated.organizedCard || "").trim()){
     throw new Error("模型未回傳整理後的姓名與角色設定，請重試匯入。");
+  }
+  const name = String(generated.name).trim();
+  let root = {};
+  try{ const parsed = JSON.parse(raw); root = parsed.data || parsed.character || parsed; }catch{}
+  const explicitName = root.streamerName || root.streamer_name || root.publicName || root.public_name;
+  const invalidAlias = value => {
+    const alias = String(value || "").replace(/\s/g,"");
+    return !alias || alias === name || (alias.length <= 2 && name.includes(alias));
+  };
+  if(!explicitName && invalidAlias(generated.streamerName)){
+    const correction = await generateWithApi({
+      profileIndex:state.api.active,
+      prompt:buildImportedCharacterProfilePrompt(raw) +
+        "\n上次活動名不合格：" + JSON.stringify(generated.streamerName) +
+        "。請重新取獨立活動名，禁止使用本名或本名一兩字片段。頻道和內容必須能在現代世界進行。只輸出 JSON：{\"streamerName\":\"\",\"channel\":\"\",\"content\":\"\"}。",
+      json:true
+    });
+    const revised = parseStarwaveLlmJson(correction.text);
+    if(invalidAlias(revised.streamerName) ||
+      !String(revised.channel || "").trim() || !String(revised.content || "").trim()){
+      throw new Error("模型未產生合適的獨立活動名與現代頻道資料，請重試匯入。");
+    }
+    generated.streamerName = revised.streamerName;
+    generated.channel = revised.channel;
+    generated.content = revised.content;
   }
   return generated;
 }
@@ -19614,6 +19663,26 @@ async function generateImportedCharacterProfile(
       : "【角色設定】\n這張卡沒有提供可讀的角色設定，請自行補充。";
 }
 
+function importedCharacterAges(raw,root,generated){
+  const text = [raw,root.description,root.char_persona,root.persona]
+    .filter(value => typeof value === "string").join("\n");
+  const field = labels => {
+    const match = text.match(new RegExp("(?:^|\\n)[ \\t]*(?:[-*]\\s*)?(?:\\*\\*)?(?:" + labels + ")(?:\\*\\*)?\\s*[:：]\\s*(?:\\*\\*)?(\\d{1,4})(?:\\s*(?:歲|岁|years?))?", "i"));
+    return match?.[1];
+  };
+  const age = value => {
+    const match = String(value ?? "").trim().match(/^(\d{1,4})(?:\s*(?:歲|岁|years?(?: old)?))?$/i);
+    return match ? match[1] : "";
+  };
+  return {
+    realAge:age(root.realAge ?? root.performerAge ??
+      field("真實年齡|實際年齡|中之人年齡") ?? root.age ??
+      field("年齡") ?? generated.realAge),
+    age:age(root.streamAge ?? root.publicAge ??
+      field("直播設定年齡|公開年齡") ?? generated.streamAge)
+  };
+}
+
 function createImportedCharacter(
   raw,
   generated={}
@@ -19660,10 +19729,7 @@ const publicActivityName =
   const character = {
     id,
     name,
-    age:root.streamAge ?? root.publicAge ??
-      ((importedStreamerType === "vtuber") ? root.age ?? "" : ""),
-    realAge:root.realAge ?? root.performerAge ??
-      ((importedStreamerType === "vtuber") ? "" : root.age ?? ""),
+    ...importedCharacterAges(raw,root,generated),
     gender:normalizeCreatorGender(root.gender ?? root.sex ?? generated.gender),
     card:
       String(generated.organizedCard || "").trim() || formatImportedCharacterCard(raw),
