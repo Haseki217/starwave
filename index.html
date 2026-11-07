@@ -4855,6 +4855,26 @@ body[data-theme="halloween"] .live-stage{
 
         </div>
 
+        <div class="section-head" style="margin-top:18px">
+          <h3>連結 Lorebook</h3>
+        </div>
+
+        <div
+          id="characterLorebookLinks"
+          class="entry-list"
+        ></div>
+
+        <div class="actions">
+
+          <button
+            id="saveCharacterLorebooks"
+            class="primary"
+          >
+            儲存連結
+          </button>
+
+        </div>
+
       </div>
 
       <div
@@ -4876,25 +4896,7 @@ body[data-theme="halloween"] .live-stage{
           class="memory-list"
         ></div>
 
-        <div class="section-head" style="margin-top:18px">
-          <h3>連結 Lorebook</h3>
-        </div>
 
-        <div
-          id="characterLorebookLinks"
-          class="entry-list"
-        ></div>
-
-        <div class="actions">
-
-          <button
-            id="saveCharacterLorebooks"
-            class="primary"
-          >
-            儲存連結
-          </button>
-
-        </div>
 
       </div>
 
@@ -5130,6 +5132,11 @@ body[data-theme="halloween"] .live-stage{
 
         </div>
 
+      </div>
+
+      <div class="mini-actions" style="margin:0 12px 12px">
+        <button id="importLorebook" class="secondary">匯入 JSON</button>
+        <input id="importLorebookFile" type="file" accept=".json,application/json" hidden>
       </div>
 
       <div
@@ -19300,7 +19307,7 @@ function findImportedName(raw,parsed=null){
     first.length <= 30 &&
     !/[{}[\]=]/.test(first)
   ){
-    return first;
+    return first.replace(/^#{1,6}\s+/, "").replace(/\*\*/g, "").trim();
   }
 
   return "匯入角色";
@@ -19363,10 +19370,19 @@ ${raw}
 
 這不是把角色本名複製到每一欄。
 
+name：
+從卡片辨識角色本名，只填姓名，移除 Markdown 標題、項目符號與欄位名稱。
+
+organizedCard：
+將 JSON 或純文字角色卡整理成清楚的繁體中文私人完整設定，以【基本資料】【外貌】【性格與習慣】【喜好】【身分與背景】【居所與家庭】【秘密】【關係與補充】等合適段落分類。
+完整保留原文的設定、限制、數值、世界觀、秘密、原遊戲設定與玩家知情範圍；合併重複內容，不刪減細節、不新增事實，不把原女主關係直接當作玩家既有關係。
+不要原封不動複製整份原文，不輸出 JSON 包裝或平台中繼資料。此欄為私人設定，不能將秘密搬到公開活動名、頻道或直播內容。
+
 streamerName：
 角色在直播平台公開使用的主播名／活動名。
 可以和本名相同，但只有在角色設定真的適合時才這樣做。
 若角色明顯會使用藝名、暱稱、網名或 VTuber 名稱，請替他建立合理名稱。
+除非卡片明確指定，活動名不可只截取本名的一個字或兩個字；要依角色意象構思獨立、自然且有辨識度的名稱。
 
 channel：
 頻道名稱。
@@ -19393,8 +19409,10 @@ streamerType：
 或
 "vtuber"
 
-除非角色卡明顯適合虛擬形象／虛擬主播，
-否則使用 "real"。
+依完整世界觀判斷，不可預設為真人主播。
+非現代世界觀（異世界、魔法、靈術、架空超自然機構、星際等）原則使用 "vtuber"，以角色作為虛擬形象設定；不要擅自改寫原本的世界觀或把秘密公開。
+只有現代寫實人物或卡片明確指定真人主播時才使用 "real"。
+卡片明確指定的主播類型優先。
 
 content：
 主要直播內容。
@@ -19414,6 +19432,8 @@ relationship：
 只輸出有效 JSON：
 
 {
+  "name":"",
+  "organizedCard":"",
   "streamerName":"",
   "channel":"",
   "liveId":"",
@@ -19469,9 +19489,11 @@ async function generateImportedCharacterProfile(
       json:true
     });
 
-  return parseStarwaveLlmJson(
-    result.text
-  );
+  const generated = parseStarwaveLlmJson(result.text);
+  if(!String(generated.name || "").trim() || !String(generated.organizedCard || "").trim()){
+    throw new Error("模型未回傳整理後的姓名與角色設定，請重試匯入。");
+  }
+  return generated;
 }
 
   function formatImportedCharacterCard(raw){
@@ -19600,8 +19622,11 @@ function createImportedCharacter(
         )
       : {};
 
-  const name =
-    findImportedName(raw,parsed);
+  const importedStreamerType = ["real","vtuber"].includes(root.streamerType)
+    ? root.streamerType : generated.streamerType === "vtuber" ? "vtuber" : "real";
+
+  const name = String(generated.name || findImportedName(raw,parsed))
+    .replace(/^#{1,6}\s+/, "").replace(/\*\*/g, "").trim();
 
 const publicActivityName =
   String(
@@ -19625,12 +19650,12 @@ const publicActivityName =
     id,
     name,
     age:root.streamAge ?? root.publicAge ??
-      ((root.streamerType === "vtuber" || generated.streamerType === "vtuber") ? root.age ?? "" : ""),
+      ((importedStreamerType === "vtuber") ? root.age ?? "" : ""),
     realAge:root.realAge ?? root.performerAge ??
-      ((root.streamerType === "vtuber" || generated.streamerType === "vtuber") ? "" : root.age ?? ""),
+      ((importedStreamerType === "vtuber") ? "" : root.age ?? ""),
     gender:normalizeCreatorGender(root.gender ?? root.sex ?? generated.gender),
     card:
-      formatImportedCharacterCard(raw),
+      String(generated.organizedCard || "").trim() || formatImportedCharacterCard(raw),
     streamerName:publicActivityName,
    channel:
   String(
@@ -19668,13 +19693,7 @@ snsId:
       )
     : "",
 
-streamerType:
-  (
-    root.streamerType === "vtuber" ||
-    generated.streamerType === "vtuber"
-  )
-    ? "vtuber"
-    : "real",
+streamerType:importedStreamerType,
 
 content:
   String(
@@ -24535,7 +24554,6 @@ function resolveTriggeredLorebookEntries(
     );
 
   if(
-    !normalizedText ||
     !linkedIds.size
   ){
     return [];
@@ -24579,6 +24597,7 @@ function resolveTriggeredLorebookEntries(
       book.entries ||
       []
     ).forEach((entry,index) => {
+      if(entry.enabled === false) return;
       const visibility =
         entry.visibility ===
           "public"
@@ -24612,7 +24631,7 @@ function resolveTriggeredLorebookEntries(
         ).trim();
 
       if(
-        !matchedKeywords.length ||
+        (!entry.alwaysOn && !matchedKeywords.length) ||
         !content
       ){
         return;
@@ -24633,7 +24652,7 @@ function resolveTriggeredLorebookEntries(
           matchedKeywords.length *
             1000 +
           Math.max(
-            ...matchedKeywords.map(
+            0,...matchedKeywords.map(
               keyword =>
                 normalizeLoreTriggerText(
                   keyword
@@ -24699,6 +24718,66 @@ function resolveTriggeredLorebookEntries(
 
   return selected;
 }
+
+
+function parseImportedLorebooks(data, fallbackName="匯入 Lorebook"){
+  const root = data?.data?.character_book || data?.character_book || data;
+  const books = Array.isArray(root) ? root : Array.isArray(root?.lorebooks) ? root.lorebooks : [root];
+  if(!books.length) throw new Error("JSON 裡沒有 Lorebook。");
+  return books.map(book => {
+    if(!book || typeof book !== "object" || !book.entries ||
+      typeof book.entries !== "object"){
+      throw new Error("請使用含有 entries 的 Lorebook JSON。");
+    }
+    const source = Array.isArray(book.entries) ? book.entries : Object.values(book.entries);
+    const entries = source.map((entry,index) => {
+      if(!entry || typeof entry !== "object" || typeof entry.content !== "string" ||
+        !entry.content.trim()){
+        throw new Error(`第 ${index+1} 個條目缺少文字內容，尚未匯入。`);
+      }
+      if(entry.selective || entry.use_regex || entry.extensions?.use_regex){
+        throw new Error("這份 Lorebook 含次要關鍵詞條件或正規表示式；請先改成一般關鍵字條目再匯入。");
+      }
+      const keywords = parseLoreKeywords(entry.keywords ?? entry.keys ?? entry.key ?? []);
+      if(keywords.length > 20 || keywords.some(key => key.length > 40) || entry.content.trim().length > 3000){
+        throw new Error(`第 ${index+1} 個條目超過目前編輯器限制：關鍵詞最多 20 個、每個 40 字，內容最多 3,000 字。請分拆後再匯入。`);
+      }
+      return {
+        id:uid("lore"),
+        title:String(entry.title || entry.comment || entry.name || `條目 ${index+1}`),
+        keywords,
+        visibility:entry.visibility === "public" ? "public" : "private",
+        enabled:entry.enabled !== false && entry.disable !== true,
+        alwaysOn:entry.alwaysOn === true || entry.constant === true,
+        content:entry.content.trim()
+      };
+    });
+    return {id:uid("lorebook"),name:String(book.name || fallbackName),entries};
+  });
+}
+
+$("importLorebook").onclick = () => $("importLorebookFile").click();
+$("importLorebookFile").onchange = async event => {
+  const input = event.target;
+  const file = input.files?.[0];
+  if(!file) return;
+  try{
+    const books = parseImportedLorebooks(
+      JSON.parse((await file.text()).replace(/^\uFEFF/,"")),
+      file.name.replace(/\.json$/i,"")
+    );
+    state.lorebooks.push(...books);
+    state.selectedLorebookId = books[0].id;
+    renderLorebooks();
+    renderCharacterLorebookLinks();
+    scheduleStarwaveSave();
+    toast(`已匯入 ${books.length} 本 Lorebook`);
+  }catch(error){
+    showNotice("Lorebook 匯入失敗",error.message || "請檢查 JSON 格式。");
+  }finally{
+    input.value = "";
+  }
+};
 
 function getSelectedLorebook(){
   return state.lorebooks.find(
@@ -24774,7 +24853,7 @@ function renderLorebooks(){
       <small>
         ${entry.visibility === "public" ? "公開" : "私人"} ·
         關鍵詞：
-        ${esc(parseLoreKeywords(entry.keywords).join("、"))}
+        ${entry.alwaysOn ? "永遠觸發" : esc(parseLoreKeywords(entry.keywords).join("、"))}${entry.enabled === false ? "（停用）" : ""}
       </small>
 
       <div
@@ -25026,7 +25105,8 @@ $("saveLoreEntry").onclick = () => {
 
   if(
     !title ||
-    !keywords.length ||
+    (!keywords.length && !book.entries.some(entry =>
+      entry.id === editingLoreEntryId && entry.alwaysOn)) ||
     !content
   ){
     showNotice(
