@@ -535,16 +535,6 @@ textarea::placeholder{
 .primary,
 .secondary,
 .danger,
-body:is([data-theme="deep"],[data-theme="vampire"]) :is(#deleteLorebook,#loreEntryList .danger){
-  background:#36212a;
-  color:#f4c4cf;
-  border-color:#875764;
-}
-body:is([data-theme="deep"],[data-theme="vampire"]) :is(#deleteLorebook,#loreEntryList .danger):hover{
-  background:#482d37;
-  color:#ffe2e9;
-}
-
 .ghost{
   min-height:34px;
   padding:0 11px;
@@ -569,6 +559,16 @@ body:is([data-theme="deep"],[data-theme="vampire"]) :is(#deleteLorebook,#loreEnt
   border:1px solid rgba(220,120,150,.20);
   background:rgba(255,236,242,.30);
   color:var(--pink);
+}
+
+body:is([data-theme="deep"],[data-theme="vampire"]) :is(#deleteLorebook,#loreEntryList .danger){
+  background:#36212a;
+  color:#f4c4cf;
+  border-color:#875764;
+}
+body:is([data-theme="deep"],[data-theme="vampire"]) :is(#deleteLorebook,#loreEntryList .danger):hover{
+  background:#482d37;
+  color:#ffe2e9;
 }
 
 .ghost{
