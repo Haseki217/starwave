@@ -24554,6 +24554,7 @@ function resolveTriggeredLorebookEntries(
     );
 
   if(
+    !normalizedText ||
     !linkedIds.size
   ){
     return [];
@@ -24597,7 +24598,6 @@ function resolveTriggeredLorebookEntries(
       book.entries ||
       []
     ).forEach((entry,index) => {
-      if(entry.enabled === false) return;
       const visibility =
         entry.visibility ===
           "public"
@@ -24631,7 +24631,7 @@ function resolveTriggeredLorebookEntries(
         ).trim();
 
       if(
-        (!entry.alwaysOn && !matchedKeywords.length) ||
+        !matchedKeywords.length ||
         !content
       ){
         return;
@@ -24652,7 +24652,7 @@ function resolveTriggeredLorebookEntries(
           matchedKeywords.length *
             1000 +
           Math.max(
-            0,...matchedKeywords.map(
+            ...matchedKeywords.map(
               keyword =>
                 normalizeLoreTriggerText(
                   keyword
@@ -24719,7 +24719,6 @@ function resolveTriggeredLorebookEntries(
   return selected;
 }
 
-
 function parseImportedLorebooks(data, fallbackName="匯入 Lorebook"){
   const root = data?.data?.character_book || data?.character_book || data;
   const books = Array.isArray(root) ? root : Array.isArray(root?.lorebooks) ? root.lorebooks : [root];
@@ -24739,6 +24738,9 @@ function parseImportedLorebooks(data, fallbackName="匯入 Lorebook"){
         throw new Error("這份 Lorebook 含次要關鍵詞條件或正規表示式；請先改成一般關鍵字條目再匯入。");
       }
       const keywords = parseLoreKeywords(entry.keywords ?? entry.keys ?? entry.key ?? []);
+      if(!keywords.length){
+        throw new Error(`第 ${index+1} 個條目沒有關鍵字；STARWAVE 只支援關鍵字觸發，請補上後再匯入。`);
+      }
       if(keywords.length > 20 || keywords.some(key => key.length > 40) || entry.content.trim().length > 3000){
         throw new Error(`第 ${index+1} 個條目超過目前編輯器限制：關鍵詞最多 20 個、每個 40 字，內容最多 3,000 字。請分拆後再匯入。`);
       }
@@ -24747,8 +24749,6 @@ function parseImportedLorebooks(data, fallbackName="匯入 Lorebook"){
         title:String(entry.title || entry.comment || entry.name || `條目 ${index+1}`),
         keywords,
         visibility:entry.visibility === "public" ? "public" : "private",
-        enabled:entry.enabled !== false && entry.disable !== true,
-        alwaysOn:entry.alwaysOn === true || entry.constant === true,
         content:entry.content.trim()
       };
     });
@@ -24771,7 +24771,7 @@ $("importLorebookFile").onchange = async event => {
     renderLorebooks();
     renderCharacterLorebookLinks();
     scheduleStarwaveSave();
-    toast(`已匯入 ${books.length} 本 Lorebook`);
+    toast(`已匯入 ${books.length} 本 Lorebook，條目皆依關鍵字觸發`);
   }catch(error){
     showNotice("Lorebook 匯入失敗",error.message || "請檢查 JSON 格式。");
   }finally{
@@ -24853,7 +24853,7 @@ function renderLorebooks(){
       <small>
         ${entry.visibility === "public" ? "公開" : "私人"} ·
         關鍵詞：
-        ${entry.alwaysOn ? "永遠觸發" : esc(parseLoreKeywords(entry.keywords).join("、"))}${entry.enabled === false ? "（停用）" : ""}
+        ${esc(parseLoreKeywords(entry.keywords).join("、"))}
       </small>
 
       <div
@@ -25105,8 +25105,7 @@ $("saveLoreEntry").onclick = () => {
 
   if(
     !title ||
-    (!keywords.length && !book.entries.some(entry =>
-      entry.id === editingLoreEntryId && entry.alwaysOn)) ||
+    !keywords.length ||
     !content
   ){
     showNotice(
