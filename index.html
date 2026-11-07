@@ -19402,12 +19402,15 @@ organizedCard：
 streamerName：
 角色在直播平台公開使用的主播名／活動名。
 除非卡片已明確指定公開活動名，請創作獨立的網名／藝名；不可直接使用本名或截取其中一兩個字。
-若角色明顯會使用藝名、暱稱、網名或 VTuber 名稱，請替他建立合理名稱。
-除非卡片明確指定，活動名不可只截取本名的一個字或兩個字；要依角色意象構思獨立、自然且有辨識度的名稱。
+請像替一位真實創作者取名：依性格、語氣、喜好與審美構思，名字要有個性、自然順口，不是角色履歷或職業說明。
+不要為了避開本名，就改用本名字音的日文讀法、拼音或羅馬字；也不要一律改成短英文名。
+可用中文、外文或混合形式，選擇須符合角色語境；不要強行日文化、英文化，不強制字數。
+請先在內部比較幾個不同方向，挑最像角色會自取的名稱，只輸出最後一個，不輸出候選或理由。
 
 channel：
 頻道名稱。
-STARWAVE 的公開直播舞台固定是現代世界。請取簡短自然、像現代創作者使用的頻道名稱，可以呼應活動名；不要堆疊「雜記與某某鑑定室」等職業說明。
+STARWAVE 的公開直播舞台固定是現代世界。頻道名稱要像創作者自己選的自然品牌，可以直接使用活動名，也可以是獨立但相關的名稱；不必強行多加後綴。
+不要固定套「英文名's Archive／Studio／Channel」或「某某雜記與某某鑑定室」等通用模板；名稱應有角色自己的口吻，不是內容清單或制式資料庫名稱。
 所有非現代寫實世界的設定，包含但不限於吸血鬼、靈能力、超能力、魔法、末日、異世界、精靈、天使、惡魔、星際種族與架空機構，一律視為 VTuber 的人設／RP 背景。
 這些設定可以保留在私人卡片，也可以在直播中以人設 RP 的口吻自然提起；不代表要刪掉角色特色或禁止聊人設。
 但不得把種族、能力、虛構職業或原世界事件直接寫成頻道主題或主要直播內容：不能列「超能力展示、末日求生實況、天使審判、惡魔召喚、靈術構造解析、靈鳥觀察」等。
@@ -19416,8 +19419,9 @@ STARWAVE 的公開直播舞台固定是現代世界。請取簡短自然、像�
 liveId：
 STARWAVE 直播帳號 ID。
 必須以 @ 開頭。
-請建立簡短自然、像網路帳號的 ID。
-不要機械地直接使用角色全名。
+請獨立構思簡短自然、容易記住的帳號，可用有意思的單字組合、語音趣味或個人偏好。
+不要機械地直接使用角色全名，也不要把頻道名稱去掉空白再加底線當 ID。不要每人都套「活動名_Archive／Studio／Official」模板。
+ID 和活動名可以相關，但各自要像人會使用的名稱，不強迫字面完全相同。
 
 snsId：
 SNS 帳號 ID。
@@ -19541,16 +19545,19 @@ async function generateImportedCharacterProfile(
       profileIndex:state.api.active,
       prompt:buildImportedCharacterProfilePrompt(raw) +
         "\n上次活動名不合格：" + JSON.stringify(generated.streamerName) +
-        "。請重新取獨立活動名，禁止使用本名或本名一兩字片段。頻道和內容必須能在現代世界進行。只輸出 JSON：{\"streamerName\":\"\",\"channel\":\"\",\"content\":\"\"}。",
+        "。請重新取獨立活動名，禁止使用本名或本名一兩字片段。頻道和內容必須能在現代世界進行。活動名、頻道名和兩個 ID 要重新一起構思，避免沿用舊活動名造成不一致。只輸出 JSON：{\"streamerName\":\"\",\"channel\":\"\",\"liveId\":\"\",\"snsId\":\"\",\"content\":\"\"}。",
       json:true
     });
     const revised = parseStarwaveLlmJson(correction.text);
     if(invalidAlias(revised.streamerName) ||
-      !String(revised.channel || "").trim() || !String(revised.content || "").trim()){
+      !String(revised.channel || "").trim() || !String(revised.content || "").trim() ||
+      !String(revised.liveId || "").trim() || !String(revised.snsId || "").trim()){
       throw new Error("模型未產生合適的獨立活動名與現代頻道資料，請重試匯入。");
     }
     generated.streamerName = revised.streamerName;
     generated.channel = revised.channel;
+    generated.liveId = revised.liveId;
+    generated.snsId = revised.snsId;
     generated.content = revised.content;
   }
   return generated;
