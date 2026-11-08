@@ -13199,17 +13199,23 @@ function roleLiveTimeConflict(title,startedAt,usesRealTime=realTimeEnabled()){
   if(/午間|中午/.test(value) && (hour < 11 || hour >= 15)) return true;
   return /傍晚/.test(value) && (hour < 16 || hour >= 21);
 }
-function roleLiveSceneFor(title,startedAt,usesRealTime=realTimeEnabled(),topic=""){
+function roleLiveSceneFor(title,startedAt,usesRealTime=realTimeEnabled(),topic="",currentId="",previousId=""){
   const value = `${title || ""} ${topic || ""}`;
   const hour = new Date(startedAt).getHours();
   const night = usesRealTime ? hour < 6 || hour >= 18 : /深夜|夜景|夜間|午夜|凌晨/.test(value);
-  if(/酒吧|酒館|酒雜|喝酒|飲酒/.test(value)) return night ? "nightRoom" : "studio";
-  if(/咖啡|甜點|下午茶/.test(value)) return "cafe";
-  if(/夜景|天臺|屋頂/.test(value)) return night ? "rooftop" : "studio";
-  if(/遊戲|PvP|ゲーム/i.test(value)) return "gaming";
-  if(/戶外|漫遊|探店|街頭|城市|公園|散步/.test(value)) return "studio";
-  if(/ASMR|睡|晚安/.test(value)) return night ? "nightRoom" : "studio";
-  return night ? "nightRoom" : "brightRoom";
+  let candidates;
+  if(/酒吧|酒館|酒雜|喝酒|飲酒/.test(value)) candidates = night ? ["nightRoom","studio"] : ["studio","living"];
+  else if(/咖啡|甜點|下午茶/.test(value)) candidates = ["cafe"];
+  else if(/夜景|天臺|屋頂/.test(value)) candidates = night ? ["rooftop"] : ["studio"];
+  else if(/遊戲|PvP|ゲーム/i.test(value)) candidates = night ? ["gaming","nightRoom","studio"] : ["gaming","studio"];
+  else if(/戶外|漫遊|探店|街頭|城市|公園|散步/.test(value)) candidates = ["studio"];
+  else if(/ASMR|睡|晚安/.test(value)) candidates = night ? ["nightRoom","studio"] : ["studio","living"];
+  else candidates = night ? ["nightRoom","studio"] : ["brightRoom","studio","living"];
+  // 補標題時，仍符合主題的既有背景保持不變。
+  if(candidates.includes(currentId)) return currentId;
+  const alternatives = candidates.filter(id => id !== previousId);
+  const pool = alternatives.length ? alternatives : candidates;
+  return pool[Math.floor(Math.random()*pool.length)];
 }
 function roleLiveSceneMode(character){
   if(character.sceneMode === "custom" || character.sceneMode === "mixed"){
@@ -13221,15 +13227,14 @@ function roleLiveSceneMode(character){
 }
 
 function roleLiveSceneIdFor(character,title,startedAt,usesRealTime,topic,mode=roleLiveSceneMode(character)){
-  const builtInId = roleLiveSceneFor(title,startedAt,usesRealTime,topic);
+  const previousId = character.liveHistory?.[0]?.sceneId || "";
   const scenes = character.customScenes || [];
-  if(!scenes.length) return builtInId;
-  const seed = Math.abs(
-    Number(startedAt || 0) +
-    [...String(character.id || "")].reduce((sum,char) => sum + char.charCodeAt(0),0)
-  );
-  if(mode === "mixed" && seed % 2 === 0) return builtInId;
-  return scenes[Math.floor(seed / 2) % scenes.length].id;
+  if(!scenes.length || (mode === "mixed" && Math.random() < .5)){
+    return roleLiveSceneFor(title,startedAt,usesRealTime,topic,"",previousId);
+  }
+  const alternatives = scenes.filter(scene => scene.id !== previousId);
+  const pool = alternatives.length ? alternatives : scenes;
+  return pool[Math.floor(Math.random()*pool.length)].id;
 }
 
 function roleLiveOnBreak(character,tickAt){
@@ -13305,11 +13310,11 @@ async function enrichRoleLiveTitle(character, startedAt, topic){
       character.liveTitle = resolvedTitle;
       character.liveFocus = topic;
       if(!(character.customScenes || []).some(scene => scene.id === character.sceneId))
-        character.sceneId = roleLiveSceneFor(resolvedTitle,startedAt,character.liveUsesRealTime,topic);
+        character.sceneId = roleLiveSceneFor(resolvedTitle,startedAt,character.liveUsesRealTime,topic,character.sceneId);
     }else{
       archived.title = resolvedTitle;
       if(!(character.customScenes || []).some(scene => scene.id === archived.sceneId))
-        archived.sceneId = roleLiveSceneFor(resolvedTitle,startedAt,archived.realTimeAtStart,topic);
+        archived.sceneId = roleLiveSceneFor(resolvedTitle,startedAt,archived.realTimeAtStart,topic,archived.sceneId);
     }
     renderExplore();
     renderSubscriptions();
@@ -13372,7 +13377,7 @@ async function enrichRoleLiveHistoryTitles(){
         const topic = record.title;
         record.title = title;
         if(!(character.customScenes || []).some(scene => scene.id === record.sceneId))
-          record.sceneId = roleLiveSceneFor(title,record.startedAt,record.realTimeAtStart,topic);
+          record.sceneId = roleLiveSceneFor(title,record.startedAt,record.realTimeAtStart,topic,record.sceneId);
         changed = true;
       });
       if(changed){
