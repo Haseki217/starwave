@@ -9929,6 +9929,7 @@ $("preLiveShopItems")
 renderBackstage();
 
 state.live.started = true;
+clearOtherLiveDrafts();
 state.live.startedWithRealTime = realTimeEnabled();
 state.live.lastActivityAt = Date.now();
 state.live.awayContext = "";
@@ -10240,7 +10241,7 @@ function liveCreatorVisitors(hostId,title,collabIds=[],voiceContext=""){
   const callIn = callInTitle.test(String(title || "")) ||
     /(?:開始|開放|正在|進行|等候).{0,24}(?:凸待|來電|上麥|合唱|一起唱歌)|(?:等人|邀請).{0,12}(?:唱歌|合唱)/i.test(String(voiceContext || ""));
   const candidates = state.characters
-    .filter(character => character.id !== hostId && !collabIds.includes(character.id))
+    .filter(character => !character.live && character.id !== hostId && !collabIds.includes(character.id))
     .map(character => {
       const relation = hostId === "player"
         ? character.relationship
@@ -10434,6 +10435,7 @@ ${JSON.stringify(creators)}
 
 【本回合可能來聊天室打招呼的創作者】
 ${JSON.stringify(creators.filter(item => visitors.commenterIds.includes(item.id)))}
+名單已排除正在開播的角色；不在名單的角色不得出現在聊天室，不得改用粉絲身分代替他們留言。
 
 一般直播可以只有粉絲聊天，創作者不必每次出現。
 如有創作者留言，kind 使用 "creator"，authorId 只能從本回合可能來打招呼的清單選擇；每位最多一則。
@@ -11021,7 +11023,7 @@ async function generatePlayerLiveTurn(
             )
           );
 
-        if(!character || !visitors.commenterIds.includes(character.id) ||
+        if(!character || character.live || !visitors.commenterIds.includes(character.id) ||
           visitingCreatorIds.has(character.id)){
           return;
         }
@@ -11934,6 +11936,7 @@ ${JSON.stringify(creators)}
 
 【本回合可能來聊天室打招呼的創作者】
 ${JSON.stringify(creators.filter(item => visitors.commenterIds.includes(item.id)))}
+名單已排除正在開播的角色；不在名單的角色不得出現在聊天室，不得改用粉絲身分代替他們留言。
 創作者留言可有可無；如有，authorId 僅能使用本回合名單中的 id，每位最多一則。
 已有語音連線的連動成員不用另外以聊天室留言冒充進場。
 不得自行創造角色 id。
@@ -12386,7 +12389,7 @@ async function generateRoleLiveNext(
           );
 
 
-        if(!creator || creator.id === character.id ||
+        if(!creator || creator.live || creator.id === character.id ||
           !visitors.commenterIds.includes(creator.id) ||
           (hasGuest && creator.id === guest.id) ||
           visitingCreatorIds.has(creator.id)){
@@ -12582,9 +12585,17 @@ async function generateRoleLiveNext(
 
     button.textContent =
       oldButtonText;
-    $("sendRoleLiveComment").disabled = false;
-    $("sendRoleDonation").disabled = false;
+    $("sendRoleLiveComment").disabled = Boolean(state.live.started);
+    $("sendRoleDonation").disabled = Boolean(state.live.started);
   }
+}
+
+function clearOtherLiveDrafts(){
+  for(const id of ["roleLiveComment","roleDonationMessage","roleDonationCustom"]){
+    $(id).value = "";
+  }
+  selectedDonationAmount = 0;
+  updateDonationPresetSelection();
 }
 
 function renderRoleLive(){
@@ -12608,7 +12619,14 @@ function renderRoleLive(){
   $("refreshRoleLive").hidden = Boolean(replay);
   $("rememberRoleLive").hidden = Boolean(replay);
   $("roleLiveComment").closest(".role-viewer-input").hidden = Boolean(replay);
-  $("roleDonationCustom").closest(".donation-panel").hidden = Boolean(replay);
+  if(state.live.started) clearOtherLiveDrafts();
+  $("roleLiveComment").disabled = Boolean(state.live.started);
+  $("sendRoleLiveComment").disabled = Boolean(state.live.started) || $("refreshRoleLive").disabled;
+  $("roleLiveComment").placeholder = state.live.started ? "直播中暫停其他直播的留言" : "在聊天室留言……";
+  $("roleDonationMessage").disabled = Boolean(state.live.started);
+  $("roleDonationMessage").placeholder = "打賞附言（選填）";
+  $("sendRoleDonation").disabled = Boolean(state.live.started) || $("refreshRoleLive").disabled;
+  $("roleDonationCustom").closest(".donation-panel").hidden = Boolean(replay) || Boolean(state.live.started);
 
   const collabNames =
     (
@@ -12793,6 +12811,11 @@ $("sendRoleLiveComment").onclick = () => {
   const character =
     getCharacter(currentRoleLiveId);
   if(currentRoleLiveReplay) return;
+  if(state.live.started){
+    clearOtherLiveDrafts();
+    showNotice("目前正在直播","結束自己的直播後，才能到其他直播留言或打賞。");
+    return;
+  }
 
   const text =
     $("roleLiveComment").value.trim();
@@ -12848,6 +12871,11 @@ $("sendRoleDonation").onclick = () => {
   if(!character || currentRoleLiveReplay){
     return;
   }
+  if(state.live.started){
+    clearOtherLiveDrafts();
+    showNotice("目前正在直播","結束自己的直播後，才能到其他直播留言或打賞。");
+    return;
+  }
 
   if(state.economy.mode === "off"){
     showNotice(
@@ -12875,9 +12903,7 @@ $("sendRoleDonation").onclick = () => {
     return;
   }
 
-  const message =
-    $("roleDonationMessage").value.trim() ||
-    "支持直播！";
+  const message = $("roleDonationMessage").value.trim() || "支持直播！";
 
   state.economy.wallet -= amount;
 
