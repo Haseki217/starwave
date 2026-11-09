@@ -7269,6 +7269,7 @@ live:{
   stageEntries:[],
   chat:[],
   lastText:"",
+  draft:"",
   collabIds:[],
   collabRoomId:"",
   activeShopItemIds:[],
@@ -10874,6 +10875,8 @@ async function generatePlayerLiveTurn(
   const undoRecord =
     captureLiveUndoSnapshot(text);
 
+  state.live.draft = text;
+  scheduleStarwaveSave();
   setLiveTurnButtonsDisabled(true);
 
   toast(
@@ -10885,8 +10888,9 @@ async function generatePlayerLiveTurn(
   try{
 
     const generationEpoch = rpGenerationEpoch;
-    const result =
-      await generateWithApi({
+    let liveTimeout;
+    const result = await Promise.race([
+      generateWithApi({
 
         profileIndex:
           state.api.active,
@@ -10904,7 +10908,14 @@ async function generatePlayerLiveTurn(
 請依指定格式輸出有效 JSON。`,
 
         json:true
-      });
+      }),
+      new Promise((_, reject) => {
+        liveTimeout = setTimeout(
+          () => reject(new Error("AI 回應逾時，請稍後再送出。輸入內容已保留。")),
+          120000
+        );
+      })
+    ]).finally(() => clearTimeout(liveTimeout));
 
     if(generationEpoch !== rpGenerationEpoch) return false;
 
@@ -11133,7 +11144,10 @@ async function generatePlayerLiveTurn(
       }
     }
 
-    $("liveInput").value = "";
+    if($("liveInput").value.trim() === text){
+      $("liveInput").value = "";
+      state.live.draft = "";
+    }
 
     syncLive();
     renderLiveChat();
@@ -11176,8 +11190,9 @@ async function generatePlayerLiveTurn(
       error
     );
 
-    $("liveInput").value =
-      text;
+    if(!$("liveInput").value.trim()) $("liveInput").value = text;
+    state.live.draft = $("liveInput").value;
+    scheduleStarwaveSave();
 
     showNotice(
       reroll
@@ -11191,6 +11206,11 @@ async function generatePlayerLiveTurn(
     setLiveTurnButtonsDisabled(false);
   }
 }
+
+$("liveInput").addEventListener("input", () => {
+  state.live.draft = $("liveInput").value;
+  scheduleStarwaveSave();
+});
 
 $("sendLive").onclick = async () => {
   const text =
@@ -27779,6 +27799,7 @@ character.liveOfflineTurns =
 
   $("liveInput").value =
     "";
+  state.live.draft = "";
 
   $("wlInput").value =
     "";
@@ -28094,6 +28115,7 @@ async function init(){
   starwavePersistenceReady = true;
 
   fullRender();
+  $("liveInput").value = String(state.live.draft || "");
 
   scheduleStarwaveSave();
   await starwaveSync.init();
