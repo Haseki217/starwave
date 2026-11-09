@@ -12687,7 +12687,6 @@ function renderRoleLive(){
 
   $("roleLiveTitle").textContent =
     sanitizePublicText(replay ? replay.title : character.liveTitle);
-  $("roleLiveStatusTag").textContent = replay ? "重播" : "LIVE";
   const progress = replay ? roleReplayProgress(replay) : null;
   const ending = Boolean(replay && currentRoleLiveReplay.showEnding);
   $("refreshRoleLive").hidden = false;
