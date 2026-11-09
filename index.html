@@ -9934,6 +9934,7 @@ $("preLiveShopItems")
 
 renderBackstage();
 
+invalidatePlayerLiveRequest();
 state.live.started = true;
 clearOtherLiveDrafts();
 state.live.startedWithRealTime = realTimeEnabled();
@@ -10827,10 +10828,25 @@ function setLiveTurnButtonsDisabled(disabled){
   });
 }
 
+let playerLiveSession = 0;
+let playerLiveRequest = 0;
+
+function invalidatePlayerLiveRequest(){
+  playerLiveSession++;
+  playerLiveRequest++;
+  setLiveTurnButtonsDisabled(false);
+}
+
 async function generatePlayerLiveTurn(
   inputText,
   options={}
 ){
+  if($("sendLive").disabled) return false;
+  const generationEpoch = rpGenerationEpoch;
+  const session = playerLiveSession;
+  const request = ++playerLiveRequest;
+  const isCurrent = () => generationEpoch === rpGenerationEpoch &&
+    session === playerLiveSession && request === playerLiveRequest && state.live.started;
   const reroll =
     Boolean(options.reroll);
 
@@ -10887,10 +10903,7 @@ async function generatePlayerLiveTurn(
 
   try{
 
-    const generationEpoch = rpGenerationEpoch;
-    let liveTimeout;
-    const result = await Promise.race([
-      generateWithApi({
+    const result = await generateWithApi({
 
         profileIndex:
           state.api.active,
@@ -10908,16 +10921,9 @@ async function generatePlayerLiveTurn(
 請依指定格式輸出有效 JSON。`,
 
         json:true
-      }),
-      new Promise((_, reject) => {
-        liveTimeout = setTimeout(
-          () => reject(new Error("AI 回應逾時，請稍後再送出。輸入內容已保留。")),
-          120000
-        );
-      })
-    ]).finally(() => clearTimeout(liveTimeout));
+      });
 
-    if(generationEpoch !== rpGenerationEpoch) return false;
+    if(!isCurrent()) return false;
 
     const data =
       parseStarwaveLlmJson(
@@ -11184,6 +11190,7 @@ async function generatePlayerLiveTurn(
     );
 
   }catch(error){
+    if(!isCurrent()) return false;
 
     console.error(
       "STARWAVE live generation failed:",
@@ -11203,7 +11210,7 @@ async function generatePlayerLiveTurn(
     );
 
   }finally{
-    setLiveTurnButtonsDisabled(false);
+    if(request === playerLiveRequest) setLiveTurnButtonsDisabled(false);
   }
 }
 
@@ -11381,6 +11388,7 @@ $("endLive").onclick = () => {
     okText:"結束直播",
 
     onConfirm(){
+      invalidatePlayerLiveRequest();
       const collabRoom =
         getRoom(
           state.live.collabRoomId
@@ -13044,6 +13052,7 @@ let peerLifeGenerating = false;
 let peerLifeEpoch = 0;
 let rpGenerationEpoch = 0;
 function invalidateRpGenerations(){
+  invalidatePlayerLiveRequest();
   rpGenerationEpoch++;
   peerLifeEpoch++;
 }
@@ -25928,6 +25937,7 @@ async function generateGeminiText(
     systemInstruction = "",
     maxTokens = null,
     temperature = null,
+    signal,
     json = false
   } = {}
 ){
@@ -26043,6 +26053,7 @@ async function generateGeminiText(
 
       {
         method:"POST",
+        signal,
 
         headers:{
           "Content-Type":
@@ -26201,6 +26212,7 @@ async function generateDirectChatText(
     systemInstruction = "",
     maxTokens = null,
     temperature = null,
+    signal,
     json = false
   } = {}
 ){
@@ -26344,6 +26356,7 @@ async function generateDirectChatText(
       config.chatUrl,
       {
         method:"POST",
+        signal,
 
         headers:{
           "Content-Type":
@@ -26428,6 +26441,7 @@ async function generateProxyText(
     systemInstruction = "",
     maxTokens = null,
     temperature = null,
+    signal,
     json = false
   } = {}
 ){
@@ -26498,6 +26512,7 @@ async function generateProxyText(
 
       {
         method:"POST",
+        signal,
 
         headers:{
           "Content-Type":
@@ -26633,6 +26648,11 @@ async function generateWithApi({
   }
 
 
+  const controller = new AbortController();
+  let timeout;
+  try{
+    return await Promise.race([
+      (async () => {
   /* Gemini */
 
   if(
@@ -26647,7 +26667,8 @@ async function generateWithApi({
         systemInstruction,
         maxTokens,
         temperature,
-        json
+        json,
+        signal:controller.signal
       }
     );
   }
@@ -26670,7 +26691,8 @@ async function generateWithApi({
         systemInstruction,
         maxTokens,
         temperature,
-        json
+        json,
+        signal:controller.signal
       }
     );
   }
@@ -26691,7 +26713,8 @@ async function generateWithApi({
         systemInstruction,
         maxTokens,
         temperature,
-        json
+        json,
+        signal:controller.signal
       }
     );
   }
@@ -26700,6 +26723,17 @@ async function generateWithApi({
   throw new Error(
     `不支援的 API 供應商：${profile.provider}`
   );
+      })(),
+      new Promise((_,reject) => {
+        timeout = setTimeout(() => {
+          reject(new Error("AI 回應逾時，請稍後重試。"));
+          controller.abort();
+        },120000);
+      })
+    ]);
+  }finally{
+    clearTimeout(timeout);
+  }
 }
 
 
@@ -27445,7 +27479,8 @@ async event => {
       "memorySettings",
       "offline",
       "moderation",
-      "sync"
+      "timeSettings",
+      "liveTextColors"
     ];
 
     replaceKeys.forEach(key => {
@@ -27464,7 +27499,8 @@ async event => {
       "forumPosts",
       "snsPosts",
       "memories",
-      "lorebooks"
+      "lorebooks",
+      "fanAccounts"
     ];
 
     arrayKeys.forEach(key => {
@@ -27504,16 +27540,13 @@ async event => {
       state.theme = imported.theme;
     }
 
-    if(
-      state.currentWavelink &&
-      !getRoom(state.currentWavelink)
-    ){
-      state.currentWavelink =
-        state.wavelinkRooms[0]?.id ||
-        null;
+    for(const key of ["selectedLorebookId","selectedCharacter","currentWavelink"]){
+      if(Object.prototype.hasOwnProperty.call(imported,key)) state[key] = imported[key];
     }
-
+    if(!getRoom(state.currentWavelink)) state.currentWavelink = state.wavelinkRooms[0]?.id || null;
     fullRender();
+    $("liveInput").value = String(state.live.draft || "");
+    await saveStarwaveState(state);
 
     toast("STARWAVE 備份已匯入");
   }catch{
