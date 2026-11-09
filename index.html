@@ -6274,6 +6274,11 @@ body[data-theme="halloween"] .live-stage{
         class="role-live-story"
       ></div>
 
+      <div id="roleReplayEnding" class="role-live-story" hidden>
+        <h3>直播已結束</h3>
+        <p>感謝收看，我們下次見。</p>
+      </div>
+
     </div>
 
     <div class="role-live-body">
@@ -11578,46 +11583,98 @@ async function openRoleLive(id){
   }
 }
 
+function roleReplayProgress(record){
+  const realTime = Boolean(record.realTimeAtStart);
+  const duration = realTime
+    ? (Number(record.endedAt) - Number(record.startedAt)) / 60000
+    : Number(record.endedRpTurn) - Number(record.startedRpTurn);
+  const story = record.liveStory || [];
+  // 舊資料缺少時長時，保留所有內容，至少留一段收尾。
+  const total = Number.isFinite(duration) && duration > 0
+    ? Math.max(1,Math.ceil(realTime ? duration / 7.5 : duration))
+    : Math.max(1,story.length + 1);
+  const last = story.at(-1);
+  const elapsed = realTime ? last?.elapsedMinutes : last?.elapsedTurns;
+  const inferred = Number.isFinite(elapsed)
+    ? Math.max(story.length,Math.ceil(realTime ? elapsed / 7.5 : elapsed))
+    : story.length;
+  const cursor = Number.isFinite(record.replayCursor)
+    ? record.replayCursor
+    : Math.min(total - 1,inferred);
+  return {
+    total,
+    cursor:Math.max(0,Math.min(total,Math.trunc(cursor))),
+    complete:Boolean(record.replayComplete),
+    duration:Number.isFinite(duration) && duration > 0 ? duration : total * (realTime ? 7.5 : 1)
+  };
+}
+
 async function openRoleLiveReplay(characterId,recordId){
   const character = getCharacter(characterId);
   const record = character?.liveHistory?.find(item => item.id === recordId);
   if(!character || !record || roleReplayGenerating) return;
   currentRoleLiveId = "";
-  currentRoleLiveReplay = {characterId,record};
+  currentRoleLiveReplay = {characterId,record,showEnding:false};
   $("roleLiveOverlay").hidden = false;
   renderRoleLive();
+  if(!record.liveStory?.length) await continueRoleLiveReplay();
+}
 
-  if(record.liveStory?.length) return;
+async function continueRoleLiveReplay(){
+  const selection = currentRoleLiveReplay;
+  const character = getCharacter(selection?.characterId);
+  const record = selection?.record;
+  if(!character || !record || roleReplayGenerating || $("refreshRoleLive").disabled) return;
+  const progress = roleReplayProgress(record);
+  if(progress.complete){
+    selection.showEnding = !selection.showEnding;
+    renderRoleLive();
+    return;
+  }
+
+  const next = Math.min(progress.total,progress.cursor + 1);
+  const finalSegment = next === progress.total;
+  const epoch = rpGenerationEpoch;
   roleReplayGenerating = true;
-  $("roleLiveStory").textContent = "正在載入這場直播……";
+  const playback = {
+    ...character,
+    liveTitle:record.title,
+    livePublicDiscussion:publicLiveDiscussion(record.id),
+    sceneId:record.sceneId,
+    liveStory:deepClone(record.liveStory || []),
+    liveChat:deepClone(record.liveChat || []),
+    liveCollabIds:record.collabIds || [],
+    liveCollabRoomId:"",
+    liveTurn:progress.cursor,
+    lastViewerAction:"",
+    viewers:0,
+    peak:record.peak || 0,
+    isReplayGeneration:true,
+    liveFocus:record.title,
+    liveStartedAt:record.startedAt,
+    liveStartedTurn:record.startedRpTurn,
+    liveUsesRealTime:Boolean(record.realTimeAtStart),
+    liveReplayElapsedMinutes:record.realTimeAtStart ? Math.min(progress.duration,(next - 1)*7.5) : 0,
+    liveReplayElapsedTurns:record.realTimeAtStart ? 0 : next - 1,
+    liveReplaySegment:next,
+    liveReplayTotal:progress.total,
+    liveReplayFinal:finalSegment,
+    liveReplayDuration:progress.duration
+  };
   try{
-    const playback = {
-      ...character,
-      liveTitle:record.title,
-      livePublicDiscussion:publicLiveDiscussion(record.id),
-      sceneId:record.sceneId,
-      liveStory:[],
-      liveChat:[],
-      liveCollabIds:record.collabIds || [],
-      liveTurn:0,
-      lastViewerAction:"",
-      viewers:0,
-      peak:record.peak || 0,
-      isReplayGeneration:true,
-      liveFocus:record.title,
-      liveUsesRealTime:Boolean(record.realTimeAtStart),
-      liveReplayElapsedMinutes:Math.max(0,Math.floor((record.endedAt-record.startedAt)/120000)),
-      liveReplayElapsedTurns:Math.max(0,Math.floor((record.endedRpTurn-record.startedRpTurn)/2))
-    };
-    if(await generateRoleLiveNext(playback,true)){
-      record.liveStory = deepClone(playback.liveStory);
-      record.liveChat = deepClone(playback.liveChat);
-      record.peak = Math.max(record.peak || 0,playback.peak || 0);
+    if(await generateRoleLiveNext(playback,!playback.liveStory.length)){
+      // 清除紀錄、刪除場次或雲端換檔後，舊請求不可寫回。
+      if(epoch !== rpGenerationEpoch ||
+        !getCharacter(character.id)?.liveHistory?.includes(record)) return;
+      record.liveStory = playback.liveStory;
+      record.liveChat = playback.liveChat;
+      record.replayCursor = next;
+      record.replayComplete = finalSegment;
       scheduleStarwaveSave();
     }
   }finally{
     roleReplayGenerating = false;
-    if(currentRoleLiveReplay?.record === record) renderRoleLive();
+    if(currentRoleLiveReplay === selection) renderRoleLive();
   }
 }
 
@@ -11633,7 +11690,7 @@ function buildRoleLiveAiPrompt(
     ? character.liveReplayElapsedTurns
     : Math.max(0,Number(state.timeSettings.rpTurnCount || 0) - Number(character.liveStartedTurn || 0));
   const elapsedLabel = character.isReplayGeneration
-    ? "這場直播已結束"
+    ? (character.liveUsesRealTime ? `重播進度：約 ${elapsedMinutes} 分鐘` : `重播進度：第 ${character.liveReplaySegment} 段`)
     : character.liveUsesRealTime
       ? `約 ${elapsedMinutes} 分鐘`
       : `約 ${elapsedTurns} 個 RP 回合`;
@@ -11775,7 +11832,7 @@ function buildRoleLiveAiPrompt(
       .filter(Boolean);
 
   const collabViews =
-    collabIds
+    (character.isReplayGeneration ? [] : collabIds)
       .map(id => {
         if(id === "player"){
           return {
@@ -11821,6 +11878,7 @@ function buildRoleLiveAiPrompt(
     );
 
   const playerLiveShopItems =
+    !character.isReplayGeneration &&
     collabIds.includes("player") &&
     state.live.started
       ? activePlayerLiveShopContext()
@@ -11918,7 +11976,11 @@ Lorebook 是公開背景與世界設定資料，
 已開播：${elapsedLabel}
 距離上次生成的直播內容：${character.isReplayGeneration ? "正在觀看歷史直播" : character.liveUsesRealTime ? `約 ${sinceLastContentMinutes} 分鐘` : "依 RP 回合推進"}
 是否為本場首次儲存內容：${first ? "是" : "否"}
-${character.isReplayGeneration ? "這是已結束直播的重播。依本場標題、場景及已公開的同場討論還原當時內容；不能沿用角色目前其他直播的題材或方向。" : ""}
+${character.isReplayGeneration ? `這是已結束直播的重播。依本場標題、場景及已公開的同場討論還原當時內容；不能沿用角色目前其他直播的題材或方向。
+本次是第 ${character.liveReplaySegment} 段，全場共 ${character.liveReplayTotal} 段。總長度：${character.liveUsesRealTime ? `約 ${character.liveReplayDuration} 分鐘` : `${character.liveReplayDuration} 個 RP 回合`}。這些數字只供安排進度，不得讓主播說出 RP 回合或生成段數。
+保留已發生的事件與對話，接續最近一段，不得改寫已保存內容或重新演一次開場。完全沒有已保存內容且進度為第一段時，才從開播開始。
+${character.liveReplayFinal ? "這是全場最後一段。必須自然完成當下話題、準備結束直播，以符合主播個性的道別（如掰掰或下次見）收尾，並確實結束本場。不得又開啟新話題、表示還要繼續播，或省略道別。若全場僅一段，在本段交代內容並完成收尾。" : "這一段尚未到結束時間。正常推進本場內容，不要提前道別或結束直播。"}
+當時的完整事件必須與下方已公開討論一致；尚未出現的重要同場事件要分配到剩餘段落，在最後一段前交代完成。` : ""}
 ${character.isReplayGeneration ? `【這場直播已公開的論壇與 SNS 討論】
 ${JSON.stringify(character.livePublicDiscussion || [])}
 社群裡已明確提到的同場事件、話題或台詞，必須能在重播中合理對上；猜測、問句與玩笑不能直接當成確定事實。` : ""}
@@ -11976,7 +12038,7 @@ ${JSON.stringify(playerLiveShopItems)}
 - 不得因連動企劃用品改變角色的連動意願或同意狀態。
 
 【本場主播對連動成員的私人關係認知】
-${JSON.stringify(Object.fromEntries(collabIds.filter(id => id !== "player")
+${JSON.stringify(Object.fromEntries((character.isReplayGeneration ? [] : collabIds).filter(id => id !== "player")
   .map(id => [id,peerRelationshipFor(character.id,id)]).filter(([,summary]) => summary)))}
 這只用來決定自然互動與語氣，不得把私下往來或關係摘要直接公開。
 
@@ -12229,6 +12291,10 @@ async function generateRoleLiveNext(
   try{
 
     const generationEpoch = rpGenerationEpoch;
+    const contentAt = Date.now();
+    const contentRpTurn = Number(state.timeSettings.rpTurnCount || 0);
+    const contentStartedAt = character.liveStartedAt;
+    const contentStartedTurn = Number(character.liveStartedTurn || 0);
     const result =
       await generateWithApi({
 
@@ -12254,6 +12320,8 @@ async function generateRoleLiveNext(
 
 
     if(generationEpoch !== rpGenerationEpoch) return false;
+    if(!character.isReplayGeneration &&
+      (!character.live || character.liveStartedAt !== contentStartedAt)) return false;
 
     const data =
       parseStarwaveLlmJson(
@@ -12310,7 +12378,13 @@ async function generateRoleLiveNext(
 
     character.liveStory.push({
       id:uid("segment"),
-      text:storyText
+      text:storyText,
+      elapsedMinutes:character.isReplayGeneration
+        ? character.liveReplayElapsedMinutes
+        : Math.max(0,(contentAt - Number(contentStartedAt || contentAt)) / 60000),
+      elapsedTurns:character.isReplayGeneration
+        ? character.liveReplayElapsedTurns
+        : Math.max(0,contentRpTurn - contentStartedTurn)
     });
     if(!character.isReplayGeneration) applyRoleLiveBreak(character,stageText,data.liveBreak);
     if(!character.isReplayGeneration) character.liveLastGeneratedAt = Date.now();
@@ -12326,9 +12400,7 @@ async function generateRoleLiveNext(
     }
 
 
-    character.liveStory =
-      character.liveStory
-        .slice(-6);
+    // 完整保存已觀看的內容；提示詞仍只帶近期六段，避免每次傳送整場。
 
 
     character.viewers =
@@ -12616,7 +12688,19 @@ function renderRoleLive(){
   $("roleLiveTitle").textContent =
     sanitizePublicText(replay ? replay.title : character.liveTitle);
   $("roleLiveStatusTag").textContent = replay ? "重播" : "LIVE";
-  $("refreshRoleLive").hidden = Boolean(replay);
+  const progress = replay ? roleReplayProgress(replay) : null;
+  const ending = Boolean(replay && currentRoleLiveReplay.showEnding);
+  $("refreshRoleLive").hidden = false;
+  if(!$("refreshRoleLive").disabled){
+    $("refreshRoleLive").textContent = replay
+      ? progress.complete
+        ? (ending ? "返回直播內容" : "觀看結束畫面")
+        : "繼續觀看／下一段"
+      : "繼續直播內容／下一段";
+  }
+  $("roleLiveStory").hidden = ending;
+  $("roleReplayEnding").hidden = !ending;
+  $("roleLiveStatusTag").textContent = ending ? "直播已結束" : replay ? "重播" : "LIVE";
   $("rememberRoleLive").hidden = Boolean(replay);
   $("roleLiveComment").closest(".role-viewer-input").hidden = Boolean(replay);
   if(state.live.started) clearOtherLiveDrafts();
@@ -12791,16 +12875,12 @@ $("rememberRoleLive").onclick = async () => {
 $("refreshRoleLive").onclick =
   async () => {
 
-    const character =
-      getCharacter(
-        currentRoleLiveId
-      );
-
-
-    if(!character || currentRoleLiveReplay){
+    if(currentRoleLiveReplay){
+      await continueRoleLiveReplay();
       return;
     }
-
+    const character = getCharacter(currentRoleLiveId);
+    if(!character) return;
 
     await generateRoleLiveNext(
       character
