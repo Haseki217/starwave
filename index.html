@@ -4384,6 +4384,10 @@ body[data-theme="halloween"] .live-stage{
         ← 返回討論列表
       </button>
 
+      <button id="refreshForumReplies" class="secondary" type="button">
+        更新本串回覆
+      </button>
+
       <h2 id="forumDetailTitle"></h2>
 
       <div id="forumOp"></div>
@@ -21860,6 +21864,7 @@ $("forumBack").onclick = () => {
 const publicReplyPending = new Set();
 
 async function respondToPublicInteraction(kind, post, playerText, parentId=null){
+  const refreshThread = kind === "forum" && playerText === null;
   if(state.refresh[kind] === "off") return;
   const key = kind + ":" + post.id;
   if(publicReplyPending.has(key)) return;
@@ -21871,8 +21876,18 @@ async function respondToPublicInteraction(kind, post, playerText, parentId=null)
     const context = kind === "sns"
       ? {text:sanitizePublicText(post.text), comments:(post.comments || []).slice(-6).map(item => ({id:item.id,author:publicAuthor(item.authorId,item.author),text:sanitizePublicText(item.text)}))}
       : {title:sanitizePublicText(post.title),body:sanitizePublicText(post.body),replies:(post.replies || []).slice(-6).map(item => ({id:item.id,author:publicAuthor(item.authorId,item.author),text:sanitizePublicText(item.text)}))};
-    const result = await generateWithApi({
-      prompt:`你正在模擬 STARWAVE 的公開${kind === "sns" ? "SNS" : "論壇"}。
+    const prompt = refreshThread
+      ? `你正在替 STARWAVE 的一篇公開論壇討論串補充新的回覆。
+${publicTaiwanLanguageRules()}
+${publicCreatorFamiliarityRules()}
+公開討論串：${JSON.stringify({...context,author:publicAuthor(post.authorId,post.author)})}
+可用公開帳號：${JSON.stringify(authors)}
+黑粉強度：${state.community.blackfan}%；柔和社群：${state.community.soft ? "ON" : "OFF"}。
+只產生目前這篇的 1～2 則新回覆。不新建主題，不替玩家發言，不假裝玩家剛發文或留言。
+只用上面的公開內容，不使用私人角色卡、關係、私訊或線下劇情。留言要有新觀點，勿重複已有的文字或觀點。角色和粉絲都可回覆；用既有帳號時填 authorId，新粉絲則讓 authorId 留空並填 fanName 與 @ 開頭的 fanHandle。
+直接回覆主文時，replyToId 填 null、replyToQuote 留空。只有真的在接續某則既有回覆時才填它的 id，並摘錄該回覆獨有且連續至少三字的原文。不要把回應主文的內容掛在其他人的回覆下。
+只輸出有效 JSON：{"replies":[{"authorId":"","fanName":"","fanHandle":"","text":"新回覆","replyToId":null,"replyToQuote":""}]}。`
+      :`你正在模擬 STARWAVE 的公開${kind === "sns" ? "SNS" : "論壇"}。
 玩家剛剛在下面這篇內容發言。請只生成對這次發言的自然回應，不建立新貼文或其他討論串。
 ${publicTaiwanLanguageRules()}
 ${publicCreatorFamiliarityRules()}
@@ -21884,9 +21899,8 @@ ${kind === "sns" && post.authorId === "player" ? "這是玩家自己的貼文，
 黑粉強度：${state.community.blackfan}%；柔和社群：${state.community.soft ? "ON" : "OFF"}。
 只使用公開資訊，不使用角色卡、私人關係、WAVELINK、線下故事或私人記憶。
 由有理由看到內容的角色或粉絲回應，語氣自然，不必每次都是角色本人；不要替玩家發言。正在開直播的角色不要回覆 SNS 或論壇，粉絲與未開播角色仍可回應。
-輸出有效 JSON：{"replies":[{"authorId":"既有帳號 id，若是新粉絲則留空","fanName":"新粉絲名稱或空字串","fanHandle":"@新粉絲ID或空字串","text":"回應文字"}],"likesAdded":0,"repostsAdded":0}。生成 1～2 則；只有玩家自己的 SNS 貼文才填入合理的新增按讚與轉發數，其他情況兩者都填 0。`,
-      json:true
-    });
+輸出有效 JSON：{"replies":[{"authorId":"既有帳號 id，若是新粉絲則留空","fanName":"新粉絲名稱或空字串","fanHandle":"@新粉絲ID或空字串","text":"回應文字"}],"likesAdded":0,"repostsAdded":0}。生成 1～2 則；只有玩家自己的 SNS 貼文才填入合理的新增按讚與轉發數，其他情況兩者都填 0。`;
+    const result = await generateWithApi({prompt,json:true});
     if(epoch !== rpGenerationEpoch) return;
     const stillExists = kind === "sns"
       ? state.snsPosts.includes(post)
@@ -21897,26 +21911,73 @@ ${kind === "sns" && post.authorId === "player" ? "這是玩家自己的貼文，
       post.likes = Number(post.likes || 0) + Math.min(30,snsSafeCount(data.likesAdded));
       post.reposts = Number(post.reposts || 0) + Math.min(5,snsSafeCount(data.repostsAdded));
     }
+    let added = 0;
     (Array.isArray(data.replies) ? data.replies : []).slice(0,2).forEach(raw => {
-      const author = resolveForumAiAuthor(raw,authors);
       const text = sanitizePublicAiText(String(raw?.text || "").trim());
-      if(!author || !text || characterCurrentlyLive(author.id)) return;
+      if(!text) return;
+      let replyParentId = parentId;
+      if(refreshThread){
+        if(post.replies.some(reply => sanitizePublicText(reply.text).trim() === text)) return;
+        replyParentId = null;
+        if(raw?.replyToId){
+          const quote = String(raw.replyToQuote || "").trim();
+          const matches = post.replies.filter(reply => sanitizePublicText(reply.text).includes(quote));
+          if(quote.length < 3 || context.body.includes(quote) || matches.length !== 1 ||
+            matches[0].id !== raw.replyToId || !context.replies.some(reply =>
+              reply.id === raw.replyToId && reply.text.includes(quote))) return;
+          replyParentId = raw.replyToId;
+        }
+      }
+      if(raw?.authorId === "player") return;
+      const author = resolveForumAiAuthor(raw,authors);
+      if(!author || characterCurrentlyLive(author.id)) return;
       if(kind === "sns"){
         post.comments.push({id:uid("comment"),parentId:parentId && post.comments.some(item => item.id === parentId) ? parentId : null,authorId:author.id,author:author.name,handle:author.handle,time:currentRpTimeShort(),text,likes:0,likedByPlayer:false});
       }else{
-        post.replies.push({id:uid("fr"),parentId:parentId && post.replies.some(item => item.id === parentId) ? parentId : null,authorId:author.id,author:author.name,time:currentRpTimeShort(),text});
+        post.replies.push({id:uid("fr"),parentId:replyParentId && post.replies.some(item => item.id === replyParentId) ? replyParentId : null,authorId:author.id,author:author.name,time:currentRpTimeShort(),text});
       }
+      added++;
     });
+    if(refreshThread && !added){
+      toast("這次沒有產生新的回覆，可再試一次");
+      return;
+    }
     if(kind === "sns") renderSns();
     else {renderForum();if(currentForumId === post.id) renderForumThread();}
     scheduleStarwaveSave();
   }catch(error){
     console.error("STARWAVE public reply failed:",error);
-    toast("回應暫時未完成，可稍後重試");
+    toast(refreshThread ? "本串回覆更新失敗，可稍後重試" : "回應暫時未完成，可稍後重試");
   }finally{
     publicReplyPending.delete(key);
   }
 }
+
+let refreshingForumReplyId = null;
+
+$("refreshForumReplies").onclick = async () => {
+  if(state.refresh.forum === "off"){
+    toast("論壇重整目前已關閉");
+    return;
+  }
+  const post = state.forumPosts.find(item => item.id === currentForumId);
+  if(!post) return;
+  if(publicReplyPending.has("forum:" + post.id)){
+    toast("這篇討論串正在產生回覆");
+    return;
+  }
+  const button = $("refreshForumReplies");
+  refreshingForumReplyId = post.id;
+  button.disabled = true;
+  button.textContent = "更新中……";
+  try{
+    await respondToPublicInteraction("forum",post,null);
+  }finally{
+    refreshingForumReplyId = null;
+    button.disabled = false;
+    button.textContent = "更新本串回覆";
+  }
+};
 
 $("sendForumReply").onclick = () => {
   const post =
@@ -21931,6 +21992,11 @@ $("sendForumReply").onclick = () => {
     !post ||
     !text
   ){
+    return;
+  }
+
+  if(refreshingForumReplyId === post.id){
+    toast("這篇正在更新回覆，完成後再發表");
     return;
   }
 
