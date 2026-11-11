@@ -8590,6 +8590,11 @@ $("realTimeSwitch").onclick = () => {
   updateRealTimeUI();
 
   syncLive();
+  renderExploreHistory();
+  renderBackstage();
+  const selectedCharacter = getCharacter(state.selectedCharacter);
+  if(selectedCharacter) renderRoleLiveHistoryGrid($("channelRoleLiveHistory"),[selectedCharacter]);
+  if(currentRoleLiveReplay && !$("roleLiveOverlay").hidden) renderRoleLive();
   renderForum();
   renderSns();
   renderWavelink();
@@ -9031,9 +9036,13 @@ function createStreamCard({
   return card;
 }
 
-function roleLiveHistoryLabel(record){
-  return record.realTimeAtStart && Number(record.endedAt)
-    ? new Date(record.endedAt).toLocaleString("zh-TW")
+function liveHistoryDateLabel(record){
+  if(!realTimeEnabled() || record.realTimeAtStart === false) return "";
+  // 舊的玩家紀錄只有已格式化的時間；保留原本的日期字串。
+  if(record.time) return record.time;
+  const endedAt = Number(record.endedAt);
+  return record.realTimeAtStart === true && Number.isFinite(endedAt) && endedAt > 0
+    ? new Date(endedAt).toLocaleString("zh-TW")
     : "";
 }
 
@@ -9074,7 +9083,7 @@ function renderRoleLiveHistoryGrid(container, characters){
       image:character.publicImage,
       scene:roleSceneById(character,record.sceneId).image,
       replay:true,
-      detail:roleLiveHistoryLabel(record),
+      detail:liveHistoryDateLabel(record),
       click:() => openRoleLiveReplay(character.id,record.id)
     }))
   );
@@ -9092,7 +9101,7 @@ function renderExploreHistory(){
           name:publicName(character), viewers:record.peak,
           image:character.publicImage,
           scene:roleSceneById(character,record.sceneId).image,
-          replay:true, detail:roleLiveHistoryLabel(record),
+          replay:true, detail:liveHistoryDateLabel(record),
           click:() => openRoleLiveReplay(character.id,record.id)
         })
       }))
@@ -9104,7 +9113,7 @@ function renderExploreHistory(){
         name:item.name || state.player.name, viewers:item.peak,
         image:state.player.publicImage,
         scene:sceneById(item.sceneId)?.image,
-        replay:true, detail:item.time || "",
+        replay:true, detail:liveHistoryDateLabel(item),
         click:() => openPlayerLiveReplay(item)
       })
     }))
@@ -9121,7 +9130,7 @@ function openPlayerLiveReplay(item){
   setImageBox($("playerReplayAvatar"),state.player.publicImage,initials(item.name || state.player.name));
   $("playerReplayTitle").textContent = sanitizePublicText(item.title);
   $("playerReplayMeta").textContent =
-    `${item.channel || state.player.channel} · ${item.time || ""} · ${Number(item.turns || 0)} 回合`;
+    [item.channel || state.player.channel,liveHistoryDateLabel(item)].filter(Boolean).join(" · ");
   $("playerReplayPeak").textContent = `Peak ${fmt(item.peak)}`;
   $("playerReplayStage").style.backgroundImage =
     `url("${sceneById(item.sceneId)?.image || ""}")`;
@@ -12758,7 +12767,7 @@ function renderRoleLive(){
       .filter(Boolean);
 
   $("roleLiveMeta").textContent =
-    `${publicName(character)} · ${character.channel}${replay && roleLiveHistoryLabel(replay) ? ` · ${roleLiveHistoryLabel(replay)}` : ""}${
+    `${publicName(character)} · ${character.channel}${replay && liveHistoryDateLabel(replay) ? ` · ${liveHistoryDateLabel(replay)}` : ""}${
       collabNames.length
         ? ` · 🎙 連動：${collabNames.join("・")}`
         : ""
@@ -19021,7 +19030,7 @@ function renderBackstage(){
     title.textContent = sanitizePublicText(item.title);
     const meta = document.createElement("small");
     meta.style.display = "block";
-    meta.textContent = `${item.time || ""} · Peak ${fmt(item.peak)}`;
+    meta.textContent = [liveHistoryDateLabel(item),`Peak ${fmt(item.peak)}`].filter(Boolean).join(" · ");
     info.append(title,meta);
     const actions = document.createElement("div");
     actions.className = "mini-actions";
