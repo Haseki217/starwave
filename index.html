@@ -5847,7 +5847,7 @@ body[data-theme="halloween"] .live-stage{
 
         <div>
           <strong>事件記憶整理頻率</strong>
-          <small>一個主要玩家輸入加一次 AI 回應視為一個 RP 回合。</small>
+          <small>直播互動、WAVELINK、線下互動、SNS 發文與留言、論壇回覆，以及手動觀看直播下一段，共用 RP 回合計數。</small>
         </div>
 
         <select id="memoryInterval">
@@ -5923,24 +5923,17 @@ body[data-theme="halloween"] .live-stage{
         </button>
 
       </div>
-      <div
-  class="data-action"
-  style="margin-top:10px"
->
+      <div class="data-action" style="margin-top:10px">
 
-  <div class="data-copy">
+        <div class="data-copy">
+          清除所有內容，回到最開始的狀態。
+        </div>
 
-    <strong>清除所有內容</strong>
-    <br>
-    清除所有內容，回到最開始的狀態。
+        <button id="clearAllData" class="danger" type="button">
+          清除所有內容
+        </button>
 
-  </div>
-
-  <button id="clearAllData" class="danger" type="button">
-    清除所有內容
-  </button>
-
-</div>
+      </div>
 
     </div>
 
@@ -11706,7 +11699,7 @@ async function openRoleLiveReplay(characterId,recordId){
   if(!record.liveStory?.length) await continueRoleLiveReplay();
 }
 
-async function continueRoleLiveReplay(){
+async function continueRoleLiveReplay({countTurn=false}={}){
   const selection = currentRoleLiveReplay;
   const character = getCharacter(selection?.characterId);
   const record = selection?.record;
@@ -11756,6 +11749,10 @@ async function continueRoleLiveReplay(){
       record.liveChat = playback.liveChat;
       record.replayCursor = next;
       record.replayComplete = finalSegment;
+      if(countTurn){
+        const segmentText = playback.liveStory.at(-1)?.text || "";
+        countRpTurn(`觀看歷史直播「${record.title}」：${segmentText.slice(0,300)}`);
+      }
       scheduleStarwaveSave();
     }
   }finally{
@@ -12310,7 +12307,8 @@ function formatRoleLiveStoryText(text){
 
 async function generateRoleLiveNext(
   character,
-  first=false
+  first=false,
+  {countTurn=false}={}
 ){
 
   if(!character){
@@ -12706,6 +12704,8 @@ async function generateRoleLiveNext(
     scheduleStarwaveSave();
     if(playerAction){
       countRpTurn(`角色直播「${character.liveTitle}」：玩家${playerAction}。主播接續：${storyText.slice(0,240)}`);
+    }else if(countTurn && !character.isReplayGeneration){
+      countRpTurn(`觀看角色直播「${character.liveTitle}」：${storyText.slice(0,300)}`);
     }
 
     toast(
@@ -12961,15 +12961,13 @@ $("refreshRoleLive").onclick =
   async () => {
 
     if(currentRoleLiveReplay){
-      await continueRoleLiveReplay();
+      await continueRoleLiveReplay({countTurn:true});
       return;
     }
     const character = getCharacter(currentRoleLiveId);
     if(!character) return;
 
-    await generateRoleLiveNext(
-      character
-    );
+    await generateRoleLiveNext(character,false,{countTurn:true});
   };
 
 $("sendRoleLiveComment").onclick = () => {
@@ -24785,38 +24783,62 @@ $("saveManualMemory").onclick = () => {
 let autoMemoryGenerating = false;
 let autoMemoryVersion = 0;
 
+function fallbackAutoMemory(turns){
+  const entries = [...new Set(turns.map(turn =>
+    String(turn || "").replace(/\s+/g," ").trim()
+  ).filter(Boolean))];
+  if(!entries.length) return `已完成 ${turns.length} 個 RP 回合，沒有可摘錄的文字。`;
+  const samples = entries.length <= 3
+    ? entries
+    : [entries[0],entries[Math.floor(entries.length / 2)],entries.at(-1)];
+  return `這批 ${turns.length} 個 RP 回合的互動片段：${samples.map(text =>
+    text.length > 100 ? text.slice(0,100) + "…" : text
+  ).join("；")}`;
+}
+
 async function processPendingAutoMemories(){
   if(autoMemoryGenerating) return;
   const settings = state.memorySettings;
   settings.pendingBatches ||= [];
   if(!settings.pendingBatches.length) return;
-  const profile = state.api.profiles[state.api.active];
-  if(!String(profile?.apiKey || "").trim() || !String(profile?.model || "").trim()) return;
 
   autoMemoryGenerating = true;
   const version = autoMemoryVersion;
   const generationEpoch = rpGenerationEpoch;
   try{
-    while(settings.pendingBatches.length && version === autoMemoryVersion){
+    while(settings.pendingBatches.length &&
+          version === autoMemoryVersion && generationEpoch === rpGenerationEpoch){
       const turns = settings.pendingBatches[0];
-      const result = await generateWithApi({
-        profileIndex:state.api.active,
-        prompt:`以下是玩家最近 ${turns.length} 個 RP 回合，依發生順序排列，可能跨直播、角色直播留言、WAVELINK、語音、線下、SNS 和論壇：
+      let summary = "";
+      const profile = state.api.profiles[state.api.active];
+      if(String(profile?.apiKey || "").trim() && String(profile?.model || "").trim()){
+        try{
+          const result = await generateWithApi({
+            profileIndex:state.api.active,
+            prompt:`以下是玩家最近 ${turns.length} 個 RP 回合，依發生順序排列，可能跨直播、歷史直播、WAVELINK、語音、線下、SNS 和論壇：
 ${JSON.stringify(turns)}
-請整理已發生、值得日後記住的事件或關係變化，寫成一則簡短的私人事件記憶。綜合這幾回合，不要只摘最後一回合或逐句轉貼；不要編造沒有提供的結果、感情或玩家行動。
-如果全是例行閒聊、沒有值得記錄的變化，summary 填空字串。
-使用台灣繁體中文。只輸出有效 JSON：{"summary":"摘要或空字串"}`,
-        systemInstruction:"你是 STARWAVE 的私人事件記憶整理助手。只根據提供的 RP 回合摘要整理，不得添加未發生的事件。輸出有效 JSON。",
-        json:true
-      });
+將這批回合整理成一則簡短的私人事件記憶。優先記下重要事件、約定或關係變化；若只是日常閒聊或觀看直播，就簡短寫下實際聊過或看到的話題與互動。
+綜合這批內容，不要只摘最後一回合、逐句轉貼或編造沒有發生的事。每批都必須有具體摘要，即使沒有重大事件，summary 也不可留空或只寫「無重要事件」。
+使用台灣繁體中文。只輸出有效 JSON：{"summary":"這批回合的簡短摘要"}`,
+            systemInstruction:"你是 STARWAVE 的私人事件記憶整理助手。每批回合都要根據提供的內容寫一則摘要，不得添加未發生的事件。輸出有效 JSON。",
+            json:true
+          });
+          const output = parseStarwaveLlmJson(result.text)?.summary;
+          if(typeof output === "string"){
+            const candidate = output.trim();
+            if(!/^(?:無|沒有)(?:任何)?(?:重大|重要)?(?:的)?(?:事件|變化)?[。！!．.]*$/.test(candidate)){
+              summary = candidate;
+            }
+          }
+        }catch(error){
+          console.error("STARWAVE automatic memory summary failed:",error);
+        }
+      }
       if(version !== autoMemoryVersion || generationEpoch !== rpGenerationEpoch) return;
-      const summary = String(parseStarwaveLlmJson(result.text).summary || "").trim();
-      if(summary) addMemory(`自動整理：${summary}`,"private",["player"]);
+      addMemory(`自動整理：${summary || fallbackAutoMemory(turns)}`,"private",["player"]);
       settings.pendingBatches.shift();
       scheduleStarwaveSave();
     }
-  }catch(error){
-    console.error("STARWAVE automatic memory summary failed:",error);
   }finally{
     autoMemoryGenerating = false;
   }
