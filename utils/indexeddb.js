@@ -5,6 +5,7 @@ const STARWAVE_STATE_STORE = "appState";
 const STARWAVE_STATE_KEY = "main";
 
 let starwaveDbPromise = null;
+let starwaveStorageResetting = false;
 
 function openStarwaveDB() {
   if (starwaveDbPromise) {
@@ -38,7 +39,9 @@ function openStarwaveDB() {
 }
 
 async function saveStarwaveState(state) {
+  if(starwaveStorageResetting) return;
   const db = await openStarwaveDB();
+  if(starwaveStorageResetting) return;
 
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(
@@ -112,5 +115,19 @@ async function deleteStarwaveState() {
     request.onerror = () => {
       reject(request.error);
     };
+  });
+}
+
+async function resetStarwaveState(initialState) {
+  starwaveStorageResetting = true;
+  const db = await openStarwaveDB();
+  await new Promise((resolve,reject) => {
+    const transaction = db.transaction(STARWAVE_STATE_STORE,"readwrite");
+    const store = transaction.objectStore(STARWAVE_STATE_STORE);
+    store.clear();
+    store.put(structuredClone(initialState),STARWAVE_STATE_KEY);
+    transaction.oncomplete = () => resolve();
+    transaction.onabort = () => reject(transaction.error || new Error("Reset aborted"));
+    transaction.onerror = () => reject(transaction.error);
   });
 }

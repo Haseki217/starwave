@@ -13,6 +13,7 @@ const starwaveSync = (() => {
   let conflictVersion = "";
   let timer = null;
   let failure = "";
+  let resetting = false;
 
   function snapshot(){
     const copy = createBackup().state;
@@ -68,7 +69,7 @@ const starwaveSync = (() => {
   }
 
   function authorized(){
-    return Boolean(token && user && Date.now() < expiresAt - 30000);
+    return Boolean(!resetting && token && user && Date.now() < expiresAt - 30000);
   }
 
   function tokenValid(){
@@ -285,6 +286,7 @@ const starwaveSync = (() => {
   }
 
   function connect(){
+    if(resetting) return;
     if(!config.googleClientId || !window.google?.accounts?.oauth2){
       showNotice("Google 同步尚未設定","請先設定 Google OAuth 用戶端 ID，並確認網頁已載入 Google 登入程式。");
       return;
@@ -408,5 +410,18 @@ const starwaveSync = (() => {
     if(resumed) void syncNow(false);
   }
 
-  return {init,render,schedule,syncNow};
+  function prepareForReset(){
+    if(busy || connecting) return false;
+    resetting = true;
+    clearTimeout(timer);
+    token = "";
+    expiresAt = 0;
+    user = null;
+    clearSession();
+    waitingForChoice = false;
+    conflictVersion = "";
+    return true;
+  }
+
+  return {init,render,schedule,syncNow,prepareForReset};
 })();
