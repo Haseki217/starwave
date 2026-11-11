@@ -5847,7 +5847,7 @@ body[data-theme="halloween"] .live-stage{
 
         <div>
           <strong>事件記憶整理頻率</strong>
-          <small>一個主要玩家輸入加一次 AI 回應視為一個 RP 回合。</small>
+          <small>直播互動、WAVELINK、線下互動、SNS 發文與留言、論壇回覆，以及手動觀看直播下一段，共用 RP 回合計數。</small>
         </div>
 
         <select id="memoryInterval">
@@ -5923,24 +5923,17 @@ body[data-theme="halloween"] .live-stage{
         </button>
 
       </div>
-      <div
-  class="data-action"
-  style="margin-top:10px"
->
+      <div class="data-action" style="margin-top:10px">
 
-  <div class="data-copy">
+        <div class="data-copy">
+          清除所有內容，回到最開始的狀態。
+        </div>
 
-    <strong>清除所有內容</strong>
-    <br>
-    清除所有內容，回到最開始的狀態。
+        <button id="clearAllData" class="danger" type="button">
+          清除所有內容
+        </button>
 
-  </div>
-
-  <button id="clearAllData" class="danger" type="button">
-    清除所有內容
-  </button>
-
-</div>
+      </div>
 
     </div>
 
@@ -11706,7 +11699,7 @@ async function openRoleLiveReplay(characterId,recordId){
   if(!record.liveStory?.length) await continueRoleLiveReplay();
 }
 
-async function continueRoleLiveReplay(){
+async function continueRoleLiveReplay({countTurn=false}={}){
   const selection = currentRoleLiveReplay;
   const character = getCharacter(selection?.characterId);
   const record = selection?.record;
@@ -11756,6 +11749,10 @@ async function continueRoleLiveReplay(){
       record.liveChat = playback.liveChat;
       record.replayCursor = next;
       record.replayComplete = finalSegment;
+      if(countTurn){
+        const segmentText = playback.liveStory.at(-1)?.text || "";
+        countRpTurn(`觀看歷史直播「${record.title}」：${segmentText.slice(0,300)}`);
+      }
       scheduleStarwaveSave();
     }
   }finally{
@@ -12310,7 +12307,8 @@ function formatRoleLiveStoryText(text){
 
 async function generateRoleLiveNext(
   character,
-  first=false
+  first=false,
+  {countTurn=false}={}
 ){
 
   if(!character){
@@ -12706,6 +12704,8 @@ async function generateRoleLiveNext(
     scheduleStarwaveSave();
     if(playerAction){
       countRpTurn(`角色直播「${character.liveTitle}」：玩家${playerAction}。主播接續：${storyText.slice(0,240)}`);
+    }else if(countTurn && !character.isReplayGeneration){
+      countRpTurn(`觀看角色直播「${character.liveTitle}」：${storyText.slice(0,300)}`);
     }
 
     toast(
@@ -12961,15 +12961,13 @@ $("refreshRoleLive").onclick =
   async () => {
 
     if(currentRoleLiveReplay){
-      await continueRoleLiveReplay();
+      await continueRoleLiveReplay({countTurn:true});
       return;
     }
     const character = getCharacter(currentRoleLiveId);
     if(!character) return;
 
-    await generateRoleLiveNext(
-      character
-    );
+    await generateRoleLiveNext(character,false,{countTurn:true});
   };
 
 $("sendRoleLiveComment").onclick = () => {
