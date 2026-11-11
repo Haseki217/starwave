@@ -5930,28 +5930,14 @@ body[data-theme="halloween"] .live-stage{
 
   <div class="data-copy">
 
-    <strong>
-      🧪 測試功能：清除 RP 紀錄
-    </strong>
-
+    <strong>清除所有內容</strong>
     <br>
-
-    清除直播、論壇、SNS、WAVELINK、
-    線下故事、事件記憶、觀看／訂閱／會員數、
-    經濟與 SHOP 測試進度等遊玩紀錄。
-
-    <br>
-
-    API 設定、API Key、主播資料、角色卡、
-    角色圖片、Lorebook、自訂場景與各項設定會保留。
+    清除所有內容，回到最開始的狀態。
 
   </div>
 
-  <button
-    id="clearRpTestData"
-    class="danger"
-  >
-    清除測試紀錄
+  <button id="clearAllData" class="danger" type="button">
+    清除所有內容
   </button>
 
 </div>
@@ -6787,10 +6773,10 @@ body[data-theme="halloween"] .live-stage{
 </div>
 
 <div id="toast" class="toast"></div>
-<script src="./utils/indexeddb.js"></script>
+<script src="./utils/indexeddb.js?v=full-reset-1"></script>
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="./sync-config.js?v=google-drive-1"></script>
-<script src="./utils/sync.js?v=google-drive-4"></script>
+<script src="./utils/sync.js?v=google-drive-5"></script>
 <script>
 const $ = id => document.getElementById(id);
 const $$ = selector => [...document.querySelectorAll(selector)];
@@ -7329,6 +7315,9 @@ refresh:{
   forumPosts:[],
   snsPosts:[]
 };
+
+const starwaveInitialState = structuredClone(state);
+let starwaveResetInProgress = false;
 
   let starwaveSaveTimer = null;
 let starwavePersistenceReady = false;
@@ -27699,344 +27688,47 @@ async event => {
   }
 };
 
-  function clearRpTestRecords(){
-  invalidateRpGenerations();
-
-  /* 玩家直播進度 */
-
-  state.player.viewers = 0;
-  state.player.peak = 0;
-  state.player.subscribers = 0;
-  state.player.members = 0;
-  state.player.memberAccounts = [];
-  state.player.liveHistory = [];
-
-
-  /* 目前直播內容
-     場景、自訂場景、BGM 設定保留 */
-
-  state.live.started = false;
-  state.live.turn = 0;
-  state.live.stageEntries = [];
-  state.live.chat = [];
-  state.live.lastText = "";
-  state.live.collabIds = [];
-  state.live.collabRoomId = "";
-  state.live.activeShopItemIds = [];
-  state.live.date = "";
-  state.live.turnLogs = [];
-  state.live.lastActivityAt = 0;
-  state.live.awayContext = "";
-
-
-  /* 公開社群 */
-
-  state.forumPosts = [];
-  state.snsPosts = [];
-
-
-  /* 事件記憶
-     Lorebook 不刪 */
-
-  state.memories = [];
-  state.fanAccounts = [];
-  state.peerLife = {
-    relationships:{},conversations:{},plans:[],events:[],
-    lastGeneratedAt:0,lastGeneratedTurn:0
-  };
-  autoMemoryVersion++;
-  state.memorySettings.counter = 0;
-  state.memorySettings.recentTurns = [];
-  state.memorySettings.pendingBatches = [];
-  state.timeSettings.rpTurnCount = 0;
-  state.timeSettings.lastRoleLiveTick = Date.now();
-  state.timeSettings.lastRoleViewerTick = Date.now();
-
-
-  /* WAVELINK
-     保留房間與群組，
-     只清除聊天紀錄 */
-state.wavelinkRooms =
-  state.wavelinkRooms.filter(
-    room =>
-      room.type === "group" ||
-      room.memberIds.some(
-        id =>
-          getCharacter(id)
-      )
-  );
-
-
-wavelinkRoomView =
-  "active";
-  state.wavelinkRooms.forEach(
-    room => {
-
-  room.messages = [];
-room.unread = 0;
-room.archived = false;
-room.collabPlan = null;
-room.collabLiveActive = false;
-room.collabVoiceActive = false;
-room.voiceActive = false;
-room.voiceStartedAt = null;
-
-    }
-  );
-
-
-  /* 確保每張現存角色卡
-     都還有自己的私人聊天室 */
-
-  state.characters.forEach(
-    character => {
-
-      const roomExists =
-        state.wavelinkRooms.some(
-          room =>
-            room.type === "direct" &&
-            room.memberIds?.[0] ===
-              character.id
-        );
-
-      if(!roomExists){
-
-        state.wavelinkRooms.push({
-          id:
-            `direct_${character.id}`,
-
-          type:
-            "direct",
-
-          name:
-            publicName(character),
-
-          memberIds:[
-            character.id
-          ],
-
-          unread:0,
-          messages:[]
-        });
-
-      }
-
-    }
-  );
-
-
-  state.currentWavelink =
-    state.wavelinkRooms[0]?.id ||
-    null;
-
-
-  /* 線下故事 */
-
-  state.offline.currentCharacterId =
-    null;
-
-  state.offline.stories = {};
-
-
-  /* 角色的 RP 進度
-     角色卡本體完全保留 */
-
-  [
-    ...state.characters,
-    ...state.archivedCharacters
-  ].forEach(character => {
-
-    character.offlineStatus =
-      "locked";
-
-    character.offlinePendingBy =
-      null;
-
-    character.live =
-      false;
-
-    character.viewers =
-      0;
-
-    character.peak =
-      0;
-
-    character.liveTurn =
-      0;
-
-    character.liveRemainingTurns =
-  0;
-
-character.liveOfflineTurns =
-  0;
-
-    character.liveCollabIds =
-      [];
-    character.liveOriginalCollabIds = [];
-
-    character.liveCollabRoomId =
-      "";
-
-    character.liveManagedByPlayer =
-      false;
-
-    character.liveStory =
-      [];
-    character.liveLastGeneratedAt = 0;
-    character.liveHistory = [];
-    character.liveStartedAt = 0;
-    character.liveStartedTurn = 0;
-    character.liveUsesRealTime = false;
-    character.liveEndsAt = 0;
-    character.plannedLiveAt = 0;
-    character.plannedLiveTurn = 0;
-    character.plannedLiveTitle = "";
-    character.plannedLiveAnnouncement = "";
-    character.liveBreakStartAt = 0;
-    character.liveBreakUntilAt = 0;
-    character.liveBreakStartTurn = 0;
-    character.liveBreakUntilTurn = 0;
-
-    character.liveChat =
-      [];
-
-    character.lastViewerAction =
-      "";
-
-  });
-
-
-  /* 經濟與 SHOP 測試進度
-     經濟模式本身保留 */
-
-  state.economy.wallet =
-    30000;
-    
-  state.economy.donationIncome =
-    0;
-
-  state.economy.inventory =
-    {};
-
-  state.economy.billCycle =
-    "";
-  state.economy.lastLedgerRpActivityAt = 0;
-  state.economy.skippedSubscriptionMonths = [];
-  lastScheduledLedgerAttempt = 0;
-
-  state.economy.bills =
-    [];
-
-  state.economy.transactions =
-    [];
-
-
-  /* 測試中封鎖的模擬帳號 */
-
-  state.moderation.blockedAccounts =
-    [];
-
-
-  /* 關閉目前開著的額外 RP UI */
-
-  currentForumId =
-    null;
-
-  forumReplyParentId =
-    null;
-
-  currentRoleLiveId =
-    "";
-  currentRoleLiveReplay = null;
-
-  voiceCall.active =
-    false;
-
-  voiceCall.roomId =
-    null;
-
-  voiceCall.startedAt =
-    null;
-
-  voiceCall.entries =
-    [];
-
-
-  $("roleLiveOverlay").hidden =
-    true;
-  $("playerReplayOverlay").hidden = true;
-
-  $("voiceCallOverlay").hidden =
-    true;
-
-
-  /* 清空目前輸入框 */
-
-  $("liveInput").value =
-    "";
-  state.live.draft = "";
-
-  $("wlInput").value =
-    "";
-
-  $("voiceInput").value =
-    "";
-
-
-  /* 重新繪製整個畫面 */
-
-  fullRender();
-
-  scheduleStarwaveSave();
-}
-
-  $("clearRpTestData").onclick = () => {
-
+$("clearAllData").onclick = () => {
+  if(starwaveResetInProgress) return;
   showConfirm({
+    title:"確定要清除所有內容？",
+    message:`這會清空這台裝置上的所有紀錄和所有設定，回到最開始的狀態。
 
-    title:
-      "清除所有測試 RP 紀錄？",
+包含角色卡、主播資料、直播與互動紀錄、Lorebook、事件記憶、經濟資料、自訂圖片、API 設定與 API Key。
 
-    message:
-`這會把目前的遊玩世界清回乾淨狀態。
+清除後無法復原！建議清空前先匯出備份存檔。
+提醒：匯出的備份不包含 API Key，請自行妥善保存。
 
-會清除：
-・目前直播劇情與聊天室
-・玩家與角色的直播歷史
-・觀看／訂閱／會員進度
-・論壇與 SNS
-・WAVELINK 訊息
-・線下故事與解鎖進度
-・事件記憶
-・經濟帳本、錢包與 SHOP 購買紀錄
-・測試中的封鎖紀錄
-
-會保留：
-・API Profile 與 API Key
-・主播資料與圖片
-・角色卡與角色圖片
-・Lorebook
-・自訂直播場景
-・BGM 網址
-・主題與各項設定
-
-這是目前開發測試期間使用的一鍵清除功能。`,
-
-    okText:
-      "清除測試紀錄",
-
-    onConfirm(){
-
-      clearRpTestRecords();
-
-      toast(
-        "測試 RP 紀錄已全部清除"
-      );
-
+這台裝置的同步連結也會中斷；不會刪除雲端存檔或其他裝置的資料。`,
+    okText:"確定清除所有內容",
+    async onConfirm(){
+      if(starwaveResetInProgress) return;
+      if(!starwaveSync.prepareForReset()){
+        showNotice("請稍後再清除","跨裝置同步或連結正在進行，請等完成後再試。");
+        return;
+      }
+      starwaveResetInProgress = true;
+      starwavePersistenceReady = false;
+      clearTimeout(starwaveSaveTimer);
+      invalidateRpGenerations();
+      $("clearAllData").disabled = true;
+      try{
+        // 封鎖舊畫面與尚未完成的請求寫回，再以初始資料取代整份存檔。
+        await resetStarwaveState(starwaveInitialState);
+        for(const storage of [localStorage,sessionStorage]){
+          const keys = Array.from({length:storage.length},(_,index) => storage.key(index));
+          keys.filter(key => key && /^starwave[_-]/i.test(key))
+            .forEach(key => storage.removeItem(key));
+        }
+        location.reload();
+      }catch(error){
+        console.error("STARWAVE reset failed:",error);
+        starwaveResetInProgress = false;
+        $("clearAllData").disabled = false;
+        showNotice("清除尚未完成","未能完成清除，請再按一次「清除所有內容」重試。");
+      }
     }
-
   });
-
 };
 
 $("clearCache").onclick = () => {
