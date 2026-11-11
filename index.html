@@ -7955,6 +7955,13 @@ function publicTaiwanLanguageRules(){
 保留角色姓名、專有名詞、原文引用與已設定的外語，不改動玩家原話。`;
 }
 
+function publicCreatorFamiliarityRules(){
+  return `【公開互動的熟悉程度】
+角色匯入同一個平台不代表彼此認識。沒有明確公開關係或既有公開互動時，視為陌生人，以一般社群語氣對當下內容留言。
+知道公開暱稱、看過貼文或直播、同為主播、單次留言，都不等於私下熟識。有過公開互動可自然接續，但熟悉程度要與提供的紀錄相符。
+不得自行補寫老朋友、私下綽號、共同回憶、私聊、曾經合作或見過面。只沿用明確提供的公開關係與已發生的公開事件；私人角色卡或私下關係不能由公開貼文或留言揭露。`;
+}
+
 function sanitizePublicText(text){
   let output = String(text ?? "");
 
@@ -13109,6 +13116,8 @@ async function generatePeerLifeAi(a,b){
 兩張角色卡分別是各自的內在設定；角色只能知道自己卡上的秘密，以及對方曾在對話中說出的內容。
 【各自對對方的關係認知】
 ${JSON.stringify({[a.id]:peerRelationshipFor(a.id,b.id),[b.id]:peerRelationshipFor(b.id,a.id)})}
+若沒有已記錄的關係或實際互動，兩人預設陌生，這次從自然的初次接觸開始。只有角色卡明確描述和另一位可識別的現有角色的既定關係，才沿用該設定；不得從共同興趣、同一平台或模糊的背景推測兩人本來就熟。
+各角色只依自己知道的關係與經歷說話，熟悉程度隨實際發生的往來逐步改變。不得為了讓對話自然就補寫未提供的見面、共同回憶、私聊或合作。首次接觸也不必立刻成為朋友或談成連動。
 【兩人近期私下互動】
 ${JSON.stringify(previous.slice(-10))}
 【兩人共同經歷過的事件】
@@ -14558,6 +14567,8 @@ selfCard、knownMemories 與 peerRelationships
 2. 自己 knownMemories 中的事件
 3. 本房間已經實際出現的聊天內容
 4. 所有人的公開資料
+
+群組中各角色預設互不認識。只有自己的角色卡明確寫到該現有角色、自己的 peerRelationships 已記錄關係，或已知事件／公開資料真的交代兩人有過往來，才按該證據互動。加入同一個房間、知道公開暱稱或一兩句打招呼都不代表熟識，不得補造共同回憶或私下關係。
 
 不得因為你看得到其他角色的 selfCard，
 就讓角色 A 知道角色 B 的私人設定。
@@ -19622,6 +19633,8 @@ relationship：
 如果角色卡沒有提供與玩家的既有關係，請輸出空字串。
 不得自行創造兩人已經認識、交往、敵對等關係。
 
+角色彼此的既定關係只有原卡明寫時才保留在 organizedCard，不要把同一世界觀、同一平台或提及別人當成已經認識，也不要把私人關係改寫為公開資料。
+
 所有資料都只是初稿，之後玩家仍可自行修改。
 
 只輸出有效 JSON：
@@ -21890,6 +21903,7 @@ async function respondToPublicInteraction(kind, post, playerText, parentId=null)
       prompt:`你正在模擬 STARWAVE 的公開${kind === "sns" ? "SNS" : "論壇"}。
 玩家剛剛在下面這篇內容發言。請只生成對這次發言的自然回應，不建立新貼文或其他討論串。
 ${publicTaiwanLanguageRules()}
+${publicCreatorFamiliarityRules()}
 公開貼文：${JSON.stringify(context)}
 玩家剛發出的文字：${JSON.stringify(sanitizePublicText(playerText))}
 請每一則回應都針對玩家剛發出的這句話；若生成兩則，兩位都各自回玩家，不互相接話，也不要回上一則留言。
@@ -22188,6 +22202,7 @@ function buildForumAiPrompt(
 你正在模擬 STARWAVE 平台的
 公開論壇。
 ${publicTaiwanLanguageRules()}
+${publicCreatorFamiliarityRules()}
 
 請根據目前真正存在的公開資料，
 生成新的論壇討論串。
@@ -23677,6 +23692,7 @@ function buildSnsAiPrompt(
 你正在模擬 STARWAVE 平台的
 公開 SNS 動態。
 ${publicTaiwanLanguageRules()}
+${publicCreatorFamiliarityRules()}
 
 SNS 是較即時、簡短、
 偏個人發言的公開社群，
