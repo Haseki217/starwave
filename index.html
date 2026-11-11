@@ -7968,6 +7968,55 @@ function publicCreatorFamiliarityRules(){
 不得自行補寫老朋友、私下綽號、共同回憶、私聊、曾經合作或見過面。只沿用明確提供的公開關係與已發生的公開事件；私人角色卡或私下關係不能由公開貼文或留言揭露。`;
 }
 
+function publicReplyCreator(id){
+  return id === "player" || Boolean(getAnyCharacter(id));
+}
+
+function publicCreatorReplyRules(guestSlot){
+  return [
+    "【主播留言與觀眾反應】",
+    "以一般觀眾與粉絲留言為主。主播可以回覆自己貼文下的留言；同為創作者或話題碰巧符合一般興趣，不是到別人貼文留言的理由。",
+    guestSlot
+      ? "本次最多一位串門主播：主文明確點名本人、討論本人直播、或真的接續本人先前的留言才可出現。沒有適合對象就只用一般觀眾。"
+      : "本次不安排主播到別人的貼文留言。別人的貼文用一般觀眾回覆。",
+    "若主播真的在這串現身，有些觀眾可認出帳號，自然驚喜、興奮或打招呼；其他人照常聊原話題。不要每個人都起鬨。直接對主播留言表示反應時，要填實際的回覆對象與引用；不要假裝沒出現的主播來了。",
+    "不要用粉絲帳號冒充主播，也不要替玩家發言。"
+  ].join("\n");
+}
+
+function createPublicCreatorReplyGate(){
+  // 每批最多一次串門機會；有機會也必須先確認公開關聯。
+  const guestSlot = Math.random() < 0.15;
+  let guestUsed = false;
+  return {
+    guestSlot,
+    accept(authorId, post, target=null, playerText=""){
+      if(authorId === "player") return false;
+      const character = getCharacter(authorId);
+      if(!character) return true;
+      if(post.authorId === authorId) return true;
+      if(!guestSlot || guestUsed) return false;
+
+      const source = sanitizePublicText(
+        [post.title,post.body,post.text,target?.text,playerText].filter(Boolean).join("\n")
+      ).normalize("NFKC").toLowerCase();
+      const identifiers = [publicName(character),character.snsId,character.liveId]
+        .map(value => String(value || "").normalize("NFKC").trim().toLowerCase())
+        .filter(value => value.length >= 2);
+      const mentioned = identifiers.some(value => {
+        if(!/^[a-z0-9_@.-]+$/.test(value)) return source.includes(value);
+        const escaped = value.replace(/[.*+?^{}$()|[\]\\]/g,"\\$&");
+        return new RegExp("(?:^|[^a-z0-9_])" + escaped + "(?![a-z0-9_])").test(source);
+      });
+      const ownBroadcast = post.relatedLiveId &&
+        (character.liveHistory || []).some(record => record.id === post.relatedLiveId);
+      if(!mentioned && !ownBroadcast && target?.authorId !== authorId) return false;
+      guestUsed = true;
+      return true;
+    }
+  };
+}
+
 function sanitizePublicText(text){
   let output = String(text ?? "");
 
@@ -21872,16 +21921,18 @@ async function respondToPublicInteraction(kind, post, playerText, parentId=null)
   if(publicReplyPending.has(key)) return;
   const authors = (kind === "sns" ? snsPublicAuthors() : forumPublicAuthors())
     .filter(author => !characterCurrentlyLive(author.id));
+  const gate = createPublicCreatorReplyGate();
   const epoch = rpGenerationEpoch;
   publicReplyPending.add(key);
   try{
     const context = kind === "sns"
-      ? {text:sanitizePublicText(post.text), comments:(post.comments || []).slice(-6).map(item => ({id:item.id,author:publicAuthor(item.authorId,item.author),text:sanitizePublicText(item.text)}))}
-      : {title:sanitizePublicText(post.title),body:sanitizePublicText(post.body),replies:(post.replies || []).slice(-6).map(item => ({id:item.id,author:publicAuthor(item.authorId,item.author),text:sanitizePublicText(item.text)}))};
+      ? {text:sanitizePublicText(post.text), comments:(post.comments || []).slice(-6).map(item => ({id:item.id,author:publicAuthor(item.authorId,item.author),isCreator:publicReplyCreator(item.authorId),text:sanitizePublicText(item.text)}))}
+      : {title:sanitizePublicText(post.title),body:sanitizePublicText(post.body),replies:(post.replies || []).slice(-6).map(item => ({id:item.id,author:publicAuthor(item.authorId,item.author),isCreator:publicReplyCreator(item.authorId),text:sanitizePublicText(item.text)}))};
     const prompt = refreshThread
       ? `你正在替 STARWAVE 的一篇公開論壇討論串補充新的回覆。
 ${publicTaiwanLanguageRules()}
 ${publicCreatorFamiliarityRules()}
+${publicCreatorReplyRules(gate.guestSlot)}
 公開討論串：${JSON.stringify({...context,author:publicAuthor(post.authorId,post.author)})}
 可用公開帳號：${JSON.stringify(authors)}
 黑粉強度：${state.community.blackfan}%；柔和社群：${state.community.soft ? "ON" : "OFF"}。
@@ -21893,7 +21944,8 @@ ${publicCreatorFamiliarityRules()}
 玩家剛剛在下面這篇內容發言。請只生成對這次發言的自然回應，不建立新貼文或其他討論串。
 ${publicTaiwanLanguageRules()}
 ${publicCreatorFamiliarityRules()}
-公開貼文：${JSON.stringify(context)}
+${publicCreatorReplyRules(gate.guestSlot)}
+公開貼文：${JSON.stringify({...context,author:publicAuthor(post.authorId,post.author || post.name),isCreator:publicReplyCreator(post.authorId)})}
 玩家剛發出的文字：${JSON.stringify(sanitizePublicText(playerText))}
 請每一則回應都針對玩家剛發出的這句話；若生成兩則，兩位都各自回玩家，不互相接話，也不要回上一則留言。
 ${kind === "sns" && post.authorId === "player" ? "這是玩家自己的貼文，請評估其他人對這篇貼文新增的按讚與轉發數。likesAdded 與 repostsAdded 是這次互動增加量（非總數），允許 0，按讚最多 30、轉發最多 5；依內容自然判斷，不要替玩家自己按讚或轉發。" : ""}
@@ -21933,6 +21985,9 @@ ${kind === "sns" && post.authorId === "player" ? "這是玩家自己的貼文，
       if(raw?.authorId === "player") return;
       const author = resolveForumAiAuthor(raw,authors);
       if(!author || characterCurrentlyLive(author.id)) return;
+      const target = (kind === "sns" ? post.comments : post.replies)
+        .find(item => item.id === replyParentId);
+      if(!gate.accept(author.id,post,target,playerText)) return;
       if(kind === "sns"){
         post.comments.push({id:uid("comment"),parentId:parentId && post.comments.some(item => item.id === parentId) ? parentId : null,authorId:author.id,author:author.name,handle:author.handle,time:currentRpTimeShort(),text,likes:0,likedByPlayer:false});
       }else{
@@ -22108,7 +22163,8 @@ function recentPublicPlayerLives(){
 
 function buildForumAiPrompt(
   count,
-  authors
+  authors,
+  guestSlot=false
 ){
 
   const playerPublic = {
@@ -22243,6 +22299,7 @@ function buildForumAiPrompt(
 公開論壇。
 ${publicTaiwanLanguageRules()}
 ${publicCreatorFamiliarityRules()}
+${publicCreatorReplyRules(guestSlot)}
 
 請根據目前真正存在的公開資料，
 生成新的論壇討論串。
@@ -22518,6 +22575,7 @@ async function generateForumNow(
 
   const authors =
     forumPublicAuthors();
+  const gate = createPublicCreatorReplyGate();
 
 
   forumGenerating =
@@ -22553,7 +22611,8 @@ async function generateForumNow(
         prompt:
           buildForumAiPrompt(
             count,
-            authors
+            authors,
+            gate.guestSlot
           ),
 
         systemInstruction:
@@ -22754,6 +22813,7 @@ async function generateForumNow(
                       repliesByRawIndex[
                         parentIndex
                       ];
+                    if(!parent && getCharacter(String(rawReplies[parentIndex]?.authorId || "").trim())) return;
                     const quote = String(rawReply.replyToQuote || "").trim();
                     if(parent && quote.length >= 3 &&
                       String(parent.text || "").includes(quote) &&
@@ -22764,6 +22824,10 @@ async function generateForumNow(
                   }
                 }
 
+
+                const target = builtReplies.find(item => item.id === parentId);
+                if(!gate.accept(replyAuthor.id,{authorId:author.id,title,body,
+                  relatedLiveId:rawPost.relatedLiveId},target)) return;
 
                 const reply = {
                   id:uid("fr"),
@@ -23552,7 +23616,8 @@ function snsPublicAuthors(){
 
 function buildSnsAiPrompt(
   count,
-  authors
+  authors,
+  guestSlot=false
 ){
 
   const playerPublic = {
@@ -23711,6 +23776,7 @@ function buildSnsAiPrompt(
                     comment.id,
 
                   parentId:comment.parentId || null,
+                  isCreator:publicReplyCreator(comment.authorId),
 
                   author:
                     publicAuthor(
@@ -23733,6 +23799,7 @@ function buildSnsAiPrompt(
 公開 SNS 動態。
 ${publicTaiwanLanguageRules()}
 ${publicCreatorFamiliarityRules()}
+${publicCreatorReplyRules(guestSlot)}
 
 SNS 是較即時、簡短、
 偏個人發言的公開社群，
@@ -24048,6 +24115,7 @@ async function generateSnsNow(
 
   const authors =
     snsPublicAuthors();
+  const gate = createPublicCreatorReplyGate();
 
 
   snsGenerating =
@@ -24083,7 +24151,8 @@ async function generateSnsNow(
         prompt:
           buildSnsAiPrompt(
             count,
-            authors
+            authors,
+            gate.guestSlot
           ),
 
         systemInstruction:
@@ -24210,6 +24279,14 @@ async function generateSnsNow(
                   commentsByRawIndex[replyIndex]?.id === parent?.id
                     ? parent.id : null;
 
+
+                if(rawComment.replyTo != null && rawComment.replyTo !== "" &&
+                  Number.isInteger(replyIndex) && replyIndex >= 0 && replyIndex < rawIndex &&
+                  !commentsByRawIndex[replyIndex] &&
+                  getCharacter(String(rawComments[replyIndex]?.authorId || "").trim())) return;
+                const target = builtComments.find(item => item.id === parentId);
+                if(!gate.accept(commentAuthor.id,{authorId:author.id,text,
+                  relatedLiveId:rawPost.relatedLiveId},target)) return;
 
                 const comment = {
 
@@ -24380,6 +24457,8 @@ async function generateSnsNow(
           const parentId = String(rawComment.replyToCommentId || "") === parent?.id
             ? parent.id : null;
 
+
+          if(!gate.accept(author.id,post,parentId ? parent : null)) return;
 
           post.comments.push({
 
