@@ -7957,7 +7957,7 @@ function publicTaiwanLanguageRules(){
 
 function publicCreatorFamiliarityRules(){
   return `【公開互動的熟悉程度】
-角色匯入同一個平台不代表彼此認識。沒有明確公開關係或既有公開互動時，視為陌生人，以一般社群語氣對當下內容留言。
+角色匯入同一個平台不代表彼此認識，角色與玩家也一樣。沒有明確公開關係或既有公開互動時，視為陌生人，以一般社群語氣對當下內容留言。
 知道公開暱稱、看過貼文或直播、同為主播、單次留言，都不等於私下熟識。有過公開互動可自然接續，但熟悉程度要與提供的紀錄相符。
 不得自行補寫老朋友、私下綽號、共同回憶、私聊、曾經合作或見過面。只沿用明確提供的公開關係與已發生的公開事件；私人角色卡或私下關係不能由公開貼文或留言揭露。`;
 }
@@ -14322,8 +14322,7 @@ function wavelinkSelfContext(
         character
       ),
 
-    relationship:
-      character.relationship || "",
+    relationship:playerRelationshipText(character.relationship),
 
     selfCard:
       String(
@@ -14560,7 +14559,7 @@ Lorebook 是背景與世界設定資料，
 極重要資訊差規則：
 
 selfCard、knownMemories 與 peerRelationships
-是「該 id 角色自己的認知資料」。
+是「該 id 角色自己的認知資料」。relationship 也是該角色對玩家的認知，只用於自己的互動。
 
 某角色只能使用：
 1. 自己那份 selfCard
@@ -14745,6 +14744,8 @@ relationshipUpdates 用來更新
 
 規則：
 
+- 目前關係是「陌生人」且沒有已發生的接觸時，從初次認識開始，不得編造熟識或共同回憶。
+- 只有本回合實際有發言、且與玩家的關係因已發生的互動而改變的角色可以更新。雙方已互相認識可從「陌生人」更新為「初識」；只單方面傳訊、尚未得到回應，不能當成已熟悉。
 - 關係沒有實質變化時，輸出空陣列。
 - 不要因為普通閒聊、一次稱讚、一次玩笑就改關係。
 - 只有信任、親密度、敵意、曖昧、合作關係、
@@ -14806,53 +14807,32 @@ relationshipUpdates 用來更新
 `;
 }
 
-function applyWavelinkRelationshipUpdates(
-  room,
-  updates
-){
-  if(
-    !room ||
-    !Array.isArray(updates)
-  ){
-    return;
-  }
+function playerRelationshipText(value){
+  return (typeof value === "string" ? value.trim() : "") || "陌生人";
+}
 
-  const allowedIds =
-    new Set(
-      room.memberIds || []
-    );
+function applyPlayerRelationshipUpdate(character, value, previous){
+  const summary = typeof value === "string" ? value.trim() : "";
+  if(!character || !summary || getCharacter(character.id) !== character ||
+    playerRelationshipText(character.relationship) !== previous || summary === previous) return;
+
+  character.relationship = summary;
+  const field = $("charRelationship");
+  if(state.selectedCharacter === character.id && field?.value === previous){
+    field.value = summary;
+  }
+}
+
+function applyWavelinkRelationshipUpdates(updates, participants, previousRelationships){
+  if(!Array.isArray(updates)) return;
 
   updates.forEach(update => {
-
-    const characterId =
-      String(
-        update?.characterId || ""
-      );
-
-    const relationship =
-      String(
-        update?.relationship || ""
-      ).trim();
-
-    if(
-      !allowedIds.has(characterId) ||
-      !relationship
-    ){
-      return;
-    }
-
-    const character =
-      getCharacter(characterId);
-
-    if(!character){
-      return;
-    }
-
-    character.relationship =
-      relationship;
+    const id = String(update?.characterId || "");
+    if(!participants.has(id) || !previousRelationships.has(id)) return;
+    applyPlayerRelationshipUpdate(getCharacter(id),update.relationship,previousRelationships.get(id));
   });
 }
-  
+
 function applyWavelinkOfflineAction(
   room,
   action
@@ -15227,6 +15207,8 @@ const isCurrent =
   try{
 
     const generationEpoch = rpGenerationEpoch;
+    const previousRelationships = new Map(members.map(character =>
+      [character.id,playerRelationshipText(character.relationship)]));
     const result =
       await generateWithApi({
 
@@ -15358,9 +15340,10 @@ added++;
     );
 
     applyWavelinkRelationshipUpdates(
-  room,
-  data.relationshipUpdates
-);
+      data.relationshipUpdates,
+      new Set(generatedMessages.map(message => message.authorId)),
+      previousRelationships
+    );
 
 
     const eventSummary =
@@ -17113,7 +17096,7 @@ $("offlineTime").textContent =
 
     <h3>${esc(character.name)}</h3>
 
-    <p>${esc(character.relationship)}</p>
+    <p>${esc(playerRelationshipText(character.relationship))}</p>
   `;
 
   state.offline.stories[character.id] ||= [
@@ -17258,7 +17241,8 @@ ${JSON.stringify(playerPublic)}
 角色可以正常記得。
 
 【目前關係】
-${character.relationship || "尚未整理"}
+${playerRelationshipText(character.relationship)}
+若目前是陌生人且沒有既有接觸，從初次認識開始；真正互相認識後可更新為初識。不得捏造舊交情，也不要把普通寒暄當成已經熟識。
 
 【本次命中的 Lorebook 條目】
 ${JSON.stringify(lorebookEntries)}
@@ -17446,6 +17430,7 @@ async function generateOfflineAi(
   try{
 
     const generationEpoch = rpGenerationEpoch;
+    const previousRelationship = playerRelationshipText(character.relationship);
     const result =
       await generateWithApi({
 
@@ -17509,18 +17494,7 @@ async function generateOfflineAi(
       });
 
 
-    const relationshipUpdate =
-      String(
-        data.relationshipUpdate ||
-        ""
-      ).trim();
-
-
-   if(relationshipUpdate){
-
-  character.relationship =
-    relationshipUpdate;
-}
+    applyPlayerRelationshipUpdate(character,data.relationshipUpdate,previousRelationship);
 
 
 let economyRecorded =
@@ -19966,10 +19940,9 @@ subscriptionImageX:50,
 subscriptionImageY:50,
 privateImage:"",
     realNamePublic:false,
-  relationship:
-  String(
-    generated.relationship || ""
-  ).trim(),
+    relationship:playerRelationshipText(
+      (typeof root.relationship === "string" && root.relationship.trim()) || generated.relationship
+    ),
     lorebookIds:[],
     offlineStatus:"locked",
     offlinePendingBy:null,
@@ -20780,7 +20753,7 @@ $("charPublicDescribe").disabled =
   $("charSnsId").value = character.snsId;
   $("charStreamerType").value = character.streamerType;
   $("charContent").value = character.content;
-  $("charRelationship").value = character.relationship;
+  $("charRelationship").value = playerRelationshipText(character.relationship);
  $("charCard").value =
     formatImportedCharacterCard(
       character.card
@@ -21447,8 +21420,7 @@ $("saveChannelCharacter").onclick = () => {
   character.content =
     $("charContent").value;
 
-  character.relationship =
-    $("charRelationship").value;
+  character.relationship = playerRelationshipText($("charRelationship").value);
 
   character.card =
     $("charCard").value;
@@ -21496,7 +21468,7 @@ subscriptionImageX:50,
 subscriptionImageY:50,
 privateImage:"",
 realNamePublic:false,
-relationship:"",
+relationship:"陌生人",
     lorebookIds:[],
     offlineStatus:"locked",
     offlinePendingBy:null,
@@ -28040,6 +28012,10 @@ $("globalSearch").onkeydown =
   };
 
 function fullRender(){
+  // 舊存檔空白關係沿用陌生開局，保留所有已設定的關係。
+  for(const character of state.characters){
+    if(character && !String(character.relationship || "").trim()) character.relationship = "陌生人";
+  }
   applyTheme(state.theme);
 
   $("preLiveTitle").value =
