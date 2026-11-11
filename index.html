@@ -4384,13 +4384,15 @@ body[data-theme="halloween"] .live-stage{
         ← 返回討論列表
       </button>
 
-      <button id="refreshForumReplies" class="secondary" type="button">
-        更新本串回覆
-      </button>
-
       <h2 id="forumDetailTitle"></h2>
 
       <div id="forumOp"></div>
+
+      <div class="actions" style="margin-bottom:8px">
+        <button id="refreshForumReplies" class="secondary" type="button">
+          更新回覆
+        </button>
+      </div>
 
       <div
         id="forumReplies"
@@ -21975,7 +21977,7 @@ $("refreshForumReplies").onclick = async () => {
   }finally{
     refreshingForumReplyId = null;
     button.disabled = false;
-    button.textContent = "更新本串回覆";
+    button.textContent = "更新回覆";
   }
 };
 
