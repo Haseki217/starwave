@@ -14280,6 +14280,15 @@ function ensureStarwaveBot(){
   room.memberIds = [];
   room.archived = false;
   room.messages ||= [];
+  const legacyBillSuffix = "繳費期限從原定生成日開始計算，晚收信不會延後期限。";
+  let cleanedBillNotices = false;
+  for(const message of room.messages){
+    if(message.botKind === "bill" && typeof message.text === "string" && message.text.endsWith(legacyBillSuffix)){
+      message.text = message.text.slice(0,-legacyBillSuffix.length);
+      cleanedBillNotices = true;
+    }
+  }
+  if(cleanedBillNotices) scheduleStarwaveSave();
   state.economy.redeemedGifts ||= {};
   if(!room.messages.some(message => message.botEventId === "welcome")){
     pushStarwaveBotMessage(room,"歡迎使用 STARWAVE BOT。帳單通知與禮物紀錄都會保留在這裡。你可以收取帳單，或輸入活動通關密語兌換禮物。",{botEventId:"welcome"});
@@ -14306,7 +14315,7 @@ function syncStarwaveBotNotices(){
     if(bill.paid) continue;
     const key = `bill:${bill.id}`;
     if(!room.messages.some(message => message.botEventId === key)){
-      pushStarwaveBotMessage(room,`${bill.name}帳單已寄到，金額 ${money(bill.amount)}。繳費期限從原定生成日開始計算，晚收信不會延後期限。`,
+      pushStarwaveBotMessage(room,`${bill.name}帳單已寄到，金額 ${money(bill.amount)}。`,
         {botEventId:key,botKind:"bill",billId:bill.id});
     }
   }
@@ -18249,7 +18258,7 @@ function showLedgerNotification(){
   $("ledgerNoticeTitle").textContent = idle ? "完整經濟已暫停" : "帳單已寄到";
   $("ledgerNoticeMessage").textContent = idle
     ? "連續三天內不足 4 個 RP 回合，完整經濟已自動暫停，未繳帳單保留剩餘期限。是否繼續完整經濟？繼續後會恢復帳單生成與繳費期限倒數；關閉則改為輕量模式，仍可使用直播與 SHOP 的金錢功能。也可以稍後到 WAVELINK 的 STARWAVE BOT 處理。"
-    : `${[...new Set(waiting.map(bill=>bill.name))].join("、")}帳單已寄到，是否收信？繳費期限從原定生成日開始計算，晚收信不會延後期限。若現在不收信，之後可隨時到 WAVELINK 的 STARWAVE BOT 收取。`;
+    : `${[...new Set(waiting.map(bill=>bill.name))].join("、")}帳單已寄到，是否收信？若現在不收信，之後可隨時到 WAVELINK 的 STARWAVE BOT 收取。`;
   $("ledgerNoticeLater").hidden = !idle;
   $("ledgerNoticeYes").textContent = idle ? "繼續完整經濟" : "收信";
   $("ledgerNoticeNo").textContent = idle ? "關閉完整經濟" : "稍後";
