@@ -1541,6 +1541,9 @@ body:is([data-theme="deep"],[data-theme="vampire"]) :is(#deleteLorebook,#loreEnt
   font-size:18px;
 }
 
+#wlBotAvatar{flex:none;}
+#wlBotAvatar[hidden]{display:none;}
+
 .wl-head-copy{
   min-width:0;
 }
@@ -4283,6 +4286,8 @@ body[data-theme="halloween"] .live-stage{
           <button id="wlMobileBack" class="wl-back">
             ←
           </button>
+
+          <div id="wlBotAvatar" class="wl-avatar" aria-hidden="true" hidden></div>
 
           <div class="wl-head-copy">
             <strong id="wlRoomName">WAVELINK</strong>
@@ -14262,11 +14267,22 @@ function getRoom(id){
 }
 
 const STARWAVE_BOT_ID = "starwave-platform-bot";
+const STARWAVE_BOT_AVATAR = "https://r2.uploads.tw/2026/11/tON22FgZpN.webp";
 const STARWAVE_BOT_REWARDS = [
   {id:"starsea-supply-100k-v1",phrase:"STARWAVE星海補給",name:"星海補給禮",amount:100000}
 ];
 
 function isStarwaveBot(room){ return room?.id === STARWAVE_BOT_ID; }
+
+function renderStarwaveBotAvatar(element){
+  const img = document.createElement("img");
+  img.alt = "";
+  img.addEventListener("error",() => {
+    if(element.firstChild === img) element.textContent = "✦";
+  },{once:true});
+  element.replaceChildren(img);
+  img.src = STARWAVE_BOT_AVATAR;
+}
 
 function ensureStarwaveBot(){
   let room = getRoom(STARWAVE_BOT_ID);
@@ -14386,6 +14402,9 @@ function sendStarwaveBotMessage(text){
 }
 
 function renderStarwaveBotConversation(room){
+  const avatar = $("wlBotAvatar");
+  if(!avatar.hasChildNodes()) renderStarwaveBotAvatar(avatar);
+  avatar.hidden = false;
   $("wlRoomName").textContent = "STARWAVE BOT";
   $("wlRoomMembers").textContent = "通知・帳單・禮物";
   for(const id of ["archiveWlRoom","deleteWlRoom","startVoiceCall","refreshWl","wlOfflineState","wlCollabState"]){ $(id).hidden = true; }
@@ -15751,7 +15770,9 @@ function renderWavelinkRooms(){
       "wl-avatar";
 
 
-    if(character){
+    if(isStarwaveBot(room)){
+      renderStarwaveBotAvatar(avatar);
+    }else if(character){
 
       setImageBox(
         avatar,
@@ -15764,7 +15785,7 @@ function renderWavelinkRooms(){
     }else{
 
       avatar.textContent =
-        isStarwaveBot(room) ? "✦" : room.type === "group"
+        room.type === "group"
           ? "群"
           : "#";
     }
@@ -15974,6 +15995,7 @@ function renderWavelinkConversation(){
   const room =
     getRoom(state.currentWavelink);
   if(isStarwaveBot(room)){ renderStarwaveBotConversation(room); return; }
+  $("wlBotAvatar").hidden = true;
   $("startVoiceCall").hidden = false;
   $("refreshWl").hidden = false;
   $("wlInput").placeholder = "傳送 WAVELINK 訊息";
