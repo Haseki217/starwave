@@ -18044,7 +18044,7 @@ function showLedgerNotification(){
   if(!starwavePersistenceReady || state.economy.mode !== "full" || document.visibilityState === "hidden") return;
   const overlay = $("ledgerNoticeOverlay");
   if(!overlay.hidden || !$("confirmOverlay").hidden ||
-     [...document.querySelectorAll('[class*="-overlay"]')].some(item => !item.hidden && item !== overlay)) return;
+     [...document.querySelectorAll('[id$="Overlay"]')].some(item => !item.hidden && item !== overlay)) return;
   const clock = state.economy.billingClock;
   const idle = clock.pauseReason === "idle";
   const waiting = state.economy.bills.filter(bill => !bill.paid && !bill.received);
