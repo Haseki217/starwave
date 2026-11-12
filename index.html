@@ -18665,9 +18665,10 @@ function renderLedger(){
       .reduce((sum,bill) => sum + Number(bill.amount || 0),0);
     $("ledgerEconomyNotice").textContent = clock.pausedAt !== null
       ? "完整經濟已暫停，帳單保留剩餘期限。重新啟用後繼續倒數。"
-      : "帳單依現實日期寄送；水電瓦斯 21 天、手機 14 天、房租 3 天。未繳帳單不扣現金，繳費後才列入收支。";
+      : "";
     if(overdueTotal) $("ledgerEconomyNotice").textContent += ` 未繳逾期欠款：${money(overdueTotal)}。`;
   }
+  $("ledgerEconomyNotice").hidden = !$("ledgerEconomyNotice").textContent.trim();
 
   $("refreshLedger").hidden =
     state.refresh.ledger !== "manual";
