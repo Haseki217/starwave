@@ -5096,7 +5096,6 @@ body[data-theme="halloween"] .live-stage{
               <h3>待繳帳單</h3>
             </div>
 
-            <button id="receiveLedgerBills" class="secondary" type="button" hidden>收取帳單</button>
             <div id="billList"></div>
 
           </section>
@@ -14280,9 +14279,23 @@ function ensureStarwaveBot(){
   room.memberIds = [];
   room.archived = false;
   room.messages ||= [];
+  const legacyBillSuffix = "繳費期限從原定生成日開始計算，晚收信不會延後期限。";
+  const legacyBotCopy = {"歡迎使用 STARWAVE BOT。帳單通知與禮物紀錄都會保留在這裡。你可以收取帳單，或輸入活動通關密語兌換禮物。":"歡迎使用 STARWAVE BOT。","請輸入完整的活動通關密語兌換禮物，或輸入「收信」收取尚未領取的帳單。也可以直接使用通知下方的按鈕。":"無法辨識這則訊息。","完整經濟因連續三天內不足 4 個 RP 回合而暫停。帳單保留剩餘期限；繼續完整經濟後會恢復帳單生成及繳費期限倒數。":"完整經濟已暫停。"};
+  let cleanedBillNotices = false;
+  for(const message of room.messages){
+    if(message.authorId === STARWAVE_BOT_ID && Object.hasOwn(legacyBotCopy,message.text)){
+      message.text = legacyBotCopy[message.text];
+      cleanedBillNotices = true;
+    }
+    if(message.botKind === "bill" && typeof message.text === "string" && message.text.endsWith(legacyBillSuffix)){
+      message.text = message.text.slice(0,-legacyBillSuffix.length);
+      cleanedBillNotices = true;
+    }
+  }
+  if(cleanedBillNotices) scheduleStarwaveSave();
   state.economy.redeemedGifts ||= {};
   if(!room.messages.some(message => message.botEventId === "welcome")){
-    pushStarwaveBotMessage(room,"歡迎使用 STARWAVE BOT。帳單通知與禮物紀錄都會保留在這裡。你可以收取帳單，或輸入活動通關密語兌換禮物。",{botEventId:"welcome"});
+    pushStarwaveBotMessage(room,"歡迎使用 STARWAVE BOT。",{botEventId:"welcome"});
   }
   if(!state.currentWavelink) state.currentWavelink = room.id;
   return room;
@@ -14306,7 +14319,7 @@ function syncStarwaveBotNotices(){
     if(bill.paid) continue;
     const key = `bill:${bill.id}`;
     if(!room.messages.some(message => message.botEventId === key)){
-      pushStarwaveBotMessage(room,`${bill.name}帳單已寄到，金額 ${money(bill.amount)}。繳費期限從原定生成日開始計算，晚收信不會延後期限。`,
+      pushStarwaveBotMessage(room,`${bill.name}帳單已寄到，金額 ${money(bill.amount)}。`,
         {botEventId:key,botKind:"bill",billId:bill.id});
     }
   }
@@ -14314,7 +14327,7 @@ function syncStarwaveBotNotices(){
   if(state.economy.mode === "full" && clock?.pauseReason === "idle"){
     const key = `pause:${clock.pausedAt}`;
     if(!room.messages.some(message => message.botEventId === key)){
-      pushStarwaveBotMessage(room,"完整經濟因連續三天內不足 4 個 RP 回合而暫停。帳單保留剩餘期限；繼續完整經濟後會恢復帳單生成及繳費期限倒數。",{botEventId:key,botKind:"pause",pausedAt:clock.pausedAt});
+      pushStarwaveBotMessage(room,"完整經濟已暫停。",{botEventId:key,botKind:"pause",pausedAt:clock.pausedAt});
     }
   }
   return room;
@@ -14365,13 +14378,8 @@ function sendStarwaveBotMessage(text){
       syncNumbers(); renderLedger(); renderShop();
       showNotice("禮物已領取",`${reward.name} ${money(reward.amount)} 已存入錢包。領取紀錄可隨時到 WAVELINK 的 STARWAVE BOT 查看。`);
     }
-  }else if(["收信","收取帳單","帳單"].includes(normalized)){
-    const waiting = state.economy.bills.filter(bill => !bill.paid && bill.received === false);
-    waiting.forEach(bill => {bill.received = true;});
-    pushStarwaveBotMessage(room,waiting.length ? `已收取 ${waiting.length} 張帳單，請到生活帳本查看並繳費。` : "目前沒有尚未收取的帳單。");
-    renderLedger();
   }else{
-    pushStarwaveBotMessage(room,"請輸入完整的活動通關密語兌換禮物，或輸入「收信」收取尚未領取的帳單。也可以直接使用通知下方的按鈕。");
+    pushStarwaveBotMessage(room,"無法辨識這則訊息。");
   }
   $("wlInput").value = "";
   renderWavelink(); scheduleStarwaveSave();
@@ -14382,7 +14390,7 @@ function renderStarwaveBotConversation(room){
   $("wlRoomMembers").textContent = "通知・帳單・禮物";
   for(const id of ["archiveWlRoom","deleteWlRoom","startVoiceCall","refreshWl","wlOfflineState","wlCollabState"]){ $(id).hidden = true; }
   $("wlInput").disabled = false;
-  $("wlInput").placeholder = "輸入通關密語，或輸入「收信」";
+  $("wlInput").placeholder = "輸入訊息";
   $("sendWl").disabled = false;
   $("wlMessages").innerHTML = "";
   const addButton = (bubble,label,action) => {
@@ -14404,9 +14412,12 @@ function renderStarwaveBotConversation(room){
       status.textContent = !bill ? "此帳單已不存在" : bill.paid ? "已繳費" : ledgerBillDueLabel(bill);
       bubble.append(status);
       if(bill && !bill.paid && bill.received === false){
-        addButton(bubble,"收取帳單",()=>receiveStarwaveBotBill(bill.id));
+        addButton(bubble,"打開",()=>receiveStarwaveBotBill(bill.id));
       }else if(bill){
-        addButton(bubble,"查看生活帳本",()=>{goPage("offline");setOfflineView("ledger");$("billList").scrollIntoView({behavior:"smooth",block:"center"});});
+        const opened = document.createElement("small");
+        opened.textContent = "已打開";
+        opened.style.cssText = "display:block;margin-top:6px";
+        bubble.append(opened);
       }
     }
     if(message.botKind === "pause"){
@@ -18171,7 +18182,7 @@ function settleLedgerClock(now=Date.now()){
     const amount = range[0] + Math.floor(Math.random()*(range[1]-range[0]+1));
     state.economy.bills.push({...spec,id:uid("bill"),cycle:spec.realMonth,
       issuedRealMonth:spec.realMonth,category:"生活帳單",amount,
-      received:state.refresh.ledger === "auto",paid:false,overdue:false});
+      received:false,paid:false,overdue:false});
     changed = true;
   }
   clock.lastCheckedAt = until;
@@ -18248,8 +18259,8 @@ function showLedgerNotification(){
   ledgerNoticeKey = key;
   $("ledgerNoticeTitle").textContent = idle ? "完整經濟已暫停" : "帳單已寄到";
   $("ledgerNoticeMessage").textContent = idle
-    ? "連續三天內不足 4 個 RP 回合，完整經濟已自動暫停，未繳帳單保留剩餘期限。是否繼續完整經濟？繼續後會恢復帳單生成與繳費期限倒數；關閉則改為輕量模式，仍可使用直播與 SHOP 的金錢功能。也可以稍後到 WAVELINK 的 STARWAVE BOT 處理。"
-    : `${[...new Set(waiting.map(bill=>bill.name))].join("、")}帳單已寄到，是否收信？繳費期限從原定生成日開始計算，晚收信不會延後期限。若現在不收信，之後可隨時到 WAVELINK 的 STARWAVE BOT 收取。`;
+    ? "是否繼續完整經濟？也可以稍後到 WAVELINK 的 STARWAVE BOT 處理。"
+    : `${[...new Set(waiting.map(bill=>bill.name))].join("、")}帳單已寄到，是否收信？若現在不收信，之後可隨時到 WAVELINK 的 STARWAVE BOT 收取。`;
   $("ledgerNoticeLater").hidden = !idle;
   $("ledgerNoticeYes").textContent = idle ? "繼續完整經濟" : "收信";
   $("ledgerNoticeNo").textContent = idle ? "關閉完整經濟" : "稍後";
@@ -18279,16 +18290,9 @@ $("ledgerNoticeLater").onclick = () => {
   $("ledgerNoticeOverlay").hidden = true;
   ledgerNoticeAction = null;
 };
-$("receiveLedgerBills").onclick = receiveLedgerBills;
 
 function checkScheduledLedgerBills(){
-  let changed = settleLedgerClock();
-  if(state.economy.mode === "full" && state.refresh.ledger === "auto" &&
-     state.economy.billingClock.pausedAt === null){
-    for(const bill of state.economy.bills){
-      if(bill.received === false){ bill.received = true; changed = true; }
-    }
-  }
+  const changed = settleLedgerClock();
   if(changed){ renderLedger(); renderShop(); scheduleStarwaveSave(); }
   const previousCount = getRoom(STARWAVE_BOT_ID)?.messages.length || 0;
   const bot = syncStarwaveBotNotices();
@@ -18551,12 +18555,10 @@ ${options.billsOnly ? "這次只建立到期帳單，transaction 必須輸出 nu
 
 async function generateLifeLedgerAi(options={}){
   if(!ledgerRunning() || lifeLedgerGenerating){ checkScheduledLedgerBills(); return false; }
-  receiveLedgerBills();
-  if(options.billsOnly) return {success:true,changed:true};
   const background = Boolean(options.background);
   const profile = state.api.profiles[state.api.active];
   if(!String(profile?.apiKey || "").trim() || !String(profile?.model || "").trim()){
-    if(!background) showNotice("尚未設定可用的 LLM","帳單已收取。若要更新其他生活收支，請先到「設定 → LLM/API」設定 API Key 與模型。");
+    if(!background) showNotice("尚未設定可用的 LLM","請先到「設定 → LLM/API」設定 API Key 與模型。");
     return false;
   }
   lifeLedgerGenerating = true;
@@ -18590,11 +18592,11 @@ async function generateLifeLedgerAi(options={}){
       }
     }
     syncNumbers(); renderLedger(); renderShop(); scheduleStarwaveSave();
-    if(!background) toast(changed ? "生活收支已更新" : "目前沒有新增生活收支；已寄到的帳單已收取");
+    if(!background) toast(changed ? "生活收支已更新" : "目前沒有新增生活收支");
     return {success:true,changed};
   }catch(error){
     console.error("STARWAVE life ledger generation failed:",error);
-    if(!background) showNotice("生活收支生成失敗",error?.message || "請稍後再試。已收取的帳單仍會保留。");
+    if(!background) showNotice("生活收支生成失敗",error?.message || "請稍後再試。");
     return false;
   }finally{
     lifeLedgerGenerating = false;
@@ -18657,9 +18659,6 @@ function renderLedger(){
   }
 
   const clock = state.economy.billingClock;
-  const unread = state.economy.bills.filter(bill => !bill.paid && bill.received === false).length;
-  $("receiveLedgerBills").hidden = state.economy.mode !== "full" || !unread;
-  $("receiveLedgerBills").textContent = `收取帳單（${unread}）`;
   if(state.economy.mode === "full"){
     const overdueTotal = state.economy.bills.filter(bill => bill.overdue && !bill.paid)
       .reduce((sum,bill) => sum + Number(bill.amount || 0),0);
