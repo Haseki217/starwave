@@ -1584,6 +1584,14 @@ body:is([data-theme="deep"],[data-theme="vampire"]) :is(#deleteLorebook,#loreEnt
   line-height:1.65;
 }
 
+.wl-bubble.bot{
+  max-width:90%;
+  padding-right:11px;
+  overflow-wrap:anywhere;
+}
+
+#ledgerNoticeOverlay .confirm-actions{flex-wrap:wrap;}
+
 .wl-bubble.me{
   align-self:flex-end;
   border-radius:10px 10px 3px 10px;
@@ -6544,6 +6552,7 @@ body[data-theme="halloween"] .live-stage{
     <div id="ledgerNoticeTitle" class="confirm-title"></div>
     <div id="ledgerNoticeMessage" class="confirm-message"></div>
     <div class="confirm-actions">
+      <button id="ledgerNoticeLater" class="ghost" type="button" hidden>稍後到 BOT 處理</button>
       <button id="ledgerNoticeNo" class="secondary" type="button">稍後</button>
       <button id="ledgerNoticeYes" class="primary" type="button">收信</button>
     </div>
@@ -10784,16 +10793,19 @@ function restoreLiveUndoSnapshot(record){
   state.player.peak =
     snap.player.peak;
 
+  const snapshotTransactionIds = new Set((snap.economy.transactions || []).map(tx => tx.id));
+  const retainedPlatformTransactions = state.economy.transactions.filter(tx =>
+    (tx.rewardId || tx.billId) && !snapshotTransactionIds.has(tx.id));
   state.economy.wallet =
-    snap.economy.wallet;
+    snap.economy.wallet + retainedPlatformTransactions.reduce((sum,tx)=>sum+Number(tx.amount || 0),0);
 
   state.economy.donationIncome =
     snap.economy.donationIncome;
 
-  state.economy.transactions =
-    deepClone(
-      snap.economy.transactions
-    );
+  state.economy.transactions = [
+    ...deepClone(retainedPlatformTransactions),
+    ...deepClone(snap.economy.transactions)
+  ];
 
   autoMemoryVersion++;
   state.memorySettings.counter = snap.memorySettings.counter;
@@ -10809,8 +10821,9 @@ function restoreLiveUndoSnapshot(record){
   state.snsPosts =
     deepClone(snap.snsPosts);
 
-  state.wavelinkRooms =
-    deepClone(snap.wavelinkRooms);
+  const retainedBotRoom = getRoom(STARWAVE_BOT_ID);
+  state.wavelinkRooms = deepClone(snap.wavelinkRooms).filter(room => !isStarwaveBot(room));
+  if(retainedBotRoom) state.wavelinkRooms.unshift(retainedBotRoom);
 
   if(
     Array.isArray(
@@ -14249,6 +14262,173 @@ function getRoom(id){
   );
 }
 
+const STARWAVE_BOT_ID = "starwave-platform-bot";
+const STARWAVE_BOT_REWARDS = [
+  {id:"starsea-supply-100k-v1",phrase:"STARWAVE星海補給",name:"星海補給禮",amount:100000}
+];
+
+function isStarwaveBot(room){ return room?.id === STARWAVE_BOT_ID; }
+
+function ensureStarwaveBot(){
+  let room = getRoom(STARWAVE_BOT_ID);
+  if(!room){
+    room = {id:STARWAVE_BOT_ID,type:"bot",name:"STARWAVE BOT",memberIds:[],messages:[],unread:0,archived:false};
+    state.wavelinkRooms.unshift(room);
+  }
+  room.type = "bot";
+  room.name = "STARWAVE BOT";
+  room.memberIds = [];
+  room.archived = false;
+  room.messages ||= [];
+  state.economy.redeemedGifts ||= {};
+  if(!room.messages.some(message => message.botEventId === "welcome")){
+    pushStarwaveBotMessage(room,"歡迎使用 STARWAVE BOT。帳單通知與禮物紀錄都會保留在這裡。你可以收取帳單，或輸入活動通關密語兌換禮物。",{botEventId:"welcome"});
+  }
+  if(!state.currentWavelink) state.currentWavelink = room.id;
+  return room;
+}
+
+function pushStarwaveBotMessage(room,text,extra={}){
+  const message = {id:uid("bot"),authorId:STARWAVE_BOT_ID,text,
+    time:new Date().toLocaleString("zh-TW"),...extra};
+  room.messages.push(message);
+  if(state.currentWavelink !== room.id || state.ui.page !== "wavelink"){
+    room.unread = Number(room.unread || 0) + 1;
+  }
+  scheduleStarwaveSave();
+  return message;
+}
+
+function syncStarwaveBotNotices(){
+  const room = ensureStarwaveBot();
+  settleLedgerClock();
+  for(const bill of state.economy.bills){
+    if(bill.paid) continue;
+    const key = `bill:${bill.id}`;
+    if(!room.messages.some(message => message.botEventId === key)){
+      pushStarwaveBotMessage(room,`${bill.name}帳單已寄到，金額 ${money(bill.amount)}。繳費期限從原定生成日開始計算，晚收信不會延後期限。`,
+        {botEventId:key,botKind:"bill",billId:bill.id});
+    }
+  }
+  const clock = state.economy.billingClock;
+  if(state.economy.mode === "full" && clock?.pauseReason === "idle"){
+    const key = `pause:${clock.pausedAt}`;
+    if(!room.messages.some(message => message.botEventId === key)){
+      pushStarwaveBotMessage(room,"完整經濟因連續三天內不足 4 個 RP 回合而暫停。帳單保留剩餘期限；繼續完整經濟後會恢復帳單生成及繳費期限倒數。",{botEventId:key,botKind:"pause",pausedAt:clock.pausedAt});
+    }
+  }
+  return room;
+}
+
+function receiveStarwaveBotBill(billId){
+  settleLedgerClock();
+  const bill = state.economy.bills.find(item => item.id === billId);
+  if(!bill) return;
+  bill.received = true;
+  renderLedger(); renderWavelink(); scheduleStarwaveSave();
+}
+
+function resolveStarwaveBotPause(pausedAt,resume){
+  settleLedgerClock();
+  const clock = state.economy.billingClock;
+  if(state.economy.mode !== "full" || clock.pauseReason !== "idle" || clock.pausedAt !== pausedAt) return;
+  if(resume) resumeLedgerClock();
+  else {state.economy.mode = "light";clock.pauseReason = "mode";clock.revision++;}
+  $("economyMode").value = state.economy.mode;
+  updateEconomyModeExplain();
+  pushStarwaveBotMessage(ensureStarwaveBot(),resume
+    ? "已繼續完整經濟。帳單生成與剩餘繳費期限已恢復計算。"
+    : "已關閉完整經濟，改為輕量模式。直播與 SHOP 的金錢功能仍可使用。");
+  renderLedger(); renderShop(); renderWavelink(); scheduleStarwaveSave();
+}
+
+function sendStarwaveBotMessage(text){
+  const room = syncStarwaveBotNotices();
+  const input = String(text || "").trim();
+  if(!input) return;
+  room.messages.push({id:uid("wm"),authorId:"player",text:input,time:new Date().toLocaleString("zh-TW")});
+  const normalized = input.normalize("NFKC").replace(/\s+/g,"").toLowerCase();
+  const reward = STARWAVE_BOT_REWARDS.find(item => item.phrase.normalize("NFKC").toLowerCase() === normalized);
+  if(reward){
+    const claims = state.economy.redeemedGifts;
+    if(claims[reward.id]){
+      pushStarwaveBotMessage(room,`這份存檔已領取過「${reward.name}」，不能重複領取。`);
+    }else{
+      // 先標記再入帳；同一次事件內完成，重複送出不會再次發放。
+      const now = new Date();
+      const transaction = {id:uid("tx"),category:"平台禮物",item:reward.name,amount:reward.amount,
+        source:"STARWAVE BOT",rewardId:reward.id,iso:now.toISOString(),month:monthKey(now),time:now.toLocaleString("zh-TW")};
+      claims[reward.id] = {claimedAt:now.getTime(),amount:reward.amount,transactionId:transaction.id};
+      state.economy.wallet = Number(state.economy.wallet || 0) + reward.amount;
+      state.economy.transactions.unshift(transaction);
+      pushStarwaveBotMessage(room,`通關密語正確！「${reward.name}」${money(reward.amount)} 已領取並存入錢包。`,{botKind:"gift",rewardId:reward.id});
+      syncNumbers(); renderLedger(); renderShop();
+      showNotice("禮物已領取",`${reward.name} ${money(reward.amount)} 已存入錢包。領取紀錄可隨時到 WAVELINK 的 STARWAVE BOT 查看。`);
+    }
+  }else if(["收信","收取帳單","帳單"].includes(normalized)){
+    const waiting = state.economy.bills.filter(bill => !bill.paid && bill.received === false);
+    waiting.forEach(bill => {bill.received = true;});
+    pushStarwaveBotMessage(room,waiting.length ? `已收取 ${waiting.length} 張帳單，請到生活帳本查看並繳費。` : "目前沒有尚未收取的帳單。");
+    renderLedger();
+  }else{
+    pushStarwaveBotMessage(room,"請輸入完整的活動通關密語兌換禮物，或輸入「收信」收取尚未領取的帳單。也可以直接使用通知下方的按鈕。");
+  }
+  $("wlInput").value = "";
+  renderWavelink(); scheduleStarwaveSave();
+}
+
+function renderStarwaveBotConversation(room){
+  $("wlRoomName").textContent = "STARWAVE BOT";
+  $("wlRoomMembers").textContent = "通知・帳單・禮物";
+  for(const id of ["archiveWlRoom","deleteWlRoom","startVoiceCall","refreshWl","wlOfflineState","wlCollabState"]){ $(id).hidden = true; }
+  $("wlInput").disabled = false;
+  $("wlInput").placeholder = "輸入通關密語，或輸入「收信」";
+  $("sendWl").disabled = false;
+  $("wlMessages").innerHTML = "";
+  const addButton = (bubble,label,action) => {
+    const button = document.createElement("button");
+    button.type = "button"; button.className = "secondary";
+    button.textContent = label; button.style.cssText = "display:block;margin-top:8px";
+    button.onclick = action; bubble.append(button);
+  };
+  room.messages.forEach(message => {
+    const bubble = document.createElement("div");
+    bubble.className = "wl-bubble bot" + (message.authorId === "player" ? " me" : "");
+    if(message.authorId !== "player"){
+      const speaker = document.createElement("span");speaker.className = "speaker";speaker.textContent = "STARWAVE BOT";bubble.append(speaker);
+    }
+    const text = document.createElement("span");text.textContent = message.text;bubble.append(text);
+    if(message.botKind === "bill"){
+      const bill = state.economy.bills.find(item=>item.id===message.billId);
+      const status = document.createElement("small");status.style.cssText = "display:block;margin-top:6px";
+      status.textContent = !bill ? "此帳單已不存在" : bill.paid ? "已繳費" : ledgerBillDueLabel(bill);
+      bubble.append(status);
+      if(bill && !bill.paid && bill.received === false){
+        addButton(bubble,"收取帳單",()=>receiveStarwaveBotBill(bill.id));
+      }else if(bill){
+        addButton(bubble,"查看生活帳本",()=>{goPage("offline");setOfflineView("ledger");$("billList").scrollIntoView({behavior:"smooth",block:"center"});});
+      }
+    }
+    if(message.botKind === "pause"){
+      const clock = state.economy.billingClock;
+      const active = state.economy.mode === "full" && clock.pauseReason === "idle" && clock.pausedAt === message.pausedAt;
+      if(active){
+        addButton(bubble,"繼續完整經濟",()=>resolveStarwaveBotPause(message.pausedAt,true));
+        addButton(bubble,"關閉完整經濟",()=>resolveStarwaveBotPause(message.pausedAt,false));
+      }else{
+        const status=document.createElement("small");status.textContent="（已處理）";bubble.append(status);
+      }
+    }
+    if(realTimeEnabled() && message.time){
+      const time=document.createElement("small");time.textContent=message.time;
+      time.style.cssText="display:block;margin-top:4px;font-size:8px;opacity:.6";bubble.append(time);
+    }
+    $("wlMessages").append(bubble);
+  });
+  if(state.ui.page === "wavelink") room.unread = 0;
+  $("wlMessages").scrollTop = $("wlMessages").scrollHeight;
+}
+
 function activeRoomMembers(room){
   if(!room){
     return [];
@@ -15165,7 +15345,7 @@ async function generateWavelinkAi(
 ){
 
   if(
-    !room ||
+    !room || isStarwaveBot(room) ||
     wavelinkGeneratingRooms.has(
       room.id
     )
@@ -15480,6 +15660,8 @@ return {
 }
   
 function renderWavelink(){
+  const bot = syncStarwaveBotNotices();
+  if(state.currentWavelink === bot.id && state.ui.page === "wavelink") bot.unread = 0;
   renderWavelinkRooms();
   renderWavelinkConversation();
   renderPlayerCollabOptions();
@@ -15504,7 +15686,7 @@ function renderWavelinkRooms(){
         isWavelinkRoomArchived(
           room
         ) === archived
-    );
+    ).sort((a,b) => Number(isStarwaveBot(b)) - Number(isStarwaveBot(a)));
 
 
   if(!rooms.length){
@@ -15571,7 +15753,7 @@ function renderWavelinkRooms(){
     }else{
 
       avatar.textContent =
-        room.type === "group"
+        isStarwaveBot(room) ? "✦" : room.type === "group"
           ? "群"
           : "#";
     }
@@ -15780,6 +15962,10 @@ function contentManageActions(onEdit,onDelete){
 function renderWavelinkConversation(){
   const room =
     getRoom(state.currentWavelink);
+  if(isStarwaveBot(room)){ renderStarwaveBotConversation(room); return; }
+  $("startVoiceCall").hidden = false;
+  $("refreshWl").hidden = false;
+  $("wlInput").placeholder = "傳送 WAVELINK 訊息";
 
   if(!room){
     $("wlRoomName").textContent = "WAVELINK";
@@ -16097,7 +16283,7 @@ const readOnly =
       );
 
 
-    if(!room){
+    if(!room || isStarwaveBot(room)){
       return;
     }
 
@@ -16140,7 +16326,7 @@ const readOnly =
       );
 
 
-    if(!room){
+    if(!room || isStarwaveBot(room)){
       return;
     }
 
@@ -16276,6 +16462,11 @@ $("sendWl").onclick =
     }
 
 
+    if(isStarwaveBot(room)){
+      sendStarwaveBotMessage(text);
+      return;
+    }
+
     const members =
       activeRoomMembers(
         room
@@ -16339,6 +16530,7 @@ $("sendWl").onclick =
 
 $("refreshWl").onclick =
   async () => {
+    if(isStarwaveBot(getRoom(state.currentWavelink))) return;
 
     if(
       state.refresh.wavelink ===
@@ -16752,7 +16944,7 @@ $("startVoiceCall").onclick = () => {
       state.currentWavelink
     );
 
-  if(!room){
+  if(!room || isStarwaveBot(room)){
     return;
   }
 
@@ -18015,6 +18207,7 @@ function receiveLedgerBills(){
   for(const bill of state.economy.bills) bill.received = true;
   scheduleStarwaveSave();
   renderLedger();
+  renderWavelink();
 }
 
 function ledgerBillDueLabel(bill){
@@ -18041,6 +18234,7 @@ function payLedgerBill(bill){
 }
 
 function showLedgerNotification(){
+  syncStarwaveBotNotices();
   if(!starwavePersistenceReady || state.economy.mode !== "full" || document.visibilityState === "hidden") return;
   const overlay = $("ledgerNoticeOverlay");
   if(!overlay.hidden || !$("confirmOverlay").hidden ||
@@ -18054,8 +18248,9 @@ function showLedgerNotification(){
   ledgerNoticeKey = key;
   $("ledgerNoticeTitle").textContent = idle ? "完整經濟已暫停" : "帳單已寄到";
   $("ledgerNoticeMessage").textContent = idle
-    ? "連續三天內不足 4 個 RP 回合，完整經濟已自動暫停，未繳帳單保留剩餘期限。是否繼續完整經濟？繼續後會恢復帳單生成與繳費期限倒數；關閉則改為輕量模式，仍可使用直播與 SHOP 的金錢功能。"
-    : `${[...new Set(waiting.map(bill=>bill.name))].join("、")}帳單已寄到，是否收信？繳費期限從原定生成日開始計算，晚收信不會延後期限。`;
+    ? "連續三天內不足 4 個 RP 回合，完整經濟已自動暫停，未繳帳單保留剩餘期限。是否繼續完整經濟？繼續後會恢復帳單生成與繳費期限倒數；關閉則改為輕量模式，仍可使用直播與 SHOP 的金錢功能。也可以稍後到 WAVELINK 的 STARWAVE BOT 處理。"
+    : `${[...new Set(waiting.map(bill=>bill.name))].join("、")}帳單已寄到，是否收信？繳費期限從原定生成日開始計算，晚收信不會延後期限。若現在不收信，之後可隨時到 WAVELINK 的 STARWAVE BOT 收取。`;
+  $("ledgerNoticeLater").hidden = !idle;
   $("ledgerNoticeYes").textContent = idle ? "繼續完整經濟" : "收信";
   $("ledgerNoticeNo").textContent = idle ? "關閉完整經濟" : "稍後";
   ledgerNoticeAction = yes => {
@@ -18066,7 +18261,7 @@ function showLedgerNotification(){
       $("economyMode").value = state.economy.mode;
       updateEconomyModeExplain();
     }else if(yes) receiveLedgerBills();
-    scheduleStarwaveSave(); renderLedger(); renderShop();
+    scheduleStarwaveSave(); renderLedger(); renderShop(); renderWavelink();
     if(idle && yes) checkScheduledLedgerBills();
   };
   overlay.hidden = false;
@@ -18080,6 +18275,10 @@ function closeLedgerNotification(yes){
 }
 $("ledgerNoticeYes").onclick = () => closeLedgerNotification(true);
 $("ledgerNoticeNo").onclick = () => closeLedgerNotification(false);
+$("ledgerNoticeLater").onclick = () => {
+  $("ledgerNoticeOverlay").hidden = true;
+  ledgerNoticeAction = null;
+};
 $("receiveLedgerBills").onclick = receiveLedgerBills;
 
 function checkScheduledLedgerBills(){
@@ -18091,6 +18290,9 @@ function checkScheduledLedgerBills(){
     }
   }
   if(changed){ renderLedger(); renderShop(); scheduleStarwaveSave(); }
+  const previousCount = getRoom(STARWAVE_BOT_ID)?.messages.length || 0;
+  const bot = syncStarwaveBotNotices();
+  if(changed || bot.messages.length !== previousCount) renderWavelink();
   showLedgerNotification();
 }
 
