@@ -14687,6 +14687,40 @@ function wavelinkSelfContext(
 }
 
 
+function wavelinkLiveContext(room){
+  const streaming = character => ({
+    id:character.id,
+    name:publicName(character),
+    live:Boolean(character.live),
+    ...(character.live ? {
+      title:sanitizePublicText(character.liveTitle || ""),
+      collaboration: Boolean(character.liveCollabIds?.length)
+    } : {})
+  });
+  const members = activeRoomMembers(room);
+  return {
+    player:{
+      id:"player",
+      name:state.player.name,
+      live:Boolean(state.live.started),
+      ...(state.live.started ? {title:sanitizePublicText(state.player.title || "")} : {})
+    },
+    roomMembers:members.map(streaming),
+    otherLiveCreators:state.characters
+      .filter(character => character.live && !room.memberIds.includes(character.id))
+      .map(streaming)
+  };
+}
+
+function wavelinkLiveStatusKey(room){
+  return JSON.stringify([
+    state.live.started ? playerLiveSession : null,
+    ...activeRoomMembers(room).map(character => [
+      character.id,character.live ? Number(character.liveStartedAt || 0) : null
+    ])
+  ]);
+}
+
 function buildWavelinkAiPrompt(
   room,
   {
@@ -14831,6 +14865,14 @@ function buildWavelinkAiPrompt(
 你正在模擬 STARWAVE 的私人通訊軟體 WAVELINK。
 
 這不是公開聊天室。
+
+【平台即時直播狀態】
+${JSON.stringify(wavelinkLiveContext(room))}
+這是系統確認的當下公開狀態，優先於角色卡、舊私訊、記憶和預告。各角色須認得自己的 id 與開播狀態。
+live:true 表示本人此刻確實正在直播（包含連動），不能否認自己在播、說玩家看錯，或把這場直播當成預告或重播。
+若玩家提到該角色正在播、想等直播結束再聊，依角色口吻自然承認，可以簡短回覆或約晚點再聊；私訊內容不會播給觀眾。
+live:false 表示此刻沒有在直播，不要因玩家提問就捏造開播或剛下播。觀看別人的直播或看重播不等於自己開播。
+話題與直播無關時，不必每則訊息都提到直播。不要自行宣告變更開播狀態。
 
 【目前互動形式】
 ${
@@ -15535,36 +15577,34 @@ const isCurrent =
     const generationEpoch = rpGenerationEpoch;
     const previousRelationships = new Map(members.map(character =>
       [character.id,playerRelationshipText(character.relationship)]));
-    const result =
-      await generateWithApi({
-
-        profileIndex:
-          state.api.active,
-
-     prompt:
-  buildWavelinkAiPrompt(
-    room,
-    {
-      playerText,
-      proactive,
-      mode,
-      inboxRefresh
-    }
-  ),
-        systemInstruction:
-          `你是 STARWAVE 的私人角色互動模擬引擎。
+    const requestReply = () => generateWithApi({
+      profileIndex:state.api.active,
+      prompt:buildWavelinkAiPrompt(room,{playerText,proactive,mode,inboxRefresh}),
+      systemInstruction:`你是 STARWAVE 的私人角色互動模擬引擎。
 請嚴格維持角色資訊差。
 每個角色只能使用自己知道的私人資訊。
 不得把不同角色的私人設定互相洩漏。
 不得替玩家說話。
+以系統提供的平台即時直播狀態為準，角色不得否認自己正在進行的直播。
 請依指定格式輸出有效 JSON。`,
+      json:true
+    });
+    const requestStillValid = () => generationEpoch === rpGenerationEpoch &&
+      getRoom(room.id) === room &&
+      (!inboxRefresh || (!isWavelinkRoomArchived(room) && state.refresh.wavelink === "manual"));
 
-        json:true
-      });
-
-
-    if(generationEpoch !== rpGenerationEpoch || getRoom(room.id) !== room ||
-       (inboxRefresh && (isWavelinkRoomArchived(room) || state.refresh.wavelink !== "manual"))) return false;
+    let liveStatus = wavelinkLiveStatusKey(room);
+    let result = await requestReply();
+    if(!requestStillValid()) return false;
+    if(liveStatus !== wavelinkLiveStatusKey(room)){
+      // 生成途中剛好開播或下播，重新取一次即時狀態再回覆。
+      liveStatus = wavelinkLiveStatusKey(room);
+      result = await requestReply();
+      if(!requestStillValid()) return false;
+      if(liveStatus !== wavelinkLiveStatusKey(room)){
+        throw new Error("直播狀態剛變更，請再試一次。");
+      }
+    }
 
     const data =
       parseStarwaveLlmJson(
