@@ -14698,8 +14698,7 @@ function continuityRecordOrder(record){
 function creatorPrivateContinuity(characterId,{currentRoom=null,includeOffline=true}={}){
   const excerpt = text => String(text || "").trim().slice(0,320);
   const rooms = (state.wavelinkRooms || [])
-    .filter(room => room.id !== currentRoom?.id && !isStarwaveBot(room) && room.memberIds?.includes(characterId) &&
-      (currentRoom?.type !== "group" || currentRoom.memberIds.every(id => room.memberIds.includes(id))))
+    .filter(room => room.id !== currentRoom?.id && !isStarwaveBot(room) && room.memberIds?.includes(characterId))
     .map(room => {
       const messages = (room.messages || []).filter(message => !message.system && message.text &&
         (message.authorId === "player" || room.memberIds.includes(message.authorId)));
@@ -14709,6 +14708,7 @@ function creatorPrivateContinuity(characterId,{currentRoom=null,includeOffline=t
     .sort((a,b) => b.order-a.order).slice(0,4)
     .map(({room,messages}) => ({
       room:room.type === "group" ? room.name : "與玩家的私訊",
+      participantIds:["player",...room.memberIds],
       messages:messages.slice(-4).map(message => ({
         authorId:message.authorId,
         author:message.authorId === "player" ? state.player.name : publicName(getAnyCharacter(message.authorId)),
@@ -14719,7 +14719,7 @@ function creatorPrivateContinuity(characterId,{currentRoom=null,includeOffline=t
         participantIds:room.collabPlan.participantIds,acceptedIds:room.collabPlan.acceptedIds
       } : null
     }));
-  const offline = includeOffline && currentRoom?.type !== "group" ? (state.offline.stories[characterId] || [])
+  const offline = includeOffline ? (state.offline.stories[characterId] || [])
     .filter(entry => !entry.system && entry.text && (entry.authorId === "player" || entry.authorId === characterId))
     .slice(-6).map(entry => ({authorId:entry.authorId,text:excerpt(entry.text)})) : [];
   return {wavelink:rooms,offline};
@@ -15027,7 +15027,8 @@ ${creatorPublicContinuityPrompt(members.map(member => member.id))}
 
 【各角色自己經歷過的其他私訊與線下故事】
 ${JSON.stringify(members.map(member => ({id:member.id,...creatorPrivateContinuity(member.id,{currentRoom:room})})))}
-這些紀錄只屬於對應 id 的角色，用於延續本人說過的話、與玩家的約定及共同經歷。群組只會帶入所有在場成員都參與過的對話。
+每份紀錄依 id 分開。生成某角色的發言前，先以發言的 authorId 找到自己的那份，延續本人說過的話、與玩家的約定及共同經歷；不得讀取或回應其他角色的私人紀錄。
+在群聊裡，私訊與線下經歷可以影響本人語氣、反應與做事方式，無須在聊天室交代原因。不得逐字引用、轉述或暗示尚未在本群公開的私人細節。只有玩家已在本群分享的部分，或所有在場成員原本就共同知道的部分，才可自然接續；不得把其他人寫成知道或參與過私人事件。
 
 【各角色自己的私人角色設定】
 ${JSON.stringify(selfContexts)}
