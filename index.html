@@ -1512,10 +1512,28 @@ body:is([data-theme="deep"],[data-theme="vampire"]) :is(#deleteLorebook,#loreEnt
   place-items:center;
   padding:0 5px;
   border-radius:999px;
-  background:var(--pink);
-  color:white;
+  background:#c82442;
+  color:#fff;
+  font-size:10px;
+  font-weight:700;
+  line-height:1;
+  font-variant-numeric:tabular-nums;
+}
+
+.nav-btn .wl-nav-unread{margin-inline-start:auto;}
+
+#app.collapsed .nav-btn .wl-nav-unread,
+.mobile-nav .wl-nav-unread{
+  position:absolute;
+  top:2px;
+  right:2px;
+  min-width:16px;
+  height:16px;
+  padding:0 4px;
   font-size:9px;
 }
+
+.mobile-nav button[data-page="wavelink"]{position:relative;}
 
 .wl-main{
   min-width:0;
@@ -3724,6 +3742,7 @@ body[data-theme="halloween"] .live-stage{
     <button class="nav-btn" data-page="wavelink">
       <span class="nav-icon">≋</span>
       <span class="nav-label">WAVELINK</span>
+      <span class="unread wl-nav-unread" hidden></span>
     </button>
 
     <button class="nav-btn" data-page="forum">
@@ -6229,7 +6248,7 @@ body[data-theme="halloween"] .live-stage{
 
   <button data-page="home">⌂<br>探索</button>
   <button data-page="live">▶<br>直播</button>
-  <button data-page="wavelink">≋<br>LINK</button>
+  <button data-page="wavelink">≋<br>LINK<span class="unread wl-nav-unread" hidden></span></button>
   <button data-page="forum">☷<br>論壇</button>
   <button data-page="sns">◎<br>SNS</button>
   <button data-page="shop">▱<br>SHOP</button>
@@ -8444,6 +8463,7 @@ $("confirmOk").onclick = () => {
 };
 
 function goPage(name){
+  if(state.ui.page === "wavelink" && name !== "wavelink") closeWavelinkConversation();
   state.ui.page = name;
 
   $$(".page").forEach(page => {
@@ -8479,8 +8499,10 @@ function goPage(name){
 }
 
 $$("[data-page]").forEach(button => {
-  button.onclick = () =>
+  button.onclick = () => {
+    if(button.dataset.page === "wavelink") closeWavelinkConversation();
     goPage(button.dataset.page);
+  };
 });
 
 $("menuBtn").onclick = () =>
@@ -14347,7 +14369,6 @@ function ensureStarwaveBot(){
   if(!room.messages.some(message => message.botEventId === "welcome")){
     pushStarwaveBotMessage(room,"歡迎使用 STARWAVE BOT。",{botEventId:"welcome"});
   }
-  if(!state.currentWavelink) state.currentWavelink = room.id;
   return room;
 }
 
@@ -14355,9 +14376,7 @@ function pushStarwaveBotMessage(room,text,extra={}){
   const message = {id:uid("bot"),authorId:STARWAVE_BOT_ID,text,
     time:new Date().toLocaleString("zh-TW"),...extra};
   room.messages.push(message);
-  if(state.currentWavelink !== room.id || state.ui.page !== "wavelink"){
-    room.unread = Number(room.unread || 0) + 1;
-  }
+  recordWavelinkIncoming(room,1);
   scheduleStarwaveSave();
   return message;
 }
@@ -14489,7 +14508,6 @@ function renderStarwaveBotConversation(room){
     }
     $("wlMessages").append(bubble);
   });
-  if(state.ui.page === "wavelink") room.unread = 0;
   $("wlMessages").scrollTop = $("wlMessages").scrollHeight;
 }
 
@@ -14533,23 +14551,44 @@ function isWavelinkRoomArchived(
 }
 
 
-function firstWavelinkRoomForView(){
-
-  const archived =
-    wavelinkRoomView ===
-    "archived";
-
-  return (
-    state.wavelinkRooms.find(
-      room =>
-        isWavelinkRoomArchived(
-          room
-        ) === archived
-    )?.id ||
-    null
-  );
+function wavelinkUnreadCount(room){
+  const count = Number(room.unread);
+  return Number.isSafeInteger(count) && count > 0 ? count : 0;
 }
 
+function wavelinkBadgeText(count){
+  return count > 99 ? "99+" : String(count);
+}
+
+function recordWavelinkIncoming(room,count){
+  const viewing = state.ui.page === "wavelink" &&
+    state.currentWavelink === room.id &&
+    document.visibilityState !== "hidden" &&
+    (window.innerWidth > 720 || $("wlLayout").classList.contains("mobile-chat-open"));
+  if(!viewing) room.unread = wavelinkUnreadCount(room) + count;
+}
+
+function renderWavelinkNavUnread(){
+  const total = state.wavelinkRooms.reduce((sum,room) => sum + wavelinkUnreadCount(room),0);
+  $$(".wl-nav-unread").forEach(badge => {
+    badge.hidden = total === 0;
+    badge.textContent = total ? wavelinkBadgeText(total) : "";
+    const label = badge.parentElement.classList.contains("nav-btn") ? "WAVELINK" : "LINK";
+    if(total) badge.parentElement.setAttribute("aria-label",`${label}，${total} 則未讀訊息`);
+    else badge.parentElement.removeAttribute("aria-label");
+  });
+}
+
+function closeWavelinkConversation(){
+  state.currentWavelink = null;
+  $("wlLayout").classList.remove("mobile-chat-open");
+}
+
+function openWavelinkConversation(room){
+  state.currentWavelink = room.id;
+  room.unread = 0;
+  if(window.innerWidth <= 720) $("wlLayout").classList.add("mobile-chat-open");
+}
 
 function syncWavelinkFolderTabs(){
 
@@ -15649,20 +15688,11 @@ added++;
       ).trim();
 
 
-    const roomIsVisible = state.ui.page === "wavelink" &&
-      room.id === state.currentWavelink &&
-      (window.innerWidth > 720 || $("wlLayout").classList.contains("mobile-chat-open"));
-    if(!roomIsVisible){
+    recordWavelinkIncoming(room,added);
 
-      room.unread =
-        Number(
-          room.unread || 0
-        ) +
-        added;
-    }
-
-
-    renderWavelink();
+    if(state.currentWavelink === room.id) renderWavelinkConversation();
+    renderWavelinkRooms();
+    renderPlayerCollabOptions();
     renderOffline();
     renderSubscriptions();
 
@@ -15716,15 +15746,14 @@ return {
 }
   
 function renderWavelink(){
-  const bot = syncStarwaveBotNotices();
-  if(state.currentWavelink === bot.id && state.ui.page === "wavelink") bot.unread = 0;
+  syncStarwaveBotNotices();
   renderWavelinkRooms();
   renderWavelinkConversation();
   renderPlayerCollabOptions();
 }
 
 function renderWavelinkRooms(){
-
+  renderWavelinkNavUnread();
   $("wlRoomList").innerHTML =
     "";
 
@@ -15851,47 +15880,21 @@ function renderWavelinkRooms(){
     );
 
 
-    if(room.unread){
-
-      const badge =
-        document.createElement(
-          "span"
-        );
-
-      badge.className =
-        "unread";
-
-      badge.textContent =
-        room.unread;
-
-      button.append(
-        badge
-      );
+    const unread = wavelinkUnreadCount(room);
+    if(unread){
+      const badge = document.createElement("span");
+      badge.className = "unread";
+      badge.textContent = wavelinkBadgeText(unread);
+      button.append(badge);
+      const name = character ? publicName(character) : room.name;
+      button.setAttribute("aria-label",`${name}，${unread} 則未讀訊息`);
     }
 
-
     button.onclick = () => {
-
-      state.currentWavelink =
-        room.id;
-
-      room.unread =
-        0;
-
+      openWavelinkConversation(room);
       renderWavelink();
-
-
-      if(
-        window.innerWidth <= 720
-      ){
-
-        $("wlLayout")
-          .classList.add(
-            "mobile-chat-open"
-          );
-      }
+      scheduleStarwaveSave();
     };
-
 
     $("wlRoomList").append(
       button
@@ -15905,13 +15908,7 @@ function renderWavelinkRooms(){
     wavelinkRoomView =
       "active";
 
-    state.currentWavelink =
-      firstWavelinkRoomForView();
-
-    $("wlLayout")
-      .classList.remove(
-        "mobile-chat-open"
-      );
+    closeWavelinkConversation();
 
     renderWavelink();
   };
@@ -15923,13 +15920,7 @@ $("wlArchiveFolder").onclick =
     wavelinkRoomView =
       "archived";
 
-    state.currentWavelink =
-      firstWavelinkRoomForView();
-
-    $("wlLayout")
-      .classList.remove(
-        "mobile-chat-open"
-      );
+    closeWavelinkConversation();
 
     renderWavelink();
   };
@@ -16035,10 +16026,13 @@ function renderWavelinkConversation(){
 
     $("wlOfflineState").hidden = true;
     $("wlCollabState").hidden = true;
+    $("archiveWlRoom").hidden = true;
+    $("deleteWlRoom").hidden = true;
+    $("startVoiceCall").hidden = true;
 
     $("wlMessages").innerHTML = `
       <div class="empty-state">
-        目前沒有開啟中的對話。
+        請從列表選擇對話。
       </div>
     `;
 
@@ -16353,18 +16347,10 @@ const readOnly =
         room
       );
 
-    room.unread =
-      0;
+    const archived = room.archived;
 
 
-    const archived =
-      room.archived;
-
-
-    state.currentWavelink =
-      firstWavelinkRoomForView();
-
-
+    closeWavelinkConversation();
     renderWavelink();
 
     scheduleStarwaveSave();
@@ -16483,10 +16469,7 @@ const readOnly =
         }
 
 
-        state.currentWavelink =
-          firstWavelinkRoomForView();
-
-
+        closeWavelinkConversation();
         renderWavelink();
 
         scheduleStarwaveSave();
@@ -16644,8 +16627,10 @@ $("refreshWl").onclick = async () => {
   }
 };
 
-$("wlMobileBack").onclick = () =>
-  $("wlLayout").classList.remove("mobile-chat-open");
+$("wlMobileBack").onclick = () => {
+  closeWavelinkConversation();
+  renderWavelink();
+};
 
 function openGroupCreator(){
   if(state.characters.length < 2){
@@ -16880,15 +16865,11 @@ $("confirmGroupCreate").onclick = () => {
   };
 
   state.wavelinkRooms.push(room);
-  state.currentWavelink = room.id;
+  wavelinkRoomView = "active";
+  openWavelinkConversation(room);
 
   $("groupCreateOverlay").hidden = true;
-
   renderWavelink();
-
-  if(window.innerWidth <= 720){
-    $("wlLayout").classList.add("mobile-chat-open");
-  }
 
   toast("WAVELINK 群組已建立");
 };
@@ -18348,7 +18329,10 @@ function checkScheduledLedgerBills(){
   if(changed){ renderLedger(); renderShop(); scheduleStarwaveSave(); }
   const previousCount = getRoom(STARWAVE_BOT_ID)?.messages.length || 0;
   const bot = syncStarwaveBotNotices();
-  if(changed || bot.messages.length !== previousCount) renderWavelink();
+  if(changed || bot.messages.length !== previousCount){
+    renderWavelinkRooms();
+    if(state.currentWavelink === bot.id) renderWavelinkConversation();
+  }
   showLedgerNotification();
 }
 
@@ -19178,7 +19162,7 @@ async function sendShopGift(roomId, giftText){
       text:giftEvent
     });
 
-    state.currentWavelink = room.id;
+    openWavelinkConversation(room);
     wavelinkRoomView = "active";
 
     scheduleStarwaveSave();
@@ -19186,10 +19170,6 @@ async function sendShopGift(roomId, giftText){
     renderBackstage();
     renderShop();
     goPage("wavelink");
-
-    if(window.innerWidth <= 720){
-      $("wlLayout").classList.add("mobile-chat-open");
-    }
 
     const result = await generateWavelinkAi(room, {
       mode:"text",
@@ -20184,10 +20164,6 @@ privateImage:"",
   };
 
   state.wavelinkRooms.push(room);
-
-  if(!state.currentWavelink){
-    state.currentWavelink = room.id;
-  }
 
   return character;
 }
@@ -21707,10 +21683,6 @@ relationship:"陌生人",
   };
 
   state.wavelinkRooms.push(room);
-
-  if(!state.currentWavelink){
-    state.currentWavelink = room.id;
-  }
 
   renderSubscriptions();
   renderWavelink();
@@ -27834,10 +27806,10 @@ async event => {
       state.theme = imported.theme;
     }
 
-    for(const key of ["selectedLorebookId","selectedCharacter","currentWavelink"]){
+    for(const key of ["selectedLorebookId","selectedCharacter"]){
       if(Object.prototype.hasOwnProperty.call(imported,key)) state[key] = imported[key];
     }
-    if(!getRoom(state.currentWavelink)) state.currentWavelink = state.wavelinkRooms[0]?.id || null;
+    closeWavelinkConversation();
     fullRender();
     $("liveInput").value = String(state.live.draft || "");
     await saveStarwaveState(state);
@@ -28146,6 +28118,7 @@ async function init(){
     }
   });
 
+  closeWavelinkConversation();
   starwavePersistenceReady = true;
 
   fullRender();
