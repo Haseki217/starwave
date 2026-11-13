@@ -3305,6 +3305,35 @@ body:is([data-theme="deep"],[data-theme="vampire"]) :is(#deleteLorebook,#loreEnt
   background:rgba(255,231,172,.20);
 }
 
+.role-live-delete-comment{
+  display:grid;
+  place-items:center;
+  margin-inline-start:auto;
+  width:22px;
+  height:22px;
+  padding:0;
+  border:0;
+  border-radius:5px;
+  background:transparent;
+  color:var(--muted);
+}
+
+.role-live-delete-comment:hover,
+.role-live-delete-comment:focus-visible{
+  background:var(--softA);
+  color:var(--red);
+}
+
+.role-live-delete-comment svg{
+  width:13px;
+  height:13px;
+  fill:none;
+  stroke:currentColor;
+  stroke-width:1.8;
+  stroke-linecap:round;
+  stroke-linejoin:round;
+}
+
 .role-viewer-input{
   display:flex;
   gap:5px;
@@ -11727,6 +11756,7 @@ let currentRoleLiveId = "";
 let currentRoleLiveReplay = null;
 let roleReplayGenerating = false;
 let selectedDonationAmount = 100;
+const roleLiveCommentDrafts = new WeakMap();
 
 async function openRoleLive(id){
   if(realTimeEnabled()) advanceRoleLiveRealTime();
@@ -11759,6 +11789,8 @@ async function openRoleLive(id){
   character.liveStory ||= [];
   character.liveChat ||= [];
 
+  const draft = roleLiveCommentDrafts.get(character);
+  $("roleLiveComment").value = draft?.startedAt === character.liveStartedAt ? draft.text : "";
 
   renderRoleLive();
 
@@ -11876,7 +11908,8 @@ async function continueRoleLiveReplay({countTurn=false}={}){
 function buildRoleLiveAiPrompt(
   character,
   first=false,
-  visitors={commenterIds:[],voiceGuestIds:[]}
+  visitors={commenterIds:[],voiceGuestIds:[]},
+  pendingComment=null
 ){
   const elapsedMinutes = Number.isFinite(character.liveReplayElapsedMinutes)
     ? character.liveReplayElapsedMinutes
@@ -11960,9 +11993,7 @@ function buildRoleLiveAiPrompt(
 
 
   const previousChat =
-    (
-      character.liveChat || []
-    )
+    [...(character.liveChat || []),...(pendingComment ? [pendingComment] : [])]
       .slice(-10)
       .map(line => ({
         author:
@@ -11983,8 +12014,7 @@ function buildRoleLiveAiPrompt(
 
   const lastViewerAction =
     sanitizePublicText(
-      character.lastViewerAction ||
-      ""
+      pendingComment ? `聊天室留言：${pendingComment.text}` : character.lastViewerAction || ""
     );
 
   const collabIds =
@@ -12418,10 +12448,10 @@ function formatRoleLiveStoryText(text){
 async function generateRoleLiveNext(
   character,
   first=false,
-  {countTurn=false}={}
+  {countTurn=false,pendingComment=null}={}
 ){
 
-  if(!character){
+  if(!character || (!character.isReplayGeneration && !character.live)){
     return false;
   }
 
@@ -12499,7 +12529,8 @@ async function generateRoleLiveNext(
           buildRoleLiveAiPrompt(
             character,
             first,
-            visitors
+            visitors,
+            pendingComment
           ),
 
         systemInstruction:
@@ -12516,7 +12547,7 @@ ${livePresentationRules()}
 
     if(generationEpoch !== rpGenerationEpoch) return false;
     if(!character.isReplayGeneration &&
-      (!character.live || character.liveStartedAt !== contentStartedAt)) return false;
+      (getCharacter(character.id) !== character || !character.live || character.liveStartedAt !== contentStartedAt)) return false;
 
     const data =
       parseStarwaveLlmJson(
@@ -12571,6 +12602,7 @@ ${livePresentationRules()}
       ? `${stageText}\n🎙 ${publicName(guest)}：${guestText}`
       : stageText;
 
+    if(pendingComment) character.liveChat.push(pendingComment);
     character.liveStory.push({
       id:uid("segment"),
       text:storyText,
@@ -12796,7 +12828,8 @@ ${livePresentationRules()}
     }
 
 
-    const playerAction = character.isReplayGeneration ? "" : character.lastViewerAction;
+    const playerAction = character.isReplayGeneration ? "" :
+      pendingComment ? `聊天室留言：${pendingComment.text}` : character.lastViewerAction;
     character.lastViewerAction = "";
 
     renderExplore();
@@ -12860,6 +12893,7 @@ ${livePresentationRules()}
 }
 
 function clearOtherLiveDrafts(){
+  for(const character of state.characters) roleLiveCommentDrafts.delete(character);
   for(const id of ["roleLiveComment","roleDonationMessage","roleDonationCustom"]){
     $(id).value = "";
   }
@@ -13022,6 +13056,9 @@ function renderRoleLive(){
     );
 }
 
+    if(line.authorId === "player" && !line.donation){
+      head.append(roleLiveCommentDeleteButton(character,content,line));
+    }
     div.append(head,body);
 
     $("roleLiveChat").append(div);
@@ -13029,6 +13066,34 @@ function renderRoleLive(){
 
   $("roleLiveChat").scrollTop =
     $("roleLiveChat").scrollHeight;
+}
+
+function roleLiveCommentDeleteButton(character,content,line){
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "role-live-delete-comment";
+  button.title = "刪除留言";
+  button.setAttribute("aria-label","刪除留言");
+  button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>';
+  const epoch = rpGenerationEpoch;
+  const startedAt = character.liveStartedAt;
+  button.onclick = () => confirmContentDeletion("直播留言",() => {
+    if(epoch !== rpGenerationEpoch || getCharacter(character.id) !== character) return;
+    if(content !== character && roleReplayGenerating && currentRoleLiveReplay?.record === content){
+      toast("重播正在生成，請稍後再刪除留言。");
+      return;
+    }
+    if(content === character ? character.liveStartedAt !== startedAt :
+      !character.liveHistory?.includes(content)) return;
+    if(!content.liveChat?.includes(line)) return;
+    if(content === character && sanitizePublicText(character.lastViewerAction) === `聊天室留言：${line.text}`){
+      character.lastViewerAction = "";
+    }
+    content.liveChat = content.liveChat.filter(item => item !== line);
+    renderRoleLive();
+    scheduleStarwaveSave();
+  });
+  return button;
 }
 
 $("rememberRoleLive").onclick = async () => {
@@ -13081,7 +13146,7 @@ $("refreshRoleLive").onclick =
     await generateRoleLiveNext(character,false,{countTurn:true});
   };
 
-$("sendRoleLiveComment").onclick = () => {
+$("sendRoleLiveComment").onclick = async () => {
   const character =
     getCharacter(currentRoleLiveId);
   if(currentRoleLiveReplay) return;
@@ -13091,31 +13156,34 @@ $("sendRoleLiveComment").onclick = () => {
     return;
   }
 
-  const text =
-    $("roleLiveComment").value.trim();
+  const input = $("roleLiveComment");
+  const rawText = input.value;
+  const text = rawText.trim();
+  if(!character?.live || !text || $("refreshRoleLive").disabled) return;
 
-  if(
-    !character ||
-    !text
-  ){
-    return;
-  }
-
-  character.liveChat.push({
+  const epoch = rpGenerationEpoch;
+  const startedAt = character.liveStartedAt;
+  const pendingComment = {
     id:uid("rlc"),
     authorId:"player",
     accountId:null,
     author:state.player.name,
     text:sanitizePublicText(text)
-  });
+  };
 
-  character.lastViewerAction =
-    `聊天室留言：${text}`;
+  roleLiveCommentDrafts.delete(character);
+  input.value = "";
+  if(await generateRoleLiveNext(character,false,{pendingComment}) ||
+     character.liveChat?.includes(pendingComment)) return;
+  if(epoch !== rpGenerationEpoch || state.live.started ||
+     getCharacter(character.id) !== character || !character.live || character.liveStartedAt !== startedAt) return;
 
-  $("roleLiveComment").value = "";
-
-  renderRoleLive();
-  void generateRoleLiveNext(character);
+  if(currentRoleLiveId === character.id && !currentRoleLiveReplay && !$("roleLiveOverlay").hidden){
+    // Keep anything typed while the model was working.
+    input.value = input.value ? `${rawText} ${input.value}` : rawText;
+  }else{
+    roleLiveCommentDrafts.set(character,{startedAt,text:rawText});
+  }
 };
 
 function updateDonationPresetSelection(){
