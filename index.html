@@ -1412,6 +1412,15 @@ body:is([data-theme="deep"],[data-theme="vampire"]) :is(#deleteLorebook,#loreEnt
   padding:12px;
 }
 
+.wl-sidebar-actions{
+  display:flex;
+  flex-wrap:wrap;
+  justify-content:flex-end;
+  gap:6px;
+}
+
+.wl-sidebar-actions button{white-space:nowrap;}
+
 .wl-brand strong{
   display:block;
   font-size:13px;
@@ -4276,9 +4285,10 @@ body[data-theme="halloween"] .live-stage{
           <small>私人對話 · 群組 · 私下邀約</small>
         </div>
 
-        <button id="createWlGroup" class="primary">
-          ＋ 群組
-        </button>
+        <div class="wl-sidebar-actions">
+          <button id="refreshWl" class="secondary" type="button" hidden>重整</button>
+          <button id="createWlGroup" class="primary">＋ 群組</button>
+        </div>
 
       </div>
 
@@ -4360,10 +4370,6 @@ body[data-theme="halloween"] .live-stage{
             語音
           </button>
 
-          <button id="refreshWl" class="secondary">
-            重整
-          </button>
-
         </div>
 
       </header>
@@ -4405,7 +4411,7 @@ body[data-theme="halloween"] .live-stage{
         <small>觀眾與創作者公開討論區</small>
       </div>
 
-      <button id="refreshForum" class="secondary">
+      <button id="refreshForum" class="secondary" hidden>
         更新最新 2 則
       </button>
 
@@ -4432,7 +4438,7 @@ body[data-theme="halloween"] .live-stage{
 
       <div id="forumOp"></div>
 
-      <div class="actions" style="margin-bottom:8px">
+      <div id="forumReplyRefreshActions" class="actions" style="margin-bottom:8px" hidden>
         <button id="refreshForumReplies" class="secondary" type="button">
           更新回覆
         </button>
@@ -4490,6 +4496,7 @@ body[data-theme="halloween"] .live-stage{
         <button
           id="refreshSns"
           class="secondary"
+          hidden
         >
           更新最新 2 則
         </button>
@@ -5753,16 +5760,16 @@ body[data-theme="halloween"] .live-stage{
     <div class="settings-section">
 
       <div class="note">
-        「生活帳本重整＝關閉」只會停止 AI 產生日常生活收支。
+        「生活帳本更新＝關閉」只會停止 AI 產生日常生活收支。
         只要經濟模式沒有關閉，SHOP 購買、直播打賞、
         收到打賞與主動繳費等玩家明確操作仍會正常執行並記帳。
       </div>
 
       <div class="note" style="margin-top:8px">
-  啟用自動重整後，只要該功能需要 AI 生成新內容，就會發出模型請求並消耗 Token。
-  開啟的自動重整項目越多，整體 Token 用量可能越高。
-  若在意 API 用量或成本，建議改用手動重整，
-  或關閉目前不需要的自動重整項目。
+  啟用自動更新後，只要該功能需要 AI 生成新內容，就會發出模型請求並消耗 Token。
+  開啟的自動更新項目越多，整體 Token 用量可能越高。
+  若在意 API 用量或成本，建議改用手動更新，
+  或關閉目前不需要的自動更新項目。
 </div>
 
       <div class="quick-refresh">
@@ -5797,8 +5804,8 @@ body[data-theme="halloween"] .live-stage{
             class="refreshSelect"
             data-refresh-feature="forum"
           >
-            <option value="auto">自動重整</option>
-            <option value="manual" selected>手動重整</option>
+            <option value="auto">自動更新</option>
+            <option value="manual" selected>手動更新</option>
             <option value="off">關閉</option>
           </select>
         </div>
@@ -5810,8 +5817,8 @@ body[data-theme="halloween"] .live-stage{
             class="refreshSelect"
             data-refresh-feature="sns"
           >
-            <option value="auto">自動重整</option>
-            <option value="manual" selected>手動重整</option>
+            <option value="auto">自動更新</option>
+            <option value="manual" selected>手動更新</option>
             <option value="off">關閉</option>
           </select>
         </div>
@@ -5823,8 +5830,8 @@ body[data-theme="halloween"] .live-stage{
             class="refreshSelect"
             data-refresh-feature="wavelink"
           >
-            <option value="auto">自動重整</option>
-            <option value="manual" selected>手動重整</option>
+            <option value="auto">自動更新</option>
+            <option value="manual" selected>手動更新</option>
             <option value="off">關閉</option>
           </select>
         </div>
@@ -5836,8 +5843,8 @@ body[data-theme="halloween"] .live-stage{
             class="refreshSelect"
             data-refresh-feature="ledger"
           >
-            <option value="auto">自動重整</option>
-            <option value="manual" selected>手動重整</option>
+            <option value="auto">自動更新</option>
+            <option value="manual" selected>手動更新</option>
             <option value="off">關閉</option>
           </select>
         </div>
@@ -9979,7 +9986,7 @@ $("startLive").onclick = () => {
       true;
 
     const sharedDuration =
-      roleLiveDurationTurns();
+      roleLiveDurationSlots();
 
     collabCharacters.forEach(
       character => {
@@ -10003,7 +10010,7 @@ $("startLive").onclick = () => {
               collabRoom.id,
             managedByPlayer:
               true,
-            remainingTurns:
+            durationSlots:
               sharedDuration,
             title:
               collabRoom
@@ -13371,7 +13378,11 @@ function maybeAdvancePeerLife(priorityIds=[]){
   generatePeerLifeAi(pair[0],pair[1]);
 }
 
-function roleLiveDurationTurns(){
+const ROLE_LIVE_SLOT_MS = 30*60*1000;
+const ROLE_LIVE_RP_TURNS_PER_SLOT = 4;
+const ROLE_LIVE_RP_TURNS_PER_DAY = 48 * ROLE_LIVE_RP_TURNS_PER_SLOT;
+
+function roleLiveDurationSlots(){
   return (
     4 +
     Math.floor(
@@ -13504,14 +13515,27 @@ function applyRoleLiveBreak(character,text,raw){
   character.liveBreakStartTurn = startTurn;
   character.liveBreakUntilTurn = startTurn + (raw.longBreak === true ? 100 : Math.min(100,Math.max(10,days*10)));
 }
+function roleLiveStartsToday(character,tickAt){
+  const history = character.liveHistory || [];
+  if(realTimeEnabled()){
+    const day = new Date(tickAt).toDateString();
+    return history.map(record => Number(record.startedAt || 0))
+      .filter(at => at > 0 && at <= tickAt && new Date(at).toDateString() === day);
+  }
+  const turn = Number(state.timeSettings.rpTurnCount || 0);
+  const dayOf = value => Math.floor(Math.max(0,value-1) / ROLE_LIVE_RP_TURNS_PER_DAY);
+  return history.filter(record => record.realTimeAtStart !== true)
+    .map(record => record.startedRpTurn == null ? NaN : Number(record.startedRpTurn))
+    .filter(at => Number.isInteger(at) && at >= 0 && at <= turn && dayOf(at) === dayOf(turn));
+}
+
 function roleLiveCanStartToday(character,tickAt){
   if(roleLiveOnBreak(character,tickAt)) return false;
-  if(!realTimeEnabled()) return true;
-  const day = new Date(tickAt).toDateString();
-  const starts = (character.liveHistory || []).map(record => Number(record.startedAt || 0));
-  if(character.live) starts.push(Number(character.liveStartedAt || 0));
-  const today = starts.filter(at => at > 0 && at <= tickAt && new Date(at).toDateString() === day);
-  return today.length < 2 && today.every(at => tickAt - at >= 6*60*60*1000);
+  const starts = roleLiveStartsToday(character,tickAt);
+  const realTime = realTimeEnabled();
+  const now = realTime ? tickAt : Number(state.timeSettings.rpTurnCount || 0);
+  const minGap = realTime ? 12 * ROLE_LIVE_SLOT_MS : 12 * ROLE_LIVE_RP_TURNS_PER_SLOT;
+  return starts.length < 2 && starts.every(at => now - at >= minGap);
 }
 
 async function enrichRoleLiveTitle(character, startedAt, topic){
@@ -13640,10 +13664,9 @@ function startAutonomousRoleLive(
   character,
   options={}
 ){
-  const remainingTurns =
-    Number(
-      options.remainingTurns
-    );
+  const requestedSlots = Number(options.durationSlots);
+  const durationSlots = Number.isFinite(requestedSlots) && requestedSlots >= 1
+    ? Math.trunc(requestedSlots) : roleLiveDurationSlots();
 
   character.live =
     true;
@@ -13676,15 +13699,8 @@ function startAutonomousRoleLive(
   character.liveTurn =
     0;
 
-  character.liveRemainingTurns =
-    Number.isFinite(remainingTurns) &&
-    remainingTurns > 0
-      ? Math.trunc(remainingTurns)
-      : roleLiveDurationTurns();
-
-  character.liveOfflineTurns =
-    0;
-  character.liveEndsAt = character.liveStartedAt + character.liveRemainingTurns * 30*60*1000;
+  character.liveRemainingTurns = durationSlots * ROLE_LIVE_RP_TURNS_PER_SLOT;
+  character.liveEndsAt = character.liveStartedAt + durationSlots * ROLE_LIVE_SLOT_MS;
 
   character.liveTitle = mixedTitle || timeConflict
     ? roleLiveAutoTitle(character,safeTopic)
@@ -13780,9 +13796,6 @@ function stopAutonomousRoleLive(
   character.liveRemainingTurns =
     0;
 
-  character.liveOfflineTurns =
-    0;
-
    character.lastViewerAction =
     "";
 
@@ -13844,7 +13857,7 @@ function advanceRoleLiveViewerRealTime(now=Date.now()){
 
 function advanceRoleLiveRealTime(){
   if(!realTimeEnabled() || !starwavePersistenceReady) return;
-  const now = Date.now(), interval = 30*60*1000;
+  const now = Date.now(), interval = ROLE_LIVE_SLOT_MS;
   const last = Number(state.timeSettings.lastRoleLiveTick) || now;
   const elapsed = Math.min(48,Math.floor(Math.max(0,now-last)/interval));
   if(!elapsed){
@@ -13917,6 +13930,31 @@ document.addEventListener("visibilitychange",() => {
   }
 });
 
+function roleLiveWavelinkBusyIds(){
+  const busy = new Set();
+  for(const room of state.wavelinkRooms){
+    if(wavelinkGeneratingRooms.has(room.id) ||
+       (voiceCall.active && voiceCall.roomId === room.id)){
+      room.memberIds.forEach(id => busy.add(id));
+    }
+  }
+
+  const turn = Number(state.timeSettings.rpTurnCount || 0);
+  const realTime = realTimeEnabled();
+  const now = Date.now();
+  for(const character of state.characters){
+    const repliedAt = Number(character?.lastWavelinkReplyAt);
+    if(!(repliedAt > 0)) continue;
+    const replyTurn = Number(character.lastWavelinkReplyTurn);
+    // Text replies are saved before countRpTurn increments the counter.
+    const recentlyReplied = realTime
+      ? now >= repliedAt && now < repliedAt + 5*60*1000
+      : turn >= replyTurn && turn <= replyTurn + 2;
+    if(recentlyReplied) busy.add(character.id);
+  }
+  return busy;
+}
+
 function advanceRoleLiveLifecycle(tickAt=Date.now()){
 
   const characters =
@@ -13968,7 +14006,7 @@ function advanceRoleLiveLifecycle(tickAt=Date.now()){
         remaining <= 0
       ){
         remaining =
-          roleLiveDurationTurns();
+          roleLiveDurationSlots() * ROLE_LIVE_RP_TURNS_PER_SLOT;
       }
 
 
@@ -13992,33 +14030,6 @@ function advanceRoleLiveLifecycle(tickAt=Date.now()){
     });
 
 
-  /* 離線中的角色累積離線回合 */
-
-  characters
-    .filter(
-      character =>
-        !character.live &&
-        !justEnded.has(
-          character.id
-        )
-    )
-    .forEach(character => {
-
-      const offlineTurns =
-        Number(
-          character.liveOfflineTurns ||
-          0
-        );
-
-
-      character.liveOfflineTurns =
-        Math.min(
-          20,
-          offlineTurns + 1
-        );
-    });
-
-
   let liveCount =
     characters.filter(
       character =>
@@ -14031,13 +14042,18 @@ function advanceRoleLiveLifecycle(tickAt=Date.now()){
   const maxLive = characters.length;
 
 
-  if(liveCount < maxLive){
+  const realTime = realTimeEnabled();
+  const rpTurn = Number(state.timeSettings.rpTurnCount || 0);
+  const startCheck = realTime || (rpTurn > 0 && rpTurn % ROLE_LIVE_RP_TURNS_PER_SLOT === 0);
+  if(startCheck && liveCount < maxLive){
 
+    const wavelinkBusyIds = roleLiveWavelinkBusyIds();
     const candidates =
       characters
         .filter(
           character =>
             !character.live &&
+            !wavelinkBusyIds.has(character.id) &&
             !justEnded.has(
               character.id
             )
@@ -14061,12 +14077,12 @@ function advanceRoleLiveLifecycle(tickAt=Date.now()){
     );
     if(readyPlan){
       const pair = readyPlan.participantIds.map(getCharacter);
-      const sharedDuration = roleLiveDurationTurns();
+      const sharedDuration = roleLiveDurationSlots();
       pair.forEach((character,index) => {
         const peer = pair[1-index];
         startAutonomousRoleLive(character,{
           collabIds:[peer.id],
-          remainingTurns:sharedDuration,
+          durationSlots:sharedDuration,
           startedAt:tickAt,
           title:`${readyPlan.topic || "雜談"}｜與 ${publicName(peer)} 連動`
         });
@@ -14090,42 +14106,13 @@ function advanceRoleLiveLifecycle(tickAt=Date.now()){
       }
 
 
-      const offlineTurns =
-        Number(
-          character.liveOfflineTurns ||
-          0
-        );
-
-
-      /*
-        離線越久，
-        開播可能性逐漸提高。
-
-        RP 模式最晚累積到 20 個回合就會開播。
-        現實時間不保證每天都開台。
-      */
-
-      const chance = realTimeEnabled()
-        ? .025
-        : Math.min(.30,.05 + offlineTurns * .0125);
-
-
       if(character.plannedLiveAt &&
         !(realTimeEnabled()
           ? tickAt >= character.plannedLiveAt
           : state.timeSettings.rpTurnCount >= character.plannedLiveTurn)) continue;
 
-      const alreadyToday = realTimeEnabled() &&
-        (character.liveHistory || []).some(record =>
-          new Date(record.startedAt).toDateString() === new Date(tickAt).toDateString());
-      if(
-        (character.plannedLiveAt &&
-          (realTimeEnabled()
-            ? tickAt >= character.plannedLiveAt
-            : state.timeSettings.rpTurnCount >= character.plannedLiveTurn)) ||
-        (!realTimeEnabled() && offlineTurns >= 20) ||
-        Math.random() < chance * (alreadyToday ? .20 : 1)
-      ){
+      const chance = roleLiveStartsToday(character,tickAt).length ? .005 : .025;
+      if(character.plannedLiveAt || Math.random() < chance){
         startAutonomousRoleLive(
           character,
           {
@@ -14454,7 +14441,7 @@ function renderStarwaveBotConversation(room){
   avatar.hidden = false;
   $("wlRoomName").textContent = "STARWAVE BOT";
   $("wlRoomMembers").textContent = "通知・帳單・禮物";
-  for(const id of ["archiveWlRoom","deleteWlRoom","startVoiceCall","refreshWl","wlOfflineState","wlCollabState"]){ $(id).hidden = true; }
+  for(const id of ["archiveWlRoom","deleteWlRoom","startVoiceCall","wlOfflineState","wlCollabState"]){ $(id).hidden = true; }
   $("wlInput").disabled = false;
   $("wlInput").placeholder = "輸入訊息";
   $("sendWl").disabled = false;
@@ -14666,7 +14653,8 @@ function buildWavelinkAiPrompt(
   {
     playerText="",
     proactive=false,
-    mode="text"
+    mode="text",
+    inboxRefresh=false
   }={}
 ){
   const members =
@@ -14905,7 +14893,12 @@ ${playerText || "無"}
 
 【生成模式】
 ${
-  proactive
+  inboxRefresh
+    ? `這是玩家查看收件匣，不代表玩家剛發出訊息。
+只依角色與玩家的關係、已發生的劇情、私人記憶及最近對話判斷是否會主動聯絡。
+有自然的理由才生成 1 則角色主動傳給玩家的訊息，避免重複最近的話題或杜撰共同經歷。
+如果沒有適合的理由，請輸出 messages:[]、offlineAction:"none"、collabPlan:null、relationshipUpdates:[]、eventSummary:""。`
+    : proactive
     ? `角色主動聊天。
 不需要等待玩家先問問題。
 可以自然延續話題、分享自己的生活近況，
@@ -15417,7 +15410,8 @@ async function generateWavelinkAi(
     playerText="",
     proactive=false,
     background=false,
-    mode="text"
+    mode="text",
+    inboxRefresh=false
   }={}
 ){
 
@@ -15486,25 +15480,7 @@ const isCurrent =
   const sendButton =
     $("sendWl");
 
-  const refreshButton =
-    $("refreshWl");
-
-
-  const oldRefreshText =
-    refreshButton.textContent;
-
-
-  if(isCurrent){
-
-    sendButton.disabled =
-      true;
-
-    refreshButton.disabled =
-      true;
-
-    refreshButton.textContent =
-      "AI 生成中";
-  }
+  if(isCurrent) sendButton.disabled = true;
 
 
   if(!background){
@@ -15532,7 +15508,8 @@ const isCurrent =
     {
       playerText,
       proactive,
-      mode
+      mode,
+      inboxRefresh
     }
   ),
         systemInstruction:
@@ -15547,7 +15524,8 @@ const isCurrent =
       });
 
 
-    if(generationEpoch !== rpGenerationEpoch) return false;
+    if(generationEpoch !== rpGenerationEpoch || getRoom(room.id) !== room ||
+       (inboxRefresh && (isWavelinkRoomArchived(room) || state.refresh.wavelink !== "manual"))) return false;
 
     const data =
       parseStarwaveLlmJson(
@@ -15579,7 +15557,7 @@ const generatedMessages =
   [];
 
 
-messages.forEach(message => {
+(inboxRefresh ? messages.slice(0,1) : messages).forEach(message => {
 
       const authorId =
         String(
@@ -15597,11 +15575,18 @@ messages.forEach(message => {
         !allowedIds.has(
           authorId
         ) ||
+        !getCharacter(authorId) ||
         !text
       ){
         return;
       }
 
+
+    const character = getCharacter(authorId);
+    if(character){
+      character.lastWavelinkReplyAt = Date.now();
+      character.lastWavelinkReplyTurn = Number(state.timeSettings.rpTurnCount || 0);
+    }
 
     const generatedMessage = pushWlMessage(
       room,
@@ -15633,6 +15618,7 @@ added++;
 
 
     if(!added){
+      if(inboxRefresh && Array.isArray(data.messages) && !data.messages.length) return {added:0};
 
     throw new Error(
   `AI 沒有回傳有效的${interactionLabel}內容。`
@@ -15663,10 +15649,10 @@ added++;
       ).trim();
 
 
-    if(
-      room.id !==
-      state.currentWavelink
-    ){
+    const roomIsVisible = state.ui.page === "wavelink" &&
+      room.id === state.currentWavelink &&
+      (window.innerWidth > 720 || $("wlLayout").classList.contains("mobile-chat-open"));
+    if(!roomIsVisible){
 
       room.unread =
         Number(
@@ -15724,14 +15710,7 @@ return {
       state.currentWavelink
     ){
 
-      sendButton.disabled =
-        false;
-
-      refreshButton.disabled =
-        false;
-
-      refreshButton.textContent =
-        oldRefreshText;
+      sendButton.disabled = !activeRoomMembers(room).length;
     }
   }
 }
@@ -16044,7 +16023,6 @@ function renderWavelinkConversation(){
   if(isStarwaveBot(room)){ renderStarwaveBotConversation(room); return; }
   $("wlBotAvatar").hidden = true;
   $("startVoiceCall").hidden = false;
-  $("refreshWl").hidden = false;
   $("wlInput").placeholder = "傳送 WAVELINK 訊息";
 
   if(!room){
@@ -16066,7 +16044,6 @@ function renderWavelinkConversation(){
 
     $("wlInput").disabled = true;
     $("sendWl").disabled = true;
-    $("refreshWl").disabled = true;
     $("startVoiceCall").disabled = true;
 
     return;
@@ -16204,8 +16181,7 @@ const readOnly =
   activeMembers.length === 0;
 
   $("wlInput").disabled = readOnly;
-  $("sendWl").disabled = readOnly;
-  $("refreshWl").disabled = readOnly;
+  $("sendWl").disabled = readOnly || wavelinkGeneratingRooms.has(room.id);
   $("startVoiceCall").disabled =
     readOnly ||
     Boolean(
@@ -16619,59 +16595,55 @@ $("wlInput").addEventListener("keydown",event => {
   if(!event.repeat) $("sendWl").click();
 });
 
-$("refreshWl").onclick =
-  async () => {
-    if(isStarwaveBot(getRoom(state.currentWavelink))) return;
+function pickWavelinkInboxRoom(){
+  const rooms = state.wavelinkRooms.flatMap(room => {
+    if(room.type !== "direct" || isWavelinkRoomArchived(room) ||
+       wavelinkGeneratingRooms.has(room.id) ||
+       (voiceCall.active && voiceCall.roomId === room.id)) return [];
+    const [character] = activeRoomMembers(room);
+    if(!character) return [];
+    const recent = (room.messages || []).filter(message => !message.system).slice(-12);
+    const hasPlayerContact = recent.some(message => message.authorId === "player");
+    const hasCharacterContact = recent.some(message => message.authorId === character.id);
+    const hasStory = wavelinkKnownMemories(character).some(memory => memory.summary);
+    const knownRelationship = playerRelationshipText(character.relationship) !== "陌生人";
+    const weight = 1 + (knownRelationship ? 2 : 0) + (hasStory ? 2 : 0) +
+      (hasPlayerContact && hasCharacterContact ? 2 : 0);
+    return [{room,weight:weight * (character.live ? .25 : 1)}];
+  });
+  // Leave some rolls without any message, even with several eligible rooms.
+  const total = rooms.reduce((sum,item) => sum + item.weight,0);
+  let roll = Math.random() * total / .75;
+  for(const {room,weight} of rooms){
+    roll -= weight;
+    if(roll < 0) return room;
+  }
+  return null;
+}
 
-    if(
-      state.refresh.wavelink ===
-      "off"
-    ){
+$("refreshWl").onclick = async () => {
+  const button = $("refreshWl");
+  if(state.refresh.wavelink !== "manual" || button.disabled) return;
 
-      toast(
-        "WAVELINK 生成目前已關閉"
-      );
+  const room = pickWavelinkInboxRoom();
+  if(!room){
+    showNotice("沒有新訊息","目前沒有新的 WAVELINK 訊息。");
+    return;
+  }
 
-      return;
+  button.disabled = true;
+  button.textContent = "重整中……";
+  try{
+    const result = await generateWavelinkAi(room,{proactive:true,inboxRefresh:true});
+    if(result && !result.added && state.refresh.wavelink === "manual"){
+      showNotice("沒有新訊息","目前沒有新的 WAVELINK 訊息。");
     }
+  }finally{
+    button.disabled = false;
+    button.textContent = "重整";
+  }
+};
 
-
-    const room =
-      getRoom(
-        state.currentWavelink
-      );
-
-
-    if(!room){
-      return;
-    }
-
-
-    const members =
-      activeRoomMembers(
-        room
-      );
-
-
-    if(!members.length){
-
-      showNotice(
-        "無法重整",
-        "這個對話中的角色目前已不在訂閱角色中。"
-      );
-
-      return;
-    }
-
-
-    await generateWavelinkAi(
-      room,
-      {
-        proactive:true
-      }
-    );
-  };
-  
 $("wlMobileBack").onclick = () =>
   $("wlLayout").classList.remove("mobile-chat-open");
 
@@ -18735,7 +18707,7 @@ function renderLedger(){
       "完整生活經濟已啟用，但日常生活收支重整目前關閉。玩家主動進行的 SHOP、打賞與繳費仍會正常記錄。";
   }else{
     $("ledgerEconomyNotice").textContent =
-      `完整生活經濟已啟用。生活收支目前為「${state.refresh.ledger === "auto" ? "自動重整" : "手動重整"}」。`;
+      `完整生活經濟已啟用。生活收支目前為「${state.refresh.ledger === "auto" ? "自動更新" : "手動更新"}」。`;
   }
 
   const clock = state.economy.billingClock;
@@ -19227,7 +19199,7 @@ async function sendShopGift(roomId, giftText){
     if(!result){
       showNotice(
         "禮物已送出，回覆尚未完成",
-        "贈禮紀錄已保留。請在這段 WAVELINK 對話按重整取得回覆，不必再次贈送。"
+        "贈禮紀錄已保留。你可以回到這段 WAVELINK 對話繼續聊天，不必再次贈送。"
       );
     }
   }finally{
@@ -20193,7 +20165,6 @@ privateImage:"",
     customScenes:[],
     liveTurn:0,
     liveRemainingTurns:0,
-    liveOfflineTurns:0,
     liveCollabIds:[],
     liveCollabRoomId:"",
     liveManagedByPlayer:false,
@@ -21717,7 +21688,6 @@ relationship:"陌生人",
     sceneId:"brightRoom",
      liveTurn:0,
     liveRemainingTurns:0,
-    liveOfflineTurns:0,
     liveCollabIds:[],
     liveCollabRoomId:"",
     liveManagedByPlayer:false,
@@ -22196,10 +22166,7 @@ ${kind === "sns" && post.authorId === "player" ? "這是玩家自己的貼文，
 let refreshingForumReplyId = null;
 
 $("refreshForumReplies").onclick = async () => {
-  if(state.refresh.forum === "off"){
-    toast("論壇重整目前已關閉");
-    return;
-  }
+  if(state.refresh.forum !== "manual") return;
   const post = state.forumPosts.find(item => item.id === currentForumId);
   if(!post) return;
   if(publicReplyPending.has("forum:" + post.id)){
@@ -23130,21 +23097,8 @@ async function generateForumNow(
   }
 }
 
-$("refreshForum").onclick =
-  async () => {
-
-    if(
-      state.refresh.forum ===
-      "off"
-    ){
-      toast(
-        "論壇重整目前已關閉"
-      );
-
-      return;
-    }
-
-
+$("refreshForum").onclick = async () => {
+    if(state.refresh.forum !== "manual") return;
     await generateForumNow(2);
   };
 
@@ -24548,7 +24502,7 @@ async function generateSnsNow(
           if(plannedCharacter && rawPost.plannedLive === true && !plannedCharacter.live &&
             !rawPost.liveBreak && !roleLiveOnBreak(plannedCharacter,Date.now())){
             plannedCharacter.plannedLiveAt = Date.now() + 60*60*1000;
-            plannedCharacter.plannedLiveTurn = Number(state.timeSettings.rpTurnCount || 0) + 2;
+            plannedCharacter.plannedLiveTurn = Number(state.timeSettings.rpTurnCount || 0) + 2 * ROLE_LIVE_RP_TURNS_PER_SLOT;
             plannedCharacter.plannedLiveTitle =
               sanitizePublicAiText(String(rawPost.liveTitle || "").trim());
             plannedCharacter.plannedLiveAnnouncement =
@@ -24737,21 +24691,8 @@ async function generateSnsNow(
     }
   }
 }
-$("refreshSns").onclick =
-  async () => {
-
-    if(
-      state.refresh.sns ===
-      "off"
-    ){
-      toast(
-        "SNS 重整目前已關閉"
-      );
-
-      return;
-    }
-
-
+$("refreshSns").onclick = async () => {
+    if(state.refresh.sns !== "manual") return;
     await generateSnsNow(2);
   };
 
@@ -27506,6 +27447,10 @@ toast(`API Profile ${index+1} 已儲存`);
 }
 
 function syncRefreshSelects(){
+  $("refreshWl").hidden = state.refresh.wavelink !== "manual";
+  $("refreshForum").hidden = state.refresh.forum !== "manual";
+  $("forumReplyRefreshActions").hidden = state.refresh.forum !== "manual";
+  $("refreshSns").hidden = state.refresh.sns !== "manual";
   $$(".refreshSelect").forEach(select => {
     select.value =
       state.refresh[
@@ -27533,6 +27478,7 @@ $$(".refreshSelect").forEach(select => {
     syncRefreshSelects();
     renderLedger();
     checkScheduledLedgerBills();
+    scheduleStarwaveSave();
   };
 });
 
@@ -27568,6 +27514,7 @@ if(preset === "liveonly"){
 }
     syncRefreshSelects();
     renderLedger();
+    scheduleStarwaveSave();
   };
 });
 
