@@ -13917,6 +13917,31 @@ document.addEventListener("visibilitychange",() => {
   }
 });
 
+function roleLiveWavelinkBusyIds(){
+  const busy = new Set();
+  for(const room of state.wavelinkRooms){
+    if(wavelinkGeneratingRooms.has(room.id) ||
+       (voiceCall.active && voiceCall.roomId === room.id)){
+      room.memberIds.forEach(id => busy.add(id));
+    }
+  }
+
+  const turn = Number(state.timeSettings.rpTurnCount || 0);
+  const realTime = realTimeEnabled();
+  const now = Date.now();
+  for(const character of state.characters){
+    const repliedAt = Number(character?.lastWavelinkReplyAt);
+    if(!(repliedAt > 0)) continue;
+    const replyTurn = Number(character.lastWavelinkReplyTurn);
+    // Text replies are saved before countRpTurn increments the counter.
+    const recentlyReplied = realTime
+      ? now >= repliedAt && now < repliedAt + 5*60*1000
+      : turn >= replyTurn && turn <= replyTurn + 2;
+    if(recentlyReplied) busy.add(character.id);
+  }
+  return busy;
+}
+
 function advanceRoleLiveLifecycle(tickAt=Date.now()){
 
   const characters =
@@ -14033,11 +14058,13 @@ function advanceRoleLiveLifecycle(tickAt=Date.now()){
 
   if(liveCount < maxLive){
 
+    const wavelinkBusyIds = roleLiveWavelinkBusyIds();
     const candidates =
       characters
         .filter(
           character =>
             !character.live &&
+            !wavelinkBusyIds.has(character.id) &&
             !justEnded.has(
               character.id
             )
@@ -15602,6 +15629,12 @@ messages.forEach(message => {
         return;
       }
 
+
+    const character = getCharacter(authorId);
+    if(character){
+      character.lastWavelinkReplyAt = Date.now();
+      character.lastWavelinkReplyTurn = Number(state.timeSettings.rpTurnCount || 0);
+    }
 
     const generatedMessage = pushWlMessage(
       room,
