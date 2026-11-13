@@ -3239,6 +3239,12 @@ body:is([data-theme="deep"],[data-theme="vampire"]) :is(#deleteLorebook,#loreEnt
   gap:9px;
 }
 
+.role-live-remaining{
+  display:block;
+  margin-top:3px;
+  color:var(--muted);
+}
+
 .role-live-avatar{
   width:42px;
   height:42px;
@@ -6313,6 +6319,7 @@ body[data-theme="halloween"] .live-stage{
           ></div>
 
           <small id="roleLiveMeta"></small>
+          <small id="roleLiveRemaining" class="role-live-remaining" hidden></small>
         </div>
 
       </div>
@@ -11755,6 +11762,7 @@ $("rememberLive").onclick = async () => {
 let currentRoleLiveId = "";
 let currentRoleLiveReplay = null;
 let roleReplayGenerating = false;
+const roleLiveClosingRecords = new WeakSet();
 let selectedDonationAmount = 100;
 const roleLiveCommentDrafts = new WeakMap();
 
@@ -11847,7 +11855,8 @@ async function continueRoleLiveReplay({countTurn=false}={}){
   const selection = currentRoleLiveReplay;
   const character = getCharacter(selection?.characterId);
   const record = selection?.record;
-  if(!character || !record || roleReplayGenerating || $("refreshRoleLive").disabled) return;
+  if(!character || !record || roleReplayGenerating || roleLiveClosingRecords.has(record) ||
+     $("refreshRoleLive").disabled) return;
   const progress = roleReplayProgress(record);
   if(progress.complete){
     selection.showEnding = !selection.showEnding;
@@ -12511,13 +12520,16 @@ async function generateRoleLiveNext(
     `${profile.provider} 正在生成角色直播……`
   );
 
+  const generationEpoch = rpGenerationEpoch;
+  const contentStartedAt = character.liveStartedAt;
+  const stillCurrent = () => generationEpoch === rpGenerationEpoch &&
+    (character.isReplayGeneration || (getCharacter(character.id) === character &&
+      character.live && character.liveStartedAt === contentStartedAt));
 
   try{
 
-    const generationEpoch = rpGenerationEpoch;
     const contentAt = Date.now();
     const contentRpTurn = Number(state.timeSettings.rpTurnCount || 0);
-    const contentStartedAt = character.liveStartedAt;
     const contentStartedTurn = Number(character.liveStartedTurn || 0);
     const result =
       await generateWithApi({
@@ -12545,9 +12557,7 @@ ${livePresentationRules()}
       });
 
 
-    if(generationEpoch !== rpGenerationEpoch) return false;
-    if(!character.isReplayGeneration &&
-      (getCharacter(character.id) !== character || !character.live || character.liveStartedAt !== contentStartedAt)) return false;
+    if(!stillCurrent()) return false;
 
     const data =
       parseStarwaveLlmJson(
@@ -12864,6 +12874,7 @@ ${livePresentationRules()}
 
   }catch(error){
 
+    if(!stillCurrent()) return false;
     console.error(
       "STARWAVE role live generation failed:",
       error
@@ -12885,10 +12896,11 @@ ${livePresentationRules()}
     button.disabled =
       false;
 
-    button.textContent =
-      oldButtonText;
-    $("sendRoleLiveComment").disabled = Boolean(state.live.started);
-    $("sendRoleDonation").disabled = Boolean(state.live.started);
+    if(currentRoleLiveId || currentRoleLiveReplay){
+      syncRoleLiveControls();
+    }else{
+      button.textContent = oldButtonText;
+    }
   }
 }
 
@@ -12899,6 +12911,52 @@ function clearOtherLiveDrafts(){
   }
   selectedDonationAmount = 0;
   updateDonationPresetSelection();
+}
+
+function roleLiveDeadline(character){
+  return Number(character.liveEndsAt) ||
+    (Number(character.liveStartedAt) > 0 ? Number(character.liveStartedAt) + 3*60*60*1000 : 0);
+}
+
+function renderRoleLiveRemaining(now=Date.now()){
+  const label = $("roleLiveRemaining");
+  const character = getCharacter(currentRoleLiveId);
+  let text = "";
+  if(currentRoleLiveReplay?.endedWhileWatching){
+    const record = currentRoleLiveReplay.record;
+    text = roleLiveClosingRecords.has(record) ? "本場直播已結束，正在補上主播的道別……" :
+      record.replayComplete ? "本場直播已結束，收尾已保存。" : "本場直播已結束，可以繼續觀看重播。";
+  }else if(!currentRoleLiveReplay && character?.live && !character.liveManagedByPlayer){
+    if(realTimeEnabled()){
+      const end = roleLiveDeadline(character);
+      if(end) text = `預計剩餘約 ${Math.max(0,Math.ceil((end-now)/60000))} 分鐘`;
+    }else{
+      const turns = Number(character.liveRemainingTurns);
+      if(turns > 0) text = `預計剩餘 ${turns} 個 RP 回合`;
+    }
+  }
+  label.textContent = text;
+  label.hidden = !text;
+}
+
+function syncRoleLiveControls(){
+  const selection = currentRoleLiveReplay;
+  const replay = selection?.record || null;
+  const button = $("refreshRoleLive");
+  const closing = Boolean(replay && roleLiveClosingRecords.has(replay));
+  button.setAttribute("aria-disabled",String(button.disabled || closing));
+  if(closing){
+    button.textContent = "主播收尾中……";
+  }else if(!button.disabled){
+    const complete = replay && roleReplayProgress(replay).complete;
+    button.textContent = replay
+      ? complete
+        ? (selection.showEnding ? "返回直播內容" : "觀看結束畫面")
+        : selection.endedWhileWatching ? "繼續觀看重播／下一段" : "繼續觀看／下一段"
+      : "繼續直播內容／下一段";
+  }
+  $("sendRoleLiveComment").disabled = Boolean(replay || state.live.started || button.disabled);
+  $("sendRoleDonation").disabled = Boolean(replay || state.live.started || button.disabled);
 }
 
 function renderRoleLive(){
@@ -12918,16 +12976,10 @@ function renderRoleLive(){
 
   $("roleLiveTitle").textContent =
     sanitizePublicText(replay ? replay.title : character.liveTitle);
-  const progress = replay ? roleReplayProgress(replay) : null;
   const ending = Boolean(replay && currentRoleLiveReplay.showEnding);
   $("refreshRoleLive").hidden = false;
-  if(!$("refreshRoleLive").disabled){
-    $("refreshRoleLive").textContent = replay
-      ? progress.complete
-        ? (ending ? "返回直播內容" : "觀看結束畫面")
-        : "繼續觀看／下一段"
-      : "繼續直播內容／下一段";
-  }
+  syncRoleLiveControls();
+  renderRoleLiveRemaining();
   $("roleLiveStory").hidden = ending;
   $("roleReplayEnding").hidden = !ending;
   $("roleLiveStatusTag").textContent = ending ? "直播已結束" : replay ? "重播" : "LIVE";
@@ -12935,11 +12987,9 @@ function renderRoleLive(){
   $("roleLiveComment").closest(".role-viewer-input").hidden = Boolean(replay);
   if(state.live.started) clearOtherLiveDrafts();
   $("roleLiveComment").disabled = Boolean(state.live.started);
-  $("sendRoleLiveComment").disabled = Boolean(state.live.started) || $("refreshRoleLive").disabled;
   $("roleLiveComment").placeholder = state.live.started ? "直播中暫停其他直播的留言" : "在聊天室留言……";
   $("roleDonationMessage").disabled = Boolean(state.live.started);
   $("roleDonationMessage").placeholder = "打賞附言（選填）";
-  $("sendRoleDonation").disabled = Boolean(state.live.started) || $("refreshRoleLive").disabled;
   $("roleDonationCustom").closest(".donation-panel").hidden = Boolean(replay) || Boolean(state.live.started);
 
   const collabNames =
@@ -13849,6 +13899,56 @@ function startAutonomousRoleLive(
 }
 
 
+async function finishWatchedRoleLive(character,record){
+  if(!record.liveStory?.length || record.replayComplete || roleLiveClosingRecords.has(record)) return;
+  const epoch = rpGenerationEpoch;
+  roleLiveClosingRecords.add(record);
+  let farewell = "「今天就先到這裡，謝謝大家陪我看到最後。下次見！」";
+  try{
+    renderRoleLive();
+    const profile = state.api.profiles[state.api.active];
+    if(String(profile?.apiKey || "").trim() && String(profile?.model || "").trim()){
+      const context = {
+        creator:publicCharacterContext(character),
+        title:sanitizePublicText(record.title),
+        recentStory:record.liveStory.slice(-3).map(segment => sanitizePublicText(segment.text).slice(-1200))
+      };
+      const result = await generateWithApi({
+        systemInstruction:"替 STARWAVE 公開直播寫最後的主播台詞。只依公開資料與這場已出現的內容，不得替玩家發言。輸出有效 JSON。",
+        prompt:`直播已到結束時間。接續最後一段正在做的事，用一兩句台詞簡短收束。沒完成的事可以留到下次，不要聲稱已完成，不要另開話題或再安排下一個地點。保持主播一貫口吻，最後務必向觀眾明確道別。
+本場公開資料：${JSON.stringify(context)}
+只輸出 {"farewell":"主播向觀眾說出的台詞，不要加說話者標籤、外層引號或旁白"}。`,
+        maxTokens:240,json:true,timeoutMs:12000
+      });
+      const text = sanitizePublicText(parseStarwaveLlmJson(result.text)?.farewell)
+        .trim().replace(/^[「『"“]+|[」』"”]+$/g,"").trim();
+      if(text && text.length <= 200 && /(?:下次見|下回見|再見|掰掰|拜拜|拜了|晚安|bye)[\s！!。～~]*$/iu.test(text)){
+        farewell = `「${text}」`;
+      }
+    }
+  }catch(error){
+    console.warn("STARWAVE live farewell fallback:",error);
+  }finally{
+    roleLiveClosingRecords.delete(record);
+  }
+  if(epoch !== rpGenerationEpoch || !getCharacter(character.id)?.liveHistory?.includes(record) || record.replayComplete) return;
+  const progress = roleReplayProgress(record);
+  record.liveStory.push({
+    id:uid("segment"),
+    text:`${farewell}\n\n直播畫面隨後切到結束頁面。`,
+    elapsedMinutes:Math.max(0,(Number(record.endedAt)-Number(record.startedAt))/60000),
+    elapsedTurns:Math.max(0,Number(record.endedRpTurn)-Number(record.startedRpTurn))
+  });
+  record.replayCursor = progress.total;
+  record.replayComplete = true;
+  scheduleStarwaveSave();
+  if(currentRoleLiveReplay?.record === record && !$("roleLiveOverlay").hidden){
+    renderRoleLive();
+    const story = $("roleLiveStory");
+    story.scrollTop = story.scrollHeight;
+  }
+}
+
 function stopAutonomousRoleLive(
   character,
   endedAt=Date.now()
@@ -13862,8 +13962,7 @@ function stopAutonomousRoleLive(
         ]
       : [];
 
-  character.liveHistory ||= [];
-  character.liveHistory.unshift({
+  const record = {
     id:uid("roleReplay"),
     title:roleLiveCleanTitle(character.liveTitle) || "直播",
     startedAt:character.liveStartedAt || endedAt,
@@ -13877,7 +13976,9 @@ function stopAutonomousRoleLive(
     collabIds:formerCollabIds,
     liveStory:deepClone(character.liveStory || []),
     liveChat:deepClone(character.liveChat || [])
-  });
+  };
+  character.liveHistory ||= [];
+  character.liveHistory.unshift(record);
   character.liveStartedAt = 0;
   character.liveUsesRealTime = false;
   character.liveLastGeneratedAt = 0;
@@ -13926,15 +14027,14 @@ function stopAutonomousRoleLive(
       character.id &&
     !$("roleLiveOverlay").hidden
   ){
-    $("roleLiveOverlay").hidden =
-      true;
-
-    currentRoleLiveId =
-      "";
-
-    toast(
-      `${publicName(character)} 已結束直播`
-    );
+    currentRoleLiveId = "";
+    currentRoleLiveReplay = {characterId:character.id,record,showEnding:false,endedWhileWatching:true};
+    if(record.liveStory.length){
+      void finishWatchedRoleLive(character,record);
+    }else{
+      renderRoleLive();
+    }
+    toast(`${publicName(character)} 已結束直播`);
   }
 }
 
@@ -13960,9 +14060,7 @@ function advanceRoleLiveRealTime(){
     let ended = false;
     state.characters.filter(character => character.live && !character.liveManagedByPlayer)
       .forEach(character => {
-        const endsAt = Number(character.liveEndsAt) ||
-          (Number(character.liveStartedAt) > 0
-            ? Number(character.liveStartedAt) + 3*60*60*1000 : 0);
+        const endsAt = roleLiveDeadline(character);
         if(endsAt && now >= endsAt){
           stopAutonomousRoleLive(character,endsAt);
           ended = true;
@@ -13970,6 +14068,7 @@ function advanceRoleLiveRealTime(){
       });
     if(ended){renderExplore();renderSubscriptions();scheduleStarwaveSave();}
     advanceRoleLiveViewerRealTime(now);
+    if(!$("roleLiveOverlay").hidden) renderRoleLiveRemaining(now);
     return;
   }
   const latestTick = now-((now-last)%interval);
@@ -13977,6 +14076,7 @@ function advanceRoleLiveRealTime(){
   state.timeSettings.lastRoleLiveTick = latestTick;
   for(let i=0;i<elapsed;i++) advanceRoleLiveLifecycle(firstTick+i*interval);
   advanceRoleLiveViewerRealTime(now);
+  if(!$("roleLiveOverlay").hidden) renderRoleLiveRemaining(now);
   scheduleStarwaveSave();
 }
 
@@ -14078,10 +14178,8 @@ function advanceRoleLiveLifecycle(tickAt=Date.now()){
     )
     .forEach(character => {
 
-      const endsAt = Number(character.liveEndsAt) ||
-        (realTimeEnabled() && Number(character.liveStartedAt) > 0
-          ? Number(character.liveStartedAt) + 3*60*60*1000 : 0);
       if(realTimeEnabled()){
+        const endsAt = roleLiveDeadline(character);
         if(endsAt && tickAt >= endsAt){
           justEnded.add(character.id);
           stopAutonomousRoleLive(character,endsAt);
@@ -25204,6 +25302,7 @@ function countRpTurn(summary){
   if(!realTimeEnabled()){
     advanceRoleLiveMetrics();
     advanceRoleLiveLifecycle();
+    if(!$("roleLiveOverlay").hidden) renderRoleLiveRemaining();
   }
 
   if(settings.counter >= interval){
@@ -27121,7 +27220,9 @@ async function generateWithApi({
 
   temperature = null,
 
-  json = false
+  json = false,
+
+  timeoutMs = 120000
 
 } = {}){
 
@@ -27222,7 +27323,7 @@ async function generateWithApi({
         timeout = setTimeout(() => {
           reject(new Error("AI 回應逾時，請稍後重試。"));
           controller.abort();
-        },120000);
+        },timeoutMs);
       })
     ]);
   }finally{
