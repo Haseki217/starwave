@@ -2078,12 +2078,18 @@ body:is([data-theme="deep"],[data-theme="vampire"]) :is(#deleteLorebook,#loreEnt
   padding:12px 14px;
   border:1px solid rgba(88,151,177,.15);
   border-radius:12px;
-  background:var(--offline-panel-strong);
-  color:var(--offline-text);
+  background:#263341;
+  color:var(--live-ai-text,#ffffff);
   font-size:12px;
   line-height:1.72;
   overflow-wrap:anywhere;
 }
+
+body:is([data-theme="deep"],[data-theme="vampire"]) .offline-story-overlay{
+  background:var(--offline-panel-strong);
+}
+
+.offline-story-overlay > div + div{margin-top:7px;}
 
 .offline-control{
   margin-top:10px;
@@ -5650,14 +5656,14 @@ body[data-theme="halloween"] .live-stage{
     </div>
 
       <div class="settings-section">
-        <div class="section-head"><h3>直播文字顏色</h3></div>
+        <div class="section-head"><h3>直播與線下劇情文字顏色</h3></div>
         <div class="setting-row">
-          <div><strong>我的文字</strong><small>直播畫面中自己送出的文字顏色。</small></div>
-          <input id="livePlayerTextColor" type="color" value="#9be1ff" aria-label="我的直播文字顏色">
+          <div><strong>我的文字</strong><small>在直播與線下送出的文字顏色。</small></div>
+          <input id="livePlayerTextColor" type="color" value="#9be1ff" aria-label="我的文字顏色">
         </div>
         <div class="setting-row">
-          <div><strong>AI 生成文字</strong><small>直播畫面中接續劇情的文字顏色。</small></div>
-          <input id="liveAiTextColor" type="color" value="#ffffff" aria-label="AI 生成直播文字顏色">
+          <div><strong>AI 生成文字</strong><small>直播與線下的 AI 回覆文字顏色。</small></div>
+          <input id="liveAiTextColor" type="color" value="#ffffff" aria-label="AI 回覆文字顏色">
         </div>
       </div>
 
@@ -17702,7 +17708,10 @@ $("offlineTime").textContent =
   const story = $("offlineStory");
   story.hidden = !entries.length;
   story.innerHTML = entries
-    .map(entry => `<div style="margin-bottom:7px">${esc(entry.text)}</div>`)
+    .map(entry => {
+      const textClass = entry.authorId === "player" ? "live-story-input" : "live-story-ai";
+      return `<div class="${textClass}">${esc(entry.text)}</div>`;
+    })
     .join("");
 }
 
