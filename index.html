@@ -2017,46 +2017,13 @@ body:is([data-theme="deep"],[data-theme="vampire"]) :is(#deleteLorebook,#loreEnt
   font-size:10px;
 }
 
-.offline-participants{
-  position:absolute;
-  left:17px;
-  top:64px;
-  z-index:3;
-  display:flex;
-  gap:5px;
-}
-
-.participant-mini{
-  width:29px;
-  height:29px;
-  display:grid;
-  place-items:center;
-  overflow:hidden;
-  border:2px solid rgba(255,255,255,.82);
-  border-radius:50%;
-  background:var(--softA);
-  color:var(--text);
-  font-size:8px;
-}
-
-.participant-mini img{
-  width:100%;
-  height:100%;
-  object-fit:cover;
-}
-
 .offline-scene-center{
   position:absolute;
   left:50%;
-  top:40%;
+  top:34%;
   transform:translate(-50%,-50%);
   width:min(620px,88%);
   text-align:center;
-}
-
-.offline-scene-center h3{
-  margin:9px 0 4px;
-  font-size:18px;
 }
 
 .offline-scene-center p{
@@ -5112,15 +5079,10 @@ body[data-theme="halloween"] .live-stage{
 
             </div>
 
-            <div
-              id="offlineParticipants"
-              class="offline-participants"
-            ></div>
-
-            <div
-              id="offlineSceneCenter"
-              class="offline-scene-center"
-            ></div>
+            <div class="offline-scene-center">
+              <div class="fallback-star" style="font-size:54px" aria-hidden="true">✦</div>
+              <p id="offlineRelationship"></p>
+            </div>
 
             <div
               id="offlineStory"
@@ -17677,14 +17639,20 @@ function offlineStoryEntries(character){
   return (state.offline.stories[character.id] || []).filter(entry => !entry.system && entry.text);
 }
 
+function offlineTurnInput(entries,reply,index=entries.indexOf(reply)){
+  if(index < 0) return null;
+  const input = reply.playerEntryId
+    ? entries.slice(0,index).find(entry => entry.id === reply.playerEntryId)
+    : entries[index-1];
+  return input?.authorId === "player" ? input : null;
+}
+
 function getOfflineReplyToReroll(character){
   const entries = offlineStoryEntries(character);
   const reply = entries.at(-1);
   if(reply?.authorId !== character.id) return null;
-  const input = reply.playerEntryId
-    ? entries.find(entry => entry.id === reply.playerEntryId)
-    : entries.at(-2);
-  return input?.authorId === "player" ? {reply,input} : null;
+  const input = offlineTurnInput(entries,reply);
+  return input ? {reply,input} : null;
 }
 
 function canManageOfflineStory(character){
@@ -17692,11 +17660,19 @@ function canManageOfflineStory(character){
     state.offline.currentCharacterId === character.id && character.offlineStatus === "unlocked";
 }
 
-function editOfflineEntry(character,entry){
-  if(!canManageOfflineStory(character)) return;
-  openContentEditor("編輯線下劇情",[{label:"文字內容",value:entry.text}],([value]) => {
-    if(!canManageOfflineStory(character) || !offlineStoryEntries(character).includes(entry)) return false;
-    entry.text = value;
+function editOfflineTurn(character,reply){
+  if(!canManageOfflineStory(character) || reply.authorId !== character.id) return;
+  const entries = offlineStoryEntries(character);
+  if(!entries.includes(reply)) return;
+  const input = offlineTurnInput(entries,reply);
+  const fields = input ? [{label:"玩家內容",value:input.text}] : [];
+  fields.push({label:"AI 回覆",value:reply.text});
+  openContentEditor("編輯線下回合",fields,values => {
+    const current = offlineStoryEntries(character);
+    if(!canManageOfflineStory(character) || !current.includes(reply) ||
+       offlineTurnInput(current,reply) !== input) return false;
+    if(input) input.text = values[0];
+    reply.text = values.at(-1);
     renderOfflineStage();
     scheduleStarwaveSave();
   });
@@ -17725,18 +17701,27 @@ function removeOfflineReplyEffects(character,reply,{restoreRelationship}){
   return true;
 }
 
-function deleteOfflineEntry(character,entry){
-  if(!canManageOfflineStory(character)) return;
-  confirmContentDeletion("線下劇情",() => {
-    if(!canManageOfflineStory(character)) return;
-    const story = state.offline.stories[character.id];
-    if(!story?.includes(entry)) return;
-    const wasLatest = offlineStoryEntries(character).at(-1) === entry;
-    const refunded = removeOfflineReplyEffects(character,entry,{restoreRelationship:wasLatest});
-    state.offline.stories[character.id] = story.filter(item => item !== entry);
-    if(refunded){ renderLedger(); renderShop(); }
-    renderOfflineStage();
-    scheduleStarwaveSave();
+function deleteOfflineTurn(character,reply){
+  if(!canManageOfflineStory(character) || reply.authorId !== character.id) return;
+  const entries = offlineStoryEntries(character);
+  if(!entries.includes(reply)) return;
+  const input = offlineTurnInput(entries,reply);
+  showConfirm({
+    title:"刪除這回合？",
+    message:input ? "這會一起刪除玩家內容和 AI 回覆，無法復原。" : "這則回覆沒有對應的玩家內容。刪除後無法復原。",
+    okText:"刪除",
+    onConfirm(){
+      if(!canManageOfflineStory(character)) return;
+      const current = offlineStoryEntries(character);
+      if(!current.includes(reply) || offlineTurnInput(current,reply) !== input) return;
+      const latestReply = current.findLast(entry => entry.authorId === character.id);
+      const refunded = removeOfflineReplyEffects(character,reply,{restoreRelationship:latestReply === reply});
+      state.offline.stories[character.id] = state.offline.stories[character.id]
+        .filter(entry => entry !== reply && entry !== input);
+      if(refunded){ renderLedger(); renderShop(); }
+      renderOfflineStage();
+      scheduleStarwaveSave();
+    }
   });
 }
 
@@ -17776,29 +17761,8 @@ $("offlineTime").textContent =
     ? currentRpDateTime()
     : "";
 
-  $("offlineParticipants").innerHTML = "";
-
-  const mini = document.createElement("div");
-  mini.className = "participant-mini";
-
-  setImageBox(
-    mini,
-    character.privateImage,
-    initials(character.name)
-  );
-
-  $("offlineParticipants").append(mini);
-
-  $("offlineSceneCenter").innerHTML = `
-    <div
-      class="fallback-star"
-      style="font-size:54px"
-    >✦</div>
-
-    <h3>${esc(character.name)}</h3>
-
-    <p>${esc(playerRelationshipText(character.relationship))}</p>
-  `;
+  $("offlineRelationship").textContent =
+    playerRelationshipText(character.relationship);
 
   const entries = offlineStoryEntries(character);
   const pending = offlineRequest?.character === character ? offlineRequest.input : null;
@@ -17811,12 +17775,15 @@ $("offlineTime").textContent =
     const text = document.createElement("div");
     text.className = entry.authorId === "player" ? "live-story-input" : "live-story-ai";
     text.textContent = entry.text;
-    const actions = contentManageActions(
-      () => editOfflineEntry(character,entry),
-      () => deleteOfflineEntry(character,entry)
-    );
-    for(const button of actions.children) button.disabled = Boolean(offlineRequest);
-    row.append(text,actions);
+    row.append(text);
+    if(entry.authorId === character.id){
+      const actions = contentManageActions(
+        () => editOfflineTurn(character,entry),
+        () => deleteOfflineTurn(character,entry)
+      );
+      for(const button of actions.children) button.disabled = Boolean(offlineRequest);
+      row.append(actions);
+    }
     story.append(row);
   });
   if(pending){
