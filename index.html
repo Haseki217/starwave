@@ -1939,6 +1939,11 @@ body:is([data-theme="deep"],[data-theme="vampire"]) :is(#deleteLorebook,#loreEnt
   line-height:1.9;
 }
 
+#offlineHub{
+  max-inline-size:920px;
+  margin-inline:auto;
+}
+
 .offline-rail{
   display:flex;
   align-items:center;
@@ -2077,6 +2082,7 @@ body:is([data-theme="deep"],[data-theme="vampire"]) :is(#deleteLorebook,#loreEnt
   color:var(--offline-text);
   font-size:12px;
   line-height:1.72;
+  overflow-wrap:anywhere;
 }
 
 .offline-control{
@@ -17691,31 +17697,13 @@ $("offlineTime").textContent =
     <p>${esc(playerRelationshipText(character.relationship))}</p>
   `;
 
-  state.offline.stories[character.id] ||= [
-    {
-      system:true,
-      text:
-        "這是一段私人線下故事。內容不會自動成為粉絲、論壇、SNS 或其他角色的公開知識。"
-    }
-  ];
-
-  $("offlineStory").innerHTML =
-    state.offline.stories[character.id]
-      .map(entry => `
-        <div
-          style="
-            margin-bottom:7px;
-            ${
-              entry.system
-                ? "color:var(--offline-muted);font-size:10px"
-                : ""
-            }
-          "
-        >
-          ${esc(entry.text)}
-        </div>
-      `)
-      .join("");
+  const entries = (state.offline.stories[character.id] || [])
+    .filter(entry => !entry.system && entry.text);
+  const story = $("offlineStory");
+  story.hidden = !entries.length;
+  story.innerHTML = entries
+    .map(entry => `<div style="margin-bottom:7px">${esc(entry.text)}</div>`)
+    .join("");
 }
 
   function buildOfflineAiPrompt(
