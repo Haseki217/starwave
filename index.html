@@ -17798,7 +17798,41 @@ $("offlineTime").textContent =
   reroll.disabled = Boolean(offlineRequest);
 }
 
-  function buildOfflineAiPrompt(
+function offlinePrivateNames(character,playerText){
+  const playerName = String(state.player.realName || "").trim();
+  const relationship = playerRelationshipText(character.relationship).normalize("NFKC");
+  const characterName = String(character.name || "").trim();
+  const explicitlyUnknown = /(?:不知道|不曉得|不清楚|不記得|尚未知道|未曾得知)[^。！？；\n]{0,12}(?:本名|真名|真實姓名)|只知道(?:藝名|網名|直播名|主播名)|(?:還沒|尚未|從未|未曾|沒有)(?:互相|彼此)?(?:交換|告知|透露|說過)[^。！？；\n]{0,12}(?:本名|真名|真實姓名)/.test(relationship);
+  const knownOfflineRelationship = relationship.split(/[，,。！？；;\n]/).some(part => {
+    if(/(?:不是|並非|不算|沒有|未必|假扮|假裝|自稱|如果|以為|誤以為|像是|希望|想成為|線上認識|網路認識|只在網路|還沒見過|尚未見過|從未見過)/.test(part)) return false;
+    return /青梅竹馬|從小(?:就)?(?:認識|相識|一起長大)|一起長大|(?:兒時|童年)(?:玩伴|好友)|(?:現實中|私下|線下)(?:早就|早已|原本就|已經|就)?(?:互相|彼此)?(?:認識|相識)|(?:互相|彼此|雙方)[^。！？；\n]{0,8}(?:交換|知道)[^。！？；\n]{0,8}(?:本名|真名|真實姓名)|(?:已|曾|早就)(?:經)?(?:互換|交換)(?:彼此的|對方的)?(?:本名|真名|真實姓名)|(?:角色|對方)(?:早已|早就|已經)?知道(?:玩家|我的)(?:的)?(?:本名|真名|真實姓名)|玩家(?:已|曾|早就)(?:經)?(?:告知|透露)[^。！？；\n]{0,8}(?:自己的)?(?:本名|真名|真實姓名)/.test(part);
+  });
+
+  let disclosedByPlayer = false;
+  if(playerName){
+    const escapedName = playerName.normalize("NFKC").replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+    const statement = new RegExp(`(?:^|[。！？!?，,；;\\s「『（(])(?:我的(?:本名|真名|真實姓名)(?:是|叫|叫做|[:：])?|我(?:本名|真名)(?:是|叫|叫做|[:：])?|我叫(?:做)?)\\s*[「『"']?${escapedName}(?=$|[」』"'。！？!?，,；;\\s]|[啦喔哦呀呢啊](?:$|[。！？!?，,；;\\s]))`,"i");
+    const saidName = text => statement.test(String(text || "").normalize("NFKC").trim());
+    const playerToldName = entries => (entries || []).some(entry =>
+      !entry.system && entry.authorId === "player" && saidName(entry.text));
+    disclosedByPlayer = saidName(playerText) || (!explicitlyUnknown && (
+      playerToldName(state.offline.stories[character.id]) ||
+      (state.wavelinkRooms || []).some(room =>
+        room.type === "direct" && room.memberIds?.length === 1 &&
+        room.memberIds[0] === character.id && playerToldName(room.messages))
+    ));
+  }
+
+  const canUsePlayerName = Boolean(state.player.realNamePublic || disclosedByPlayer ||
+    (!explicitlyUnknown && knownOfflineRelationship));
+  return {
+    characterRealName:characterName,
+    playerRealName:canUsePlayerName ? playerName : "",
+    knowsPlayerName:canUsePlayerName
+  };
+}
+
+function buildOfflineAiPrompt(
   character,
   playerText,
   {replacing=null,wallet=state.economy.wallet,recordEconomy=true}={}
@@ -17809,6 +17843,7 @@ $("offlineTime").textContent =
     );
 
 
+  const names = offlinePrivateNames(character,playerText);
   const recentStory =
     (
       state.offline
@@ -17824,15 +17859,11 @@ $("offlineTime").textContent =
       .slice(-18)
       .map(entry => ({
         author:
-          entry.authorId ===
-            "player"
-            ? state.player.name
-            : (
-                entry.authorId ===
-                  character.id
-                  ? character.name
-                  : "故事"
-              ),
+          entry.authorId === "player"
+            ? (names.playerRealName || "玩家")
+            : entry.authorId === character.id
+              ? (names.characterRealName || "角色")
+              : "故事",
 
         text:
           String(
@@ -17842,7 +17873,7 @@ $("offlineTime").textContent =
 
 
   const playerPublic = {
-    name:
+    streamerName:
       state.player.name,
 
     channel:
@@ -17908,16 +17939,15 @@ selfCard 是角色設定資料，
 【玩家公開資料】
 ${JSON.stringify(playerPublic)}
 
-角色不得憑空知道玩家的：
-- 真實姓名
-- 私人外貌
-- 私人背景
-- 未曾告知的秘密資訊
+【本場線下稱呼】
+角色本名（敘事使用）：${JSON.stringify(names.characterRealName || null)}
+角色目前可使用的玩家本名：${JSON.stringify(names.playerRealName || null)}
+角色已從關係設定、公開資料或玩家親口告知得知玩家本名：${names.knowsPlayerName ? "是" : "未確認，依既有設定及實際往來判斷"}
 
-但如果這些資訊已經存在於
-角色自己的 knownMemories
-或過去線下故事中，
-角色可以正常記得。
+敘事要點名本場角色時，用角色本名，不要用主播名；可以自然用代名詞，不必反覆寫全名。敘事使用角色本名，不代表玩家已知道；角色已向玩家告知本名，或雙方依設定原本就認識時，也不必再介紹角色本名。
+知道玩家本名時，私下點名稱呼就用本名或兩人早已習慣的私人暱稱，不用玩家的主播名稱。青梅竹馬、現實舊識等依設定既已知道彼此本名的關係，不重演初次見面或交換本名，即使這是第一段線下劇情。
+若上述沒有提供玩家本名，只沿用角色親耳聽過、設定明確寫明已知，或在既有私人互動及已知記憶中確實交代過的稱呼。如果設定明確指出角色尚不知道本名，不得從其他背景猜測；本回合玩家親口告知後才可接續。角色自己先前猜的名字或錯用的主播名不算證據。仍不知道時，用「你」等自然稱呼；不得編造本名，也不要硬安排交換本名。
+解鎖線下只代表能進行私人互動。明確尚不知道本名的設定，優先於一般關係推斷；玩家在本回合直接告知就可自然接續。其他未告知且無合理來源的私人資料不能自行得知。
 
 【目前關係】
 ${playerRelationshipText(character.relationship)}
@@ -18113,6 +18143,7 @@ async function generateOfflineAi(character,input,{replacing=null}={}){
 嚴格遵守角色設定與資訊差。
 不得替玩家擅自說話或行動。
 角色只能使用自己合理知道的資訊。
+敘事依線下稱呼規則用角色本名，角色也要按已知姓名與既有關係稱呼玩家。
 請依指定格式輸出有效 JSON。`,
       json:true
     });
