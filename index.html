@@ -2091,6 +2091,15 @@ body:is([data-theme="deep"],[data-theme="vampire"]) .offline-story-overlay{
 
 .offline-story-overlay > div + div{margin-top:7px;}
 
+.offline-story-overlay .content-manage-actions{
+  position:static;
+  justify-content:flex-end;
+}
+
+.offline-story-overlay .content-manage-actions button{
+  color:var(--live-ai-text,#ffffff);
+}
+
 .offline-control{
   margin-top:10px;
   padding:10px;
@@ -5128,6 +5137,8 @@ body[data-theme="halloween"] .live-stage{
             ></textarea>
 
             <div class="actions">
+
+              <button id="rerollOfflineReply" class="secondary" type="button" hidden>↻ 重刷回覆</button>
 
               <button
                 id="rememberOffline"
@@ -17660,6 +17671,92 @@ function renderOffline(){
   renderOfflineStage();
 }
 
+let offlineRequest = null;
+
+function offlineStoryEntries(character){
+  return (state.offline.stories[character.id] || []).filter(entry => !entry.system && entry.text);
+}
+
+function getOfflineReplyToReroll(character){
+  const entries = offlineStoryEntries(character);
+  const reply = entries.at(-1);
+  if(reply?.authorId !== character.id) return null;
+  const input = reply.playerEntryId
+    ? entries.find(entry => entry.id === reply.playerEntryId)
+    : entries.at(-2);
+  return input?.authorId === "player" ? {reply,input} : null;
+}
+
+function canManageOfflineStory(character){
+  return !offlineRequest && getCharacter(character.id) === character &&
+    state.offline.currentCharacterId === character.id && character.offlineStatus === "unlocked";
+}
+
+function editOfflineEntry(character,entry){
+  if(!canManageOfflineStory(character)) return;
+  openContentEditor("編輯線下劇情",[{label:"文字內容",value:entry.text}],([value]) => {
+    if(!canManageOfflineStory(character) || !offlineStoryEntries(character).includes(entry)) return false;
+    entry.text = value;
+    renderOfflineStage();
+    scheduleStarwaveSave();
+  });
+}
+
+function offlineReplyRelationshipBefore(character,reply){
+  const current = playerRelationshipText(character.relationship);
+  return reply?.effects?.relationshipAfter === current ? reply.effects.relationshipBefore : current;
+}
+
+function offlineReplyTransaction(reply){
+  return reply?.effects?.transactionId
+    ? state.economy.transactions.find(tx => tx.id === reply.effects.transactionId)
+    : null;
+}
+
+function removeOfflineReplyEffects(character,reply,{restoreRelationship}){
+  if(restoreRelationship){
+    applyPlayerRelationshipUpdate(character,offlineReplyRelationshipBefore(character,reply),
+      playerRelationshipText(character.relationship));
+  }
+  const transaction = offlineReplyTransaction(reply);
+  if(!transaction) return false;
+  state.economy.wallet -= transaction.amount;
+  state.economy.transactions = state.economy.transactions.filter(tx => tx !== transaction);
+  return true;
+}
+
+function deleteOfflineEntry(character,entry){
+  if(!canManageOfflineStory(character)) return;
+  confirmContentDeletion("線下劇情",() => {
+    if(!canManageOfflineStory(character)) return;
+    const story = state.offline.stories[character.id];
+    if(!story?.includes(entry)) return;
+    const wasLatest = offlineStoryEntries(character).at(-1) === entry;
+    const refunded = removeOfflineReplyEffects(character,entry,{restoreRelationship:wasLatest});
+    state.offline.stories[character.id] = story.filter(item => item !== entry);
+    if(refunded){ renderLedger(); renderShop(); }
+    renderOfflineStage();
+    scheduleStarwaveSave();
+  });
+}
+
+$("rerollOfflineReply").onclick = () => {
+  const character = getCharacter(state.offline.currentCharacterId);
+  if(!character || !canManageOfflineStory(character)) return;
+  const target = getOfflineReplyToReroll(character);
+  if(!target) return;
+  showConfirm({
+    title:"重刷線下回覆？",
+    message:"使用同一段輸入重新生成最新回覆。新回覆生成成功後會取代原文。",
+    okText:"重刷",
+    danger:false,
+    onConfirm(){
+      if(!canManageOfflineStory(character) || getOfflineReplyToReroll(character)?.reply !== target.reply) return;
+      void generateOfflineAi(character,target.input,{replacing:target.reply});
+    }
+  });
+};
+
 function renderOfflineStage(){
   const character =
     getCharacter(state.offline.currentCharacterId);
@@ -17703,21 +17800,41 @@ $("offlineTime").textContent =
     <p>${esc(playerRelationshipText(character.relationship))}</p>
   `;
 
-  const entries = (state.offline.stories[character.id] || [])
-    .filter(entry => !entry.system && entry.text);
+  const entries = offlineStoryEntries(character);
+  const pending = offlineRequest?.character === character ? offlineRequest.input : null;
   const story = $("offlineStory");
-  story.hidden = !entries.length;
-  story.innerHTML = entries
-    .map(entry => {
-      const textClass = entry.authorId === "player" ? "live-story-input" : "live-story-ai";
-      return `<div class="${textClass}">${esc(entry.text)}</div>`;
-    })
-    .join("");
+  const scrollTop = story.scrollTop;
+  story.hidden = !entries.length && !pending;
+  story.replaceChildren();
+  entries.forEach(entry => {
+    const row = document.createElement("div");
+    const text = document.createElement("div");
+    text.className = entry.authorId === "player" ? "live-story-input" : "live-story-ai";
+    text.textContent = entry.text;
+    const actions = contentManageActions(
+      () => editOfflineEntry(character,entry),
+      () => deleteOfflineEntry(character,entry)
+    );
+    for(const button of actions.children) button.disabled = Boolean(offlineRequest);
+    row.append(text,actions);
+    story.append(row);
+  });
+  if(pending){
+    const text = document.createElement("div");
+    text.className = "live-story-input";
+    text.textContent = pending.text;
+    story.append(text);
+  }
+  story.scrollTop = scrollTop;
+  const reroll = $("rerollOfflineReply");
+  reroll.hidden = !getOfflineReplyToReroll(character);
+  reroll.disabled = Boolean(offlineRequest);
 }
 
   function buildOfflineAiPrompt(
   character,
-  playerText
+  playerText,
+  {replacing=null,wallet=state.economy.wallet,recordEconomy=true}={}
 ){
   const selfContext =
     wavelinkSelfContext(
@@ -17735,7 +17852,7 @@ $("offlineTime").textContent =
     )
       .filter(
         entry =>
-          !entry.system
+          !entry.system && entry !== replacing
       )
       .slice(-18)
       .map(entry => ({
@@ -17916,10 +18033,10 @@ ${state.economy.mode}
 ${state.refresh.ledger}
 
 目前錢包餘額：
-${state.economy.wallet}
+${wallet}
 
 ${
-  state.economy.mode === "full" &&
+  recordEconomy && state.economy.mode === "full" &&
   state.refresh.ledger === "auto"
     ? `如果玩家這次輸入或本回合故事中
 明確發生了玩家實際支付的生活消費，
@@ -17974,330 +18091,139 @@ eventSummary
 }
 
 
-async function generateOfflineAi(
-  character,
-  playerText
-){
-  const profile =
-    state.api.profiles[
-      state.api.active
-    ];
+function recordOfflineReplyExpense(data,allowed){
+  if(!allowed || !ledgerRunning() || state.refresh.ledger !== "auto") return null;
+  const expense = data.economyTransaction;
+  if(!expense || typeof expense !== "object") return null;
+  const amount = Math.trunc(Number(expense.amount));
+  const category = String(expense.category || "線下活動").trim().slice(0,30);
+  const item = String(expense.item || "").trim().slice(0,50);
+  const source = String(expense.source || "線下互動").trim().slice(0,30);
+  if(!item || isFixedLedgerCharge(category,item) || !Number.isFinite(amount) ||
+     amount >= 0 || amount < -30000 || state.economy.wallet < -amount) return null;
 
+  state.economy.wallet += amount;
+  return addTransaction({category,item,amount,source}).id;
+}
 
-  if(
-    !profile ||
-    !String(
-      profile.apiKey || ""
-    ).trim() ||
-    !String(
-      profile.model || ""
-    ).trim()
-  ){
-    showNotice(
-      "尚未設定可用的 LLM",
-      "請先到「設定 → LLM/API」設定 API Key、模型。"
-    );
-
+async function generateOfflineAi(character,input,{replacing=null}={}){
+  if(!canManageOfflineStory(character)) return false;
+  const profile = state.api.profiles[state.api.active];
+  if(!String(profile?.apiKey || "").trim() || !String(profile?.model || "").trim()){
+    showNotice("尚未設定可用的 LLM","請先到「設定 → LLM/API」設定 API Key、模型。");
     return false;
   }
 
+  const request = {epoch:rpGenerationEpoch,character,input:replacing ? null : input};
+  const story = state.offline.stories[character.id];
+  const isCurrent = () => offlineRequest === request && request.epoch === rpGenerationEpoch &&
+    getCharacter(character.id) === character && state.offline.stories[character.id] === story;
+  const button = $("sendOffline");
+  const originalLabel = button.textContent;
+  const previousRelationship = playerRelationshipText(character.relationship);
+  const promptRelationship = offlineReplyRelationshipBefore(character,replacing);
+  const promptCharacter = promptRelationship === previousRelationship ? character
+    : {...character,relationship:promptRelationship};
+  // Older replies have no transaction link, so replacing one must not charge again.
+  const recordEconomy = !replacing || Boolean(replacing.effects && !replacing.effects.legacyUntracked);
+  const oldTransaction = offlineReplyTransaction(replacing);
 
-  const button =
-    $("sendOffline");
-
-
-  const oldText =
-    button.textContent;
-
-
-  button.disabled =
-    true;
-
-  button.textContent =
-    "AI 生成中";
-
-
-  toast(
-    `${profile.provider} 正在線下生成`
-  );
-
+  offlineRequest = request;
+  button.disabled = true;
+  button.textContent = "AI 生成中";
+  $("rememberOffline").disabled = true;
+  renderOfflineStage();
+  if(!replacing) $("offlineStory").scrollTop = $("offlineStory").scrollHeight;
+  toast(`${profile.provider} 正在線下生成`);
 
   try{
-
-    const generationEpoch = rpGenerationEpoch;
-    const previousRelationship = playerRelationshipText(character.relationship);
-    const result =
-      await generateWithApi({
-
-        profileIndex:
-          state.api.active,
-
-        prompt:
-          buildOfflineAiPrompt(
-            character,
-            playerText
-          ),
-
-        systemInstruction:
-          `你是 STARWAVE 的私人線下角色互動模擬引擎。
+    const result = await generateWithApi({
+      profileIndex:state.api.active,
+      prompt:buildOfflineAiPrompt(promptCharacter,input.text,{
+        replacing,wallet:state.economy.wallet - (oldTransaction?.amount || 0),recordEconomy
+      }),
+      systemInstruction:`你是 STARWAVE 的私人線下角色互動模擬引擎。
 嚴格遵守角色設定與資訊差。
 不得替玩家擅自說話或行動。
 角色只能使用自己合理知道的資訊。
 請依指定格式輸出有效 JSON。`,
+      json:true
+    });
+    if(!isCurrent()) return false;
 
-        json:true
+    const data = parseStarwaveLlmJson(result.text);
+    const reply = String(data.reply || "").trim();
+    if(!reply) throw new Error("AI 沒有回傳有效的線下故事內容。");
+
+    let refunded = false;
+    const replaceIndex = replacing ? story.indexOf(replacing) : -1;
+    if(replacing){
+      if(replaceIndex < 0 || !story.includes(input)) return false;
+      refunded = removeOfflineReplyEffects(character,replacing,{
+        restoreRelationship:playerRelationshipText(character.relationship) === previousRelationship
       });
-
-
-    if(generationEpoch !== rpGenerationEpoch) return false;
-
-    const data =
-      parseStarwaveLlmJson(
-        result.text
-      );
-
-
-    const reply =
-      String(
-        data.reply || ""
-      ).trim();
-
-
-    if(!reply){
-      throw new Error(
-        "AI 沒有回傳有效的線下故事內容。"
-      );
+    }else{
+      if(story.includes(input)) return false;
+      story.push(input);
     }
 
+    const relationshipBefore = playerRelationshipText(character.relationship);
+    applyPlayerRelationshipUpdate(character,data.relationshipUpdate,promptRelationship);
+    const relationshipAfter = playerRelationshipText(character.relationship);
+    const transactionId = recordOfflineReplyExpense(data,recordEconomy);
+    if(refunded && !transactionId) renderLedger();
+    if(refunded || transactionId) renderShop();
 
-    state.offline
-      .stories[
-        character.id
-      ] ||= [];
+    input.id ||= uid("offline");
+    const entry = {
+      id:uid("offline"),authorId:character.id,text:reply,playerEntryId:input.id,
+      effects:{relationshipBefore,relationshipAfter,transactionId,legacyUntracked:!recordEconomy}
+    };
+    if(replacing) story.splice(replaceIndex,1,entry);
+    else story.push(entry);
 
-
-    state.offline
-      .stories[
-        character.id
-      ]
-      .push({
-        system:false,
-        authorId:
-          character.id,
-        text:
-          reply
-      });
-
-
-    applyPlayerRelationshipUpdate(character,data.relationshipUpdate,previousRelationship);
-
-
-let economyRecorded =
-  false;
-
-
-const economyTransaction =
-  data.economyTransaction &&
-  typeof data.economyTransaction ===
-    "object"
-    ? data.economyTransaction
-    : null;
-
-
-if(
-  ledgerRunning() &&
-  state.refresh.ledger ===
-    "auto" &&
-  economyTransaction
-){
-
-  const amount =
-    Math.trunc(
-      Number(
-        economyTransaction.amount
-      )
-    );
-
-  const category =
-    String(
-      economyTransaction.category ||
-      "線下活動"
-    )
-      .trim()
-      .slice(0,30);
-
-  const item =
-    String(
-      economyTransaction.item || ""
-    )
-      .trim()
-      .slice(0,50);
-
-  const source =
-    String(
-      economyTransaction.source ||
-      "線下互動"
-    )
-      .trim()
-      .slice(0,30);
-
-
-  if(
-    item && !isFixedLedgerCharge(category,item) &&
-    Number.isFinite(amount) &&
-    amount < 0 &&
-    Math.abs(amount) <=
-      30000 &&
-    state.economy.wallet >=
-      Math.abs(amount)
-  ){
-
-    state.economy.wallet +=
-      amount;
-
-
-    addTransaction({
-      category,
-      item,
-      amount,
-      source
-    });
-
-
-    syncNumbers();
-    renderShop();
-
-    economyRecorded =
-      true;
-  }
-}
-
-
-const eventSummary =
-      String(
-        data.eventSummary || ""
-      ).trim();
-
-
-    renderOfflineStage();
-
-    $("offlineStory").scrollTop =
-      $("offlineStory")
-        .scrollHeight;
-
-
+    if(!replacing){
+      const eventSummary = String(data.eventSummary || "").trim() || "有新的互動。";
+      countRpTurn(`線下與 ${character.name}：${eventSummary} 玩家：${input.text}`);
+      triggerAutoContent({skipLedger:Boolean(transactionId)});
+    }
     scheduleStarwaveSave();
-
-
-  return {
-  success:true,
-  eventSummary,
-  economyRecorded
-};
-
+    return true;
   }catch(error){
-
-    console.error(
-      "STARWAVE offline generation failed:",
-      error
-    );
-
-
-    showNotice(
-      "線下故事生成失敗",
-      error?.message ||
-      "LLM 沒有成功產生線下內容，可以再次嘗試。"
-    );
-
-
+    if(isCurrent()){
+      console.error("STARWAVE offline generation failed:",error);
+      showNotice("線下故事生成失敗",error?.message || "LLM 沒有成功產生線下內容，可以再次嘗試。");
+    }
     return false;
-
-
   }finally{
-
-    button.disabled =
-      false;
-
-    button.textContent =
-      oldText;
+    if(offlineRequest === request){
+      offlineRequest = null;
+      button.disabled = false;
+      button.textContent = originalLabel;
+      $("rememberOffline").disabled = false;
+      renderOfflineStage();
+      if(state.offline.currentCharacterId === character.id && getCharacter(character.id) === character){
+        $("offlineStory").scrollTop = $("offlineStory").scrollHeight;
+      }
+    }
   }
 }
-  
-$("sendOffline").onclick =
-  async () => {
 
-    const character =
-      getCharacter(
-        state.offline
-          .currentCharacterId
-      );
+$("sendOffline").onclick = async () => {
+  const character = getCharacter(state.offline.currentCharacterId);
+  const draft = $("offlineInput");
+  const text = draft.value.trim();
+  if(!character || !text || !canManageOfflineStory(character)) return;
 
-
-    const text =
-      $("offlineInput")
-        .value
-        .trim();
-
-
-    if(
-      !character ||
-      character.offlineStatus !==
-        "unlocked" ||
-      !text
-    ){
-      return;
-    }
-
-
-    state.offline
-      .stories[
-        character.id
-      ] ||= [];
-
-
-    state.offline
-      .stories[
-        character.id
-      ]
-      .push({
-        system:false,
-        authorId:"player",
-        text
-      });
-
-
-    $("offlineInput").value =
-      "";
-
-
-    renderOfflineStage();
-
-
-    $("offlineStory").scrollTop =
-      $("offlineStory")
-        .scrollHeight;
-
-
-    const generated =
-      await generateOfflineAi(
-        character,
-        text
-      );
-
-
-    if(!generated){
-      return;
-    }
-
-
-    countRpTurn(`線下與 ${character.name}：${generated.eventSummary || "有新的互動。"} 玩家：${text}`);
-
-
-    triggerAutoContent({
-      skipLedger:
-        generated.economyRecorded
-    });
-  };
+  state.offline.stories[character.id] ||= [];
+  const generationEpoch = rpGenerationEpoch;
+  draft.value = "";
+  const generated = await generateOfflineAi(character,{authorId:"player",text});
+  if(!generated && generationEpoch === rpGenerationEpoch && !draft.value &&
+     state.offline.currentCharacterId === character.id && getCharacter(character.id) === character){
+    draft.value = text;
+  }
+};
 
 $("rememberOffline").onclick = () => {
   const character =
@@ -18340,7 +18266,7 @@ function addTransaction({
 }){
   const now = new Date();
 
-  state.economy.transactions.unshift({
+  const transaction = {
     id:uid("tx"),
     category,
     item,
@@ -18350,9 +18276,10 @@ function addTransaction({
     iso:now.toISOString(),
     month:monthKey(now),
     time:now.toLocaleString("zh-TW")
-  });
-
+  };
+  state.economy.transactions.unshift(transaction);
   renderLedger();
+  return transaction;
 }
 
 function showInsufficientFunds(price){
