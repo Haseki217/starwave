@@ -4371,7 +4371,7 @@ body[data-theme="halloween"] .live-stage{
 
     </aside>
 
-    <main class="wl-main">
+    <main id="wlConversation" class="wl-main">
 
       <header class="wl-head">
 
@@ -14732,13 +14732,30 @@ function wavelinkBadgeText(count){
   return count > 99 ? "99+" : String(count);
 }
 
-function recordWavelinkIncoming(room,count){
-  const viewing = state.ui.page === "wavelink" &&
-    state.currentWavelink === room.id &&
-    document.visibilityState !== "hidden" &&
-    (window.innerWidth > 720 || $("wlLayout").classList.contains("mobile-chat-open"));
-  if(!viewing) room.unread = wavelinkUnreadCount(room) + count;
+function isWavelinkConversationVisible(room){
+  return room && state.currentWavelink === room.id &&
+    document.visibilityState === "visible" &&
+    $("wlConversation").getClientRects().length > 0;
 }
+
+function clearVisibleWavelinkUnread(){
+  const room = getRoom(state.currentWavelink);
+  if(!isWavelinkConversationVisible(room) || !wavelinkUnreadCount(room)) return false;
+  room.unread = 0;
+  scheduleStarwaveSave();
+  return true;
+}
+
+function recordWavelinkIncoming(room,count){
+  room.unread = isWavelinkConversationVisible(room) ? 0 : wavelinkUnreadCount(room) + count;
+}
+
+function syncVisibleWavelinkUnread(){
+  if(clearVisibleWavelinkUnread()) renderWavelinkRooms();
+}
+
+document.addEventListener("visibilitychange",syncVisibleWavelinkUnread);
+window.addEventListener("resize",syncVisibleWavelinkUnread);
 
 function renderWavelinkNavUnread(){
   const total = state.wavelinkRooms.reduce((sum,room) => sum + wavelinkUnreadCount(room),0);
@@ -14759,7 +14776,7 @@ function closeWavelinkConversation(){
 function openWavelinkConversation(room){
   state.currentWavelink = room.id;
   room.unread = 0;
-  if(window.innerWidth <= 720) $("wlLayout").classList.add("mobile-chat-open");
+  $("wlLayout").classList.add("mobile-chat-open");
 }
 
 function syncWavelinkFolderTabs(){
@@ -16071,6 +16088,7 @@ function renderWavelink(){
 }
 
 function renderWavelinkRooms(){
+  clearVisibleWavelinkUnread();
   renderWavelinkNavUnread();
   $("wlRoomList").innerHTML =
     "";
