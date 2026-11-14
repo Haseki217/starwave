@@ -4371,7 +4371,7 @@ body[data-theme="halloween"] .live-stage{
 
     </aside>
 
-    <main class="wl-main">
+    <main id="wlConversation" class="wl-main">
 
       <header class="wl-head">
 
@@ -4394,12 +4394,6 @@ body[data-theme="halloween"] .live-stage{
 
        <span
             id="wlCollabState"
-            class="offline-unlock-state"
-            hidden
-          ></span>
-
-          <span
-            id="wlOfflineState"
             class="offline-unlock-state"
             hidden
           ></span>
@@ -4920,16 +4914,6 @@ body[data-theme="halloween"] .live-stage{
               <option value="vtuber">VTuber</option>
             </select>
           </div>
-
-  <div class="field">
-  <label>線下狀態</label>
-
-  <input
-    id="charOfflineStatus"
-    type="text"
-    disabled
-  >
-</div>
 
           <div class="field full">
             <label>主要直播內容</label>
@@ -8447,6 +8431,17 @@ function toast(text){
 }
 
 let confirmCallback = null;
+const offlineUnlockNotices = [];
+
+function showNextOfflineUnlockNotice(){
+  if(!$("confirmOverlay").hidden) return;
+  while(offlineUnlockNotices.length){
+    const character = offlineUnlockNotices.shift();
+    if(getCharacter(character.id) !== character || character.offlineStatus !== "unlocked") continue;
+    showNotice("線下互動已解鎖",`現在可以到「線下 → 私人生活」找 ${publicName(character)} 了。`);
+    return;
+  }
+}
 
 function showConfirm({
   title="確認操作",
@@ -8483,6 +8478,7 @@ function showNotice(title,message){
 
 $("confirmCancel").onclick = () => {
   $("confirmOverlay").hidden = true;
+  showNextOfflineUnlockNotice();
 };
 
 $("confirmOk").onclick = () => {
@@ -8496,6 +8492,7 @@ $("confirmOk").onclick = () => {
   if(callback){
     callback();
   }
+  showNextOfflineUnlockNotice();
 };
 
 function goPage(name){
@@ -14397,11 +14394,10 @@ function unlockOffline(character){
     ]
   );
 
-  toast(
-    `${publicName(character)} 的線下互動已解鎖`
-  );
-
   renderOffline();
+  scheduleStarwaveSave();
+  offlineUnlockNotices.push(character);
+  showNextOfflineUnlockNotice();
 }
 
 function handleOfflineInviteFromPlayer(room,text){
@@ -14632,7 +14628,7 @@ function renderStarwaveBotConversation(room){
   avatar.hidden = false;
   $("wlRoomName").textContent = "STARWAVE BOT";
   $("wlRoomMembers").textContent = "通知・帳單・禮物";
-  for(const id of ["archiveWlRoom","deleteWlRoom","startVoiceCall","wlOfflineState","wlCollabState"]){ $(id).hidden = true; }
+  for(const id of ["archiveWlRoom","deleteWlRoom","startVoiceCall","wlCollabState"]){ $(id).hidden = true; }
   $("wlInput").disabled = false;
   $("wlInput").placeholder = "輸入訊息";
   $("sendWl").disabled = false;
@@ -14732,13 +14728,30 @@ function wavelinkBadgeText(count){
   return count > 99 ? "99+" : String(count);
 }
 
-function recordWavelinkIncoming(room,count){
-  const viewing = state.ui.page === "wavelink" &&
-    state.currentWavelink === room.id &&
-    document.visibilityState !== "hidden" &&
-    (window.innerWidth > 720 || $("wlLayout").classList.contains("mobile-chat-open"));
-  if(!viewing) room.unread = wavelinkUnreadCount(room) + count;
+function isWavelinkConversationVisible(room){
+  return room && state.currentWavelink === room.id &&
+    document.visibilityState === "visible" &&
+    $("wlConversation").getClientRects().length > 0;
 }
+
+function clearVisibleWavelinkUnread(){
+  const room = getRoom(state.currentWavelink);
+  if(!isWavelinkConversationVisible(room) || !wavelinkUnreadCount(room)) return false;
+  room.unread = 0;
+  scheduleStarwaveSave();
+  return true;
+}
+
+function recordWavelinkIncoming(room,count){
+  room.unread = isWavelinkConversationVisible(room) ? 0 : wavelinkUnreadCount(room) + count;
+}
+
+function syncVisibleWavelinkUnread(){
+  if(clearVisibleWavelinkUnread()) renderWavelinkRooms();
+}
+
+document.addEventListener("visibilitychange",syncVisibleWavelinkUnread);
+window.addEventListener("resize",syncVisibleWavelinkUnread);
 
 function renderWavelinkNavUnread(){
   const total = state.wavelinkRooms.reduce((sum,room) => sum + wavelinkUnreadCount(room),0);
@@ -14759,7 +14772,7 @@ function closeWavelinkConversation(){
 function openWavelinkConversation(room){
   state.currentWavelink = room.id;
   room.unread = 0;
-  if(window.innerWidth <= 720) $("wlLayout").classList.add("mobile-chat-open");
+  $("wlLayout").classList.add("mobile-chat-open");
 }
 
 function syncWavelinkFolderTabs(){
@@ -16071,6 +16084,7 @@ function renderWavelink(){
 }
 
 function renderWavelinkRooms(){
+  clearVisibleWavelinkUnread();
   renderWavelinkNavUnread();
   $("wlRoomList").innerHTML =
     "";
@@ -16342,7 +16356,6 @@ function renderWavelinkConversation(){
         ? "選擇一個對話"
         : "匯入角色後即可開始私人對話";
 
-    $("wlOfflineState").hidden = true;
     $("wlCollabState").hidden = true;
     $("archiveWlRoom").hidden = true;
     $("deleteWlRoom").hidden = true;
@@ -16455,35 +16468,6 @@ $("wlCollabState").textContent =
         "連動安排"
       )
     : "";
-
-
-/* 線下狀態 */
-
-if(
-  character &&
-  getCharacter(character.id)
-){
-
-  const labels = {
-    locked:"未解鎖",
-    pending:"確認中",
-    unlocked:"已解鎖"
-  };
-
-  $("wlOfflineState").hidden =
-    false;
-
-  $("wlOfflineState").textContent =
-    labels[
-      character.offlineStatus
-    ] ||
-    "未解鎖";
-
-}else{
-
-  $("wlOfflineState").hidden =
-    true;
-}
 
 
 /* 已取消訂閱角色只能查看舊紀錄 */
@@ -21268,16 +21252,6 @@ $("charPublicDescribe").disabled =
       character.card
     );
   renderCharacterScenePicker(character);
-
-  const statusText = {
-  locked:"未解鎖",
-  pending:"確認中",
-  unlocked:"已解鎖"
-};
-
-  $("charOfflineStatus").value =
-    statusText[character.offlineStatus] ||
-    character.offlineStatus;
 
   $("channelContent").textContent =
     character.content;
