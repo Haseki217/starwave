@@ -2017,34 +2017,6 @@ body:is([data-theme="deep"],[data-theme="vampire"]) :is(#deleteLorebook,#loreEnt
   font-size:10px;
 }
 
-.offline-participants{
-  position:absolute;
-  left:17px;
-  top:64px;
-  z-index:3;
-  display:flex;
-  gap:5px;
-}
-
-.participant-mini{
-  width:29px;
-  height:29px;
-  display:grid;
-  place-items:center;
-  overflow:hidden;
-  border:2px solid rgba(255,255,255,.82);
-  border-radius:50%;
-  background:var(--softA);
-  color:var(--text);
-  font-size:8px;
-}
-
-.participant-mini img{
-  width:100%;
-  height:100%;
-  object-fit:cover;
-}
-
 .offline-scene-center{
   position:absolute;
   left:50%;
@@ -2052,11 +2024,6 @@ body:is([data-theme="deep"],[data-theme="vampire"]) :is(#deleteLorebook,#loreEnt
   transform:translate(-50%,-50%);
   width:min(620px,88%);
   text-align:center;
-}
-
-.offline-scene-center h3{
-  margin:9px 0 4px;
-  font-size:18px;
 }
 
 .offline-scene-center p{
@@ -5103,15 +5070,10 @@ body[data-theme="halloween"] .live-stage{
 
             </div>
 
-            <div
-              id="offlineParticipants"
-              class="offline-participants"
-            ></div>
-
-            <div
-              id="offlineSceneCenter"
-              class="offline-scene-center"
-            ></div>
+            <div class="offline-scene-center">
+              <div class="fallback-star" style="font-size:54px" aria-hidden="true">✦</div>
+              <p id="offlineRelationship"></p>
+            </div>
 
             <div
               id="offlineStory"
@@ -17679,29 +17641,8 @@ $("offlineTime").textContent =
     ? currentRpDateTime()
     : "";
 
-  $("offlineParticipants").innerHTML = "";
-
-  const mini = document.createElement("div");
-  mini.className = "participant-mini";
-
-  setImageBox(
-    mini,
-    character.privateImage,
-    initials(character.name)
-  );
-
-  $("offlineParticipants").append(mini);
-
-  $("offlineSceneCenter").innerHTML = `
-    <div
-      class="fallback-star"
-      style="font-size:54px"
-    >✦</div>
-
-    <h3>${esc(character.name)}</h3>
-
-    <p>${esc(playerRelationshipText(character.relationship))}</p>
-  `;
+  $("offlineRelationship").textContent =
+    playerRelationshipText(character.relationship);
 
   const entries = (state.offline.stories[character.id] || [])
     .filter(entry => !entry.system && entry.text);
