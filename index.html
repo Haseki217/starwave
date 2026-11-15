@@ -3934,7 +3934,7 @@ body[data-theme="halloween"] .live-stage{
         </select>
 
         <div class="field-help">
-          只顯示已在 WAVELINK 中由所有成員答應的連動。
+          只顯示所有成員都已同意的連動。
         </div>
       </div>
 
@@ -7342,6 +7342,8 @@ live:{
   draft:"",
   collabIds:[],
   collabRoomId:"",
+  offlineCollabId:"",
+  offlineSceneCharacterId:"",
   activeShopItemIds:[],
   date:"",
   turnLogs:[]
@@ -8501,11 +8503,15 @@ function goPage(name){
   if(name === "home") renderExplore();
   if(name === "shop") renderShop();
   if(name === "backstage") renderBackstage();
+  if(name === "live") renderPlayerCollabOptions();
   if(name === "wavelink") renderWavelink();
   if(name === "subscriptions") renderSubscriptions();
   if(name === "offline") renderOffline();
   if(name === "forum") renderForum();
-  if(name === "sns") renderSns();
+  if(name === "sns"){
+    publishOfflineLiveAnnouncements("auto");
+    renderSns();
+  }
   if(name === "memory") renderMemories();
   if(name === "lorebook") renderLorebooks();
   syncBgmPlayback();
@@ -9515,7 +9521,38 @@ author.innerHTML =
 }
 
 
-  function readyPlayerCollabRooms(){
+  function offlineLiveScene({keepDuringLive=true}={}){
+  let latest = null;
+  for(const character of state.characters){
+    if(character.offlineStatus !== "unlocked") continue;
+    const entry = (state.offline.stories[character.id] || []).findLast(
+      item => item.authorId === character.id && item.offlineScene);
+    if(entry && (!latest || entry.offlineScene.at > latest.scene.at ||
+      (entry.offlineScene.at === latest.scene.at && entry.offlineScene.turn >= latest.scene.turn))){
+      latest = {character,entry,scene:entry.offlineScene};
+    }
+  }
+  if(latest?.scene.presence !== "together") return null;
+  if(keepDuringLive && state.live.started && state.live.offlineSceneCharacterId === latest.character.id) return latest;
+  const elapsed = realTimeEnabled()
+    ? Date.now() - latest.scene.at
+    : Number(state.timeSettings.rpTurnCount || 0) - latest.scene.turn;
+  return elapsed >= 0 && elapsed <= (realTimeEnabled() ? 60*60*1000 : 4) ? latest : null;
+}
+
+function availableOfflineCollab(){
+  const current = offlineLiveScene({keepDuringLive:false});
+  return current?.scene.collab === true && !current.entry.offlineCollabUsed &&
+    !current.character.live && !roleBusyInWavelink(current.character.id)
+      ? current : null;
+}
+
+function roleBusyInWavelink(id){
+  return state.wavelinkRooms.some(room => room.memberIds?.includes(id) &&
+    (wavelinkGeneratingRooms.has(room.id) || (voiceCall.active && voiceCall.roomId === room.id)));
+}
+
+function readyPlayerCollabRooms(){
   return state.wavelinkRooms
     .filter(room => {
       const plan =
@@ -9569,6 +9606,14 @@ function renderPlayerCollabOptions(){
 
   select.innerHTML =
     `<option value="">單人直播</option>`;
+
+  const offline = availableOfflineCollab();
+  if(offline){
+    const option = document.createElement("option");
+    option.value = `offline:${offline.character.id}`;
+    option.textContent = `與 ${publicName(offline.character)} 同場連動`;
+    select.append(option);
+  }
 
   readyPlayerCollabRooms()
     .forEach(room => {
@@ -9963,16 +10008,15 @@ $("startLive").onclick = () => {
       ?.value ||
     "";
 
-  const collabRoom =
-    selectedPlayerCollabRoom();
+  const collabRoom = selectedPlayerCollabRoom();
+  const offlineOption = selectedRoomId.startsWith("offline:") ? availableOfflineCollab() : null;
+  const offlineCollab = offlineOption && selectedRoomId === `offline:${offlineOption.character.id}`
+    ? offlineOption : null;
 
-  if(
-    selectedRoomId &&
-    !collabRoom
-  ){
+  if(selectedRoomId && !collabRoom && !offlineCollab){
     showNotice(
       "連動尚未準備完成",
-      "請先在 WAVELINK 中取得所有參與者的明確同意。"
+      "請確認目前的連動約定與參與者狀態，再選擇開播。"
     );
     return;
   }
@@ -9982,7 +10026,7 @@ $("startLive").onclick = () => {
       ? activeRoomMembers(
           collabRoom
         )
-      : [];
+      : offlineCollab ? [offlineCollab.character] : [];
 
   if(
     collabCharacters.some(
@@ -10000,7 +10044,7 @@ $("startLive").onclick = () => {
   const liveShopPlan =
     prepareLiveShopPlan(
       currentPreLiveCategory(),
-      collabRoom
+      collabRoom || offlineCollab
     );
 
   if(!liveShopPlan){
@@ -10009,6 +10053,8 @@ $("startLive").onclick = () => {
 
   state.live.collabRoomId =
     collabRoom?.id || "";
+  state.live.offlineCollabId = offlineCollab?.character.id || "";
+  state.live.offlineSceneCharacterId = offlineLiveScene()?.character.id || "";
 
   state.live.collabIds =
     collabCharacters.map(
@@ -10062,6 +10108,12 @@ $("startLive").onclick = () => {
         );
       }
     );
+  }else if(offlineCollab){
+    offlineCollab.entry.offlineCollabUsed = true;
+    startAutonomousRoleLive(offlineCollab.character,{
+      collabIds:["player"],managedByPlayer:true,
+      title:`與 ${state.player.name} 同場連動｜${sanitizePublicText($("preLiveTitle").value.trim()) || "雜談"}`
+    });
   }
 
   state.player.title =
@@ -10113,7 +10165,7 @@ state.live.turnLogs = [];
   renderExplore();
   renderLiveChat();
   renderWavelink();
-  
+  scheduleStarwaveSave();
 };
 
 function syncLiveSettingsLocation(){
@@ -10288,7 +10340,9 @@ requestAnimationFrame(() => {
 
     $("liveCollabBadge").hidden = false;
     $("liveCollabBadge").textContent =
-      `🎙 語音連線中 · 連動：${names.join("・")}`;
+      state.live.offlineCollabId
+        ? `同場連動：${names.join("・")}`
+        : `🎙 語音連線中 · 連動：${names.join("・")}`;
   }else{
     $("liveCollabBadge").hidden = true;
   }
@@ -10452,6 +10506,23 @@ function liveStageFocus(streamerType){
 輸出前檢查每個畫面動作的主詞：是遊戲角色、模型動畫，還是真人？如果沒有明確公開的實體鏡頭，就刪掉操作者的肢體描寫，改寫成觀眾看得到的遊戲結果或聽得到的聲音。聊天室也不能假裝看到那些動作。只輸出改好的敘事，不解釋規則。`;
 }
 
+function recentPlayerLiveAnnouncements(){
+  const now = Date.now();
+  return state.snsPosts.filter(post => post.authorId === "player").slice(0,12)
+    .filter(post => !post.postedAt || (now >= post.postedAt && now - post.postedAt <= 24*60*60*1000))
+    .filter(post => /(?:預告|等一下|等等|待會|稍後|準備|今天|今晚|明天|晚點|[點:：]).{0,50}(?:開台|開播|直播)|(?:直播|開台|開播).{0,20}(?:預告|等一下|等等|待會|稍後|準備|今晚|明天|晚點)|(?:要|會|來)(?:開台|開播|直播)/.test(post.text))
+    .slice(0,3).map(post => sanitizePublicText(post.text).slice(0,220));
+}
+
+function offlinePlayerLiveContext(){
+  const scene = offlineLiveScene();
+  if(state.live.offlineCollabId){
+    return "本場是雙方已同意的同場連動，兩人在同一地點。可以有公開共用收音；沒有另外明確公開的畫面就不描寫對方入鏡，也不要寫成遠端通話。";
+  }
+  if(!scene) return "";
+  return "有角色仍在線下場景現場，但不是本場公開參與者。留在鏡頭和收音之外，遵守安靜約定。觀眾與聊天室不知道對方在場，不能提起、猜測或描寫此人與私人互動。";
+}
+
 function buildPlayerLiveAiPrompt(
   playerText,
   visitors={commenterIds:[]}
@@ -10607,7 +10678,14 @@ ${JSON.stringify(activeShopItems)}
 - 角色真名或其他非公開身分
 - 任何未在本提示中提供的私人資訊
 
-只能根據公開資料與公開直播內容生成。
+只用公開資料與公開畫面、聲音寫進直播及聊天室。下方若有線下銜接，只用來維持狀態和避免矛盾。
+
+【線下與開播銜接（不公開）】
+${offlinePlayerLiveContext() || "無"}
+
+【玩家已在 SNS 公開發布的近期直播預告】
+${JSON.stringify(recentPlayerLiveAnnouncements())}
+只在預告的主題和時間符合本場時延續。沒有紀錄就不要假設玩家發過，也不要替玩家發文。觀眾可自然提及這些已公開的資訊。
 
 【其他創作者公開資料】
 ${JSON.stringify(creators)}
@@ -10661,7 +10739,9 @@ Lorebook 是公開背景與世界設定資料，
 【連動直播規則】
 
 ${
-  collabs.length
+  state.live.offlineCollabId
+    ? "本場為同場連動。依可見可聽規則生成共享收音和畫面，無須 WAVELINK 通話。"
+    : collabs.length
     ? `本場是連動直播，
 所有參與者目前以語音連線。
 
@@ -11067,7 +11147,10 @@ async function generatePlayerLiveTurn(
     renderLiveAwayPrompt();
     return;
   }
-  const visitors = liveCreatorVisitors("player",state.player.title,state.live.collabIds);
+  const sceneCharacterId = offlineLiveScene()?.character.id;
+  const visitors = liveCreatorVisitors("player",state.player.title,[
+    ...state.live.collabIds,...(sceneCharacterId ? [sceneCharacterId] : [])
+  ]);
   const undoRecord =
     captureLiveUndoSnapshot(text);
 
@@ -11589,6 +11672,10 @@ $("endLive").onclick = () => {
         .map(getCharacter)
         .filter(Boolean)
         .forEach(character => {
+          if(character.id === state.live.offlineCollabId && character.live){
+            stopAutonomousRoleLive(character,Date.now());
+            return;
+          }
           character.liveManagedByPlayer =
             false;
 
@@ -11641,6 +11728,8 @@ state.live.turnLogs = [];
 state.live.lastText = "";
 state.live.collabIds = [];
 state.live.collabRoomId = "";
+state.live.offlineCollabId = "";
+state.live.offlineSceneCharacterId = "";
 state.live.activeShopItemIds = [];
 
 $("preLiveShopItems")
@@ -12235,6 +12324,8 @@ ${lastViewerAction || "無"}
 
 【本場連動成員】
 ${JSON.stringify(collabParticipants)}
+${!character.isReplayGeneration && character.id === state.live.offlineCollabId &&
+  collabIds.includes("player") ? offlinePlayerLiveContext() : ""}
 
 【其他連動視角的近期公開內容】
 ${JSON.stringify(collabViews)}
@@ -14224,12 +14315,15 @@ function advanceRoleLiveLifecycle(tickAt=Date.now()){
   if(startCheck && liveCount < maxLive){
 
     const wavelinkBusyIds = roleLiveWavelinkBusyIds();
+    const sceneCharacterId = offlineLiveScene()?.character.id;
+    const offlineGeneratingId = offlineRequest?.epoch === rpGenerationEpoch ? offlineRequest.character.id : "";
     const candidates =
       characters
         .filter(
           character =>
             !character.live &&
             !wavelinkBusyIds.has(character.id) &&
+            character.id !== sceneCharacterId && character.id !== offlineGeneratingId &&
             !justEnded.has(
               character.id
             )
@@ -17719,6 +17813,7 @@ function deleteOfflineTurn(character,reply){
       state.offline.stories[character.id] = state.offline.stories[character.id]
         .filter(entry => entry !== reply && entry !== input);
       if(refunded){ renderLedger(); renderShop(); }
+      renderPlayerCollabOptions();
       renderOfflineStage();
       scheduleStarwaveSave();
     }
@@ -17939,6 +18034,23 @@ selfCard 是角色設定資料，
 【玩家公開資料】
 ${JSON.stringify(playerPublic)}
 
+【線下場景與開播／SNS 接續】
+玩家實際在 SNS 公開發布的近期直播預告：${JSON.stringify(recentPlayerLiveAnnouncements())}
+角色可以照已發布的預告自然接話；預告只能代表公開說過的計畫，不代表玩家已經開播。
+
+已有同場互動狀態：${JSON.stringify((() => {
+  const current = offlineLiveScene();
+  return current?.character.id === character.id ? {
+    together:true,collabAgreed:current.scene.collab && !current.entry.offlineCollabUsed
+  } : null;
+})())}
+
+offlineLive.presence：依本回合結束時的情況填 "together"（兩人確實在同一地點，包含留在鏡頭外）、"separate"（已離開或線下相處已結束）或 "unknown"（無法確認）。「你可以走了」不表示角色已離開；若下一段確實還留在房內、或同意保持安靜，填 "together"。
+offlineLive.collab：只有同一地點且雙方都已明確同意在這場一起連動，或本場尚未使用的同一約定仍有效，才填 true。單方面邀請、開玩笑、留在場外或同意安靜都不算。不得替玩家新增同意。
+offlineLive.roleAction："none"、"announce" 或 "start"。只處理本場角色自己的直播。"announce" 只用於角色確實發出或明確決定這時要發一則公開開播預告；隨口提到稍後可能開台填 "none"。"start" 只用於角色確實結束了當下相處、離場並且現在要自己開播，不能把想法、未來邀約、玩家自己去開播或同場連動當成角色單播。
+roleTitle 是公開直播標題。announcement 只在本場角色確實要發 SNS 預告時填公開貼文，使用角色口吻；不要提到私人場景、玩家非公開身分或私下對話。角色只說離開去開播、不打算發文時填空字串。
+玩家自己在 SNS 發預告、或線下寫「我發好了預告」，都不能替玩家輸出、代發或建立貼文。平台會另從玩家實際發出的公開 SNS 貼文接續。
+
 【本場線下稱呼】
 角色本名（敘事使用）：${JSON.stringify(names.characterRealName || null)}
 角色目前可使用的玩家本名：${JSON.stringify(names.playerRealName || null)}
@@ -18076,6 +18188,7 @@ eventSummary
 {
   "reply":"角色的線下回覆與故事發展",
   "relationshipUpdate":"",
+  "offlineLive":{"presence":"unknown","collab":false,"roleAction":"none","roleTitle":"","announcement":""},
   "economyTransaction":{
     "category":"分類",
     "item":"消費項目",
@@ -18087,6 +18200,65 @@ eventSummary
 `;
 }
 
+
+function offlineSceneFromReply(character,value,replacing){
+  if(!value || typeof value !== "object") return null;
+  const presence = ["together","separate"].includes(value.presence) ? value.presence : "unknown";
+  const clean = (text,length) => typeof text === "string" ? sanitizePublicAiText(text).trim().slice(0,length) : "";
+  const title = clean(value.roleTitle,80);
+  const announcement = clean(value.announcement,360);
+  const action = value.roleAction === "start" && presence === "separate"
+    ? "start" : value.roleAction === "announce" && announcement ? "announce" : "none";
+  const old = replacing?.offlineScene;
+  const publishable = announcement && !roleLiveForbiddenTopic(character,`${title} ${announcement}`);
+  return {
+    at:Date.now(),turn:Number(state.timeSettings.rpTurnCount || 0),
+    presence,collab:presence === "together" && value.collab === true && action !== "start",
+    action, title:roleLiveForbiddenTopic(character,title) ? "" : title,
+    announcement:action !== "none" && publishable ? announcement : "",
+    posted:Boolean(old?.posted),
+    startedAt:Number(old?.startedAt || 0)
+  };
+}
+
+function publishOfflineLiveAnnouncements(mode){
+  if(!["auto","manual"].includes(mode) || state.refresh.sns !== mode) return 0;
+  let published = 0;
+  for(const character of state.characters){
+    for(const entry of state.offline.stories[character.id] || []){
+      const scene = entry.offlineScene;
+      if(!scene?.announcement || scene.posted || entry.authorId !== character.id) continue;
+      scene.posted = true;
+      const text = scene.startedAt
+        ? character.live && character.liveStartedAt === scene.startedAt
+          ? `開播啦！有空就來看「${character.liveTitle || scene.title || "今天的直播"}」吧。`
+          : `「${scene.title || "這場直播"}」已經播完了，謝謝今天來看的大家！`
+        : scene.announcement;
+      const safeText = sanitizePublicAiText(text);
+      const latestPost = state.snsPosts.find(post => post.authorId === character.id);
+      if(latestPost?.text === safeText) continue;
+      const now = Date.now();
+      state.snsPosts.unshift({
+        id:uid("sns"),authorId:character.id,name:publicName(character),
+        handle:character.snsId || character.liveId || "",
+        createdAt:currentRpDateTime(),postedAt:now,text:safeText,
+        likes:0,likedByPlayer:false,reposts:0,comments:[]
+      });
+      if(scene.action === "announce" && !character.live && !roleLiveOnBreak(character,now)){
+        character.plannedLiveAt = now + 60*60*1000;
+        character.plannedLiveTurn = Number(state.timeSettings.rpTurnCount || 0) + 2*ROLE_LIVE_RP_TURNS_PER_SLOT;
+        character.plannedLiveTitle = scene.title;
+        character.plannedLiveAnnouncement = safeText;
+      }
+      published++;
+    }
+  }
+  if(published){
+    renderSns();
+    scheduleStarwaveSave();
+  }
+  return published;
+}
 
 function recordOfflineReplyExpense(data,allowed){
   if(!allowed || !ledgerRunning() || state.refresh.ledger !== "auto") return null;
@@ -18177,8 +18349,21 @@ async function generateOfflineAi(character,input,{replacing=null}={}){
       id:uid("offline"),authorId:character.id,text:reply,playerEntryId:input.id,
       effects:{relationshipBefore,relationshipAfter,transactionId,legacyUntracked:!recordEconomy}
     };
+    const offlineScene = offlineSceneFromReply(character,data.offlineLive,replacing);
+    if(offlineScene) entry.offlineScene = offlineScene;
+    if(replacing?.offlineCollabUsed) entry.offlineCollabUsed = true;
     if(replacing) story.splice(replaceIndex,1,entry);
     else story.push(entry);
+
+    if(!replacing && offlineScene?.action === "start" && !character.live &&
+      !roleBusyInWavelink(character.id) && !roleLiveOnBreak(character,Date.now())){
+      startAutonomousRoleLive(character,{title:offlineScene.title || undefined});
+      offlineScene.startedAt = character.liveStartedAt;
+      renderExplore();
+      renderSubscriptions();
+    }
+    renderPlayerCollabOptions();
+    publishOfflineLiveAnnouncements("auto");
 
     if(!replacing){
       const eventSummary = String(data.eventSummary || "").trim() || "有新的互動。";
@@ -23923,6 +24108,7 @@ $("sendSns").onclick = () => {
     name:state.player.name,
     handle:state.player.snsId,
     createdAt:currentRpDateTime(),
+    postedAt:Date.now(),
     text:sanitizePublicText(text),
     likes:0,
     likedByPlayer:false,
@@ -24891,6 +25077,7 @@ async function generateSnsNow(
 }
 $("refreshSns").onclick = async () => {
     if(state.refresh.sns !== "manual") return;
+    publishOfflineLiveAnnouncements("manual");
     await generateSnsNow(2);
   };
 
@@ -27784,6 +27971,7 @@ $("memoryInterval").onchange = () => {
 function triggerAutoContent(
   options={}
 ){
+  publishOfflineLiveAnnouncements("auto");
   const socialCount = options.onOpen ? 2 : 1;
 
  const forumTask = state.refresh.forum === "auto"
