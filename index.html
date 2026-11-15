@@ -18035,6 +18035,9 @@ selfCard 是角色設定資料，
 ${JSON.stringify(playerPublic)}
 
 【線下場景與開播／SNS 接續】
+玩家實際在 SNS 公開發布的近期直播預告：${JSON.stringify(recentPlayerLiveAnnouncements())}
+角色可以照已發布的預告自然接話；預告只能代表公開說過的計畫，不代表玩家已經開播。
+
 已有同場互動狀態：${JSON.stringify((() => {
   const current = offlineLiveScene();
   return current?.character.id === character.id ? {
