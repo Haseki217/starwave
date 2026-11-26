@@ -1988,7 +1988,11 @@ body:is([data-theme="deep"],[data-theme="vampire"]) :is(#deleteLorebook,#loreEnt
 
 .offline-stage{
   position:relative;
-  min-height:410px;
+  display:grid;
+  grid-template-rows:auto minmax(0,1fr);
+  gap:14px;
+  height:410px;
+  padding:15px 4% 4%;
   overflow:hidden;
   border:1px solid rgba(91,154,179,.16);
   border-radius:16px;
@@ -1996,10 +2000,7 @@ body:is([data-theme="deep"],[data-theme="vampire"]) :is(#deleteLorebook,#loreEnt
 }
 
 .offline-stage-top{
-  position:absolute;
-  left:17px;
-  right:17px;
-  top:15px;
+  position:relative;
   z-index:3;
   display:flex;
   justify-content:space-between;
@@ -2019,6 +2020,8 @@ body:is([data-theme="deep"],[data-theme="vampire"]) :is(#deleteLorebook,#loreEnt
 
 .offline-scene-center{
   position:absolute;
+  z-index:0;
+  pointer-events:none;
   left:50%;
   top:34%;
   transform:translate(-50%,-50%);
@@ -2026,8 +2029,8 @@ body:is([data-theme="deep"],[data-theme="vampire"]) :is(#deleteLorebook,#loreEnt
   text-align:center;
 }
 
-.offline-scene-center p{
-  margin:0 auto;
+.offline-location p{
+  margin:4px 0 0;
   max-width:520px;
   color:var(--offline-muted);
   font-size:11px;
@@ -2035,12 +2038,9 @@ body:is([data-theme="deep"],[data-theme="vampire"]) :is(#deleteLorebook,#loreEnt
 }
 
 .offline-story-overlay{
-  position:absolute;
-  left:4%;
-  right:4%;
-  bottom:4%;
+  position:relative;
   z-index:4;
-  max-height:45%;
+  min-height:0;
   overflow:auto;
   padding:12px 14px;
   border:1px solid rgba(88,151,177,.15);
@@ -5070,6 +5070,7 @@ body[data-theme="halloween"] .live-stage{
               <div class="offline-location">
                 <strong id="offlineLocation">線下</strong>
                 <small>PRIVATE STORY</small>
+                <p id="offlineRelationship"></p>
               </div>
 
               <div
@@ -5081,7 +5082,6 @@ body[data-theme="halloween"] .live-stage{
 
             <div class="offline-scene-center">
               <div class="fallback-star" style="font-size:54px" aria-hidden="true">✦</div>
-              <p id="offlineRelationship"></p>
             </div>
 
             <div
